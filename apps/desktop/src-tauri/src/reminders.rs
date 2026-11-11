@@ -22,6 +22,13 @@ pub const LATE_MS: i64 = 15 * MINUTE_MS;
 pub const EXPIRE_MS: i64 = 12 * 60 * MINUTE_MS;
 pub const BURST: usize = 3;
 pub const SNOOZE_MS: i64 = 10 * MINUTE_MS;
+/// App-initiated nudges allowed per day (plan §8). Your own reminders don't count.
+pub const DAILY_NUDGE_CAP: i64 = 8;
+
+/// Block toasts and nudges are about this moment: late ones are dropped, not summarised.
+fn is_moment(kind: &str) -> bool {
+    kind == "block" || kind == "nudge"
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Due {
@@ -50,7 +57,7 @@ pub fn plan_tick(due: Vec<Due>, now_ms: i64) -> Vec<Action> {
     let mut late = Vec::new();
     for item in due {
         let age = now_ms - item.due_at;
-        if age > EXPIRE_MS {
+        if age > EXPIRE_MS || (is_moment(&item.kind) && age > LATE_MS) {
             actions.push(Action::Expire(item));
         } else if age > LATE_MS {
             late.push(item);
@@ -75,7 +82,7 @@ pub fn due_now(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<Due>> {
         "SELECT r.key, r.kind, r.entity_id, r.fire_at,
                 COALESCE(CASE WHEN n.outcome = 'snoozed' THEN n.snoozed_until END, r.fire_at),
                 r.title
-         FROM v_reminders_task AS r
+         FROM (SELECT * FROM v_reminders_task UNION ALL SELECT * FROM v_reminders_block) AS r
          LEFT JOIN core_notifications AS n ON n.key = r.key
          WHERE r.fire_at <= ?1
            AND (n.key IS NULL OR (n.outcome = 'snoozed' AND n.snoozed_until <= ?1))
@@ -147,7 +154,151 @@ pub fn summary_text(items: &[Due]) -> String {
     format!("{count} {noun} passed: {list}")
 }
 
+/// Nudges shown today (for the daily cap), counted from the logical day's start.
+fn nudges_today(conn: &Connection, now_ms: i64) -> i64 {
+    let (_, day_start) = tasks::logical_day(now_ms);
+    conn.query_row(
+        "SELECT count(*) FROM core_notifications WHERE kind = 'nudge' AND counted = 1 AND fired_at >= ?1",
+        [day_start],
+        |row| row.get(0),
+    )
+    .unwrap_or(0)
+}
+
+fn set_block_status(app: &AppHandle, block_id: &str, status: &str) {
+    let result = {
+        let db = app.state::<Db>();
+        let mut conn = db.write.lock();
+        (|| -> Result<(), String> {
+            let txn = conn.transaction().map_err(|error| error.to_string())?;
+            let mut values = serde_json::Map::new();
+            values.insert("status".into(), serde_json::Value::from(status));
+            let op = crate::tx::Op::Update {
+                table: "day_blocks".into(),
+                id: block_id.into(),
+                values,
+            };
+            crate::tx::apply_ops(&txn, "user", Some("toast"), &[op], clock::now_ms())
+                .map_err(|error| error.to_string())?;
+            txn.commit().map_err(|error| error.to_string())
+        })()
+    };
+    if let Err(error) = result {
+        log::warn!("could not update the block from a toast: {error}");
+    }
+    let _ = app.emit("data-changed", ["day_blocks"]);
+}
+
+fn record_outcome(app: &AppHandle, key: &str, outcome: &str) {
+    let db = app.state::<Db>();
+    let conn = db.write.lock();
+    if let Err(error) = set_outcome(&conn, key, outcome, clock::now_ms(), None) {
+        log::warn!("could not record the toast outcome: {error}");
+    }
+}
+
+/// A block starting (focus or routine), or the "just one session?" nudge.
+fn show_block(app: &AppHandle, item: Due) {
+    let handle = app.clone();
+    let key = item.key.clone();
+    let block_id = item.entity_id.clone();
+    let (first_step, is_area, end) = {
+        let db = app.state::<Db>();
+        let conn = db.write.lock();
+        conn.query_row(
+            "SELECT COALESCE(t.title, b.title), b.kind = 'area', b.end_at FROM day_blocks AS b
+             LEFT JOIN task_items AS t ON t.id = b.task_id WHERE b.id = ?1",
+            [&block_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .unwrap_or((item.title.clone(), false, item.fire_at))
+    };
+    let (title, body, buttons): (String, String, Vec<Button>) = match (item.kind.as_str(), is_area)
+    {
+        ("nudge", _) => (
+            format!("Just one session on {}?", item.title),
+            "25 minutes. You can stop after that.".into(),
+            vec![
+                Button {
+                    label: "Start",
+                    action: "start",
+                },
+                Button {
+                    label: "Skip",
+                    action: "skip",
+                },
+            ],
+        ),
+        (_, true) => (
+            format!(
+                "{} · {}–{}",
+                item.title,
+                local_time(item.fire_at),
+                local_time(end)
+            ),
+            format!("First step: {first_step}"),
+            vec![
+                Button {
+                    label: "Start focus",
+                    action: "start",
+                },
+                Button {
+                    label: "Skip",
+                    action: "skip",
+                },
+            ],
+        ),
+        _ => (
+            format!("{} · {}", item.title, local_time(item.fire_at)),
+            "From your routine.".into(),
+            vec![
+                Button {
+                    label: "Done",
+                    action: "done",
+                },
+                Button {
+                    label: "Skip",
+                    action: "skip",
+                },
+            ],
+        ),
+    };
+    let result = notify::show(app, &title, &body, &buttons, move |action| {
+        match action.as_deref() {
+            Some("start") => {
+                crate::focus::start_with_block(&handle, Some(block_id.clone()), false);
+                record_outcome(&handle, &key, "clicked");
+            }
+            Some("done") => {
+                set_block_status(&handle, &block_id, "done");
+                record_outcome(&handle, &key, "done");
+            }
+            Some("skip") => {
+                set_block_status(&handle, &block_id, "skipped");
+                record_outcome(&handle, &key, "dismissed");
+            }
+            _ => {
+                windows::spawn_open_main(handle.clone());
+                record_outcome(&handle, &key, "clicked");
+            }
+        }
+    });
+    if let Err(error) = result {
+        log::error!("could not show a block toast: {error}");
+    }
+}
+
 fn show_one(app: &AppHandle, item: Due) {
+    if is_moment(&item.kind) {
+        show_block(app, item);
+        return;
+    }
     let handle = app.clone();
     let key = item.key.clone();
     let task_id = item.entity_id.clone();
@@ -219,10 +370,31 @@ pub fn tick(app: &AppHandle, now_ms: i64) {
                 return;
             }
         };
-        let actions = plan_tick(due, now_ms);
+        let mut actions = plan_tick(due, now_ms);
+        // Nudges are app-initiated: at most DAILY_NUDGE_CAP a day.
+        let mut nudges = nudges_today(&conn, now_ms);
+        for action in &mut actions {
+            if let Action::Show(item) = action
+                && item.kind == "nudge"
+            {
+                if nudges >= DAILY_NUDGE_CAP {
+                    *action = Action::Expire(item.clone());
+                } else {
+                    nudges += 1;
+                }
+            }
+        }
         for action in &actions {
             let result = match action {
-                Action::Show(item) => record(&conn, item, now_ms, None),
+                Action::Show(item) => record(&conn, item, now_ms, None).and_then(|()| {
+                    if item.kind == "nudge" {
+                        conn.execute(
+                            "UPDATE core_notifications SET counted = 1 WHERE key = ?1",
+                            [&item.key],
+                        )?;
+                    }
+                    Ok(())
+                }),
                 Action::Summary(items) => items
                     .iter()
                     .try_for_each(|item| record(&conn, item, now_ms, Some("summarized"))),
@@ -413,5 +585,80 @@ mod tests {
         let back = due_now(&conn, NOW).expect("due again");
         assert_eq!(back[0].due_at, NOW);
         assert!(matches!(plan_tick(back, NOW).as_slice(), [Action::Show(_)]));
+    }
+
+    fn moment(key: &str, kind: &str, minutes_ago: i64) -> Due {
+        Due {
+            kind: kind.into(),
+            ..due(key, minutes_ago)
+        }
+    }
+
+    #[test]
+    fn late_block_toasts_and_nudges_are_dropped_not_summarised() {
+        let actions = plan_tick(
+            vec![
+                moment("b", "block", 20),
+                moment("n", "nudge", 30),
+                due("t", 20),
+            ],
+            NOW,
+        );
+        assert_eq!(
+            actions,
+            vec![
+                Action::Expire(moment("b", "block", 20)),
+                Action::Expire(moment("n", "nudge", 30)),
+                Action::Summary(vec![due("t", 20)]),
+            ]
+        );
+    }
+
+    #[test]
+    fn blocks_toast_when_they_start_and_nudge_without_a_session() {
+        let conn = conn();
+        conn.execute_batch(&format!(
+            "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, created_at, updated_at) VALUES
+               ('focus', '2026-11-11', {start}, {end}, 'area', 'coding', 'Coding skills', 0, 0),
+               ('work', '2026-11-11', {start}, {end}, 'fixed', 'joba', 'Job A', 0, 0),
+               ('quran', '2026-11-11', {start}, {end}, 'routine', 'quran', 'Quran', 0, 0),
+               ('review', '2026-11-11', {start2}, {end}, 'routine', NULL, 'Night review', 0, 0);",
+            start = NOW - 11 * MINUTE_MS,
+            start2 = NOW - 10 * MINUTE_MS,
+            end = NOW + 60 * MINUTE_MS
+        ))
+        .expect("blocks");
+        let keys = |conn: &Connection| -> Vec<String> {
+            due_now(conn, NOW)
+                .expect("due")
+                .into_iter()
+                .map(|d| d.key)
+                .collect()
+        };
+        assert_eq!(
+            keys(&conn),
+            vec!["block:focus", "block:quran", "nudge:focus"]
+        );
+
+        // A session started in the block silences the nudge.
+        conn.execute(
+            "INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min) VALUES ('s', 'focus', 'focus', ?1, 25)",
+            [NOW - 5 * MINUTE_MS],
+        )
+        .expect("session");
+        assert_eq!(keys(&conn), vec!["block:focus", "block:quran"]);
+    }
+
+    #[test]
+    fn nudges_count_toward_the_daily_cap() {
+        let conn = conn();
+        for n in 0..3 {
+            conn.execute(
+                "INSERT INTO core_notifications (key, kind, fired_at, counted) VALUES (?1, 'nudge', ?2, 1)",
+                params![format!("nudge:{n}"), NOW - MINUTE_MS],
+            )
+            .expect("seed");
+        }
+        assert_eq!(nudges_today(&conn, NOW), 3);
     }
 }
