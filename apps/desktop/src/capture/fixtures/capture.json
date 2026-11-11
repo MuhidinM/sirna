@@ -1,0 +1,288 @@
+{
+  "now": "2026-11-11T12:00:00+03:00",
+  "_note": "now = Wednesday 11 Nov 2026, 12:00 in Addis Ababa. Each case lists only the fields it checks; dueAt is written in local time.",
+  "cases": [
+    {
+      "in": "lunch 120",
+      "out": {
+        "kind": "expense",
+        "amount": 12000,
+        "categoryId": "cat_food",
+        "description": "lunch",
+        "date": "2026-11-11"
+      }
+    },
+    { "in": "120 lunch", "out": { "kind": "expense", "amount": 12000, "description": "lunch" } },
+    {
+      "in": "taxi 40",
+      "out": { "kind": "expense", "amount": 4000, "categoryId": "cat_transport" }
+    },
+    {
+      "in": "coffee 30.50",
+      "out": { "kind": "expense", "amount": 3050, "categoryId": "cat_food" }
+    },
+    { "in": "buna 25", "out": { "kind": "expense", "amount": 2500, "categoryId": "cat_food" } },
+    {
+      "in": "paid rent 12000",
+      "out": {
+        "kind": "expense",
+        "amount": 1200000,
+        "categoryId": "cat_housing",
+        "description": "rent"
+      }
+    },
+    {
+      "in": "spent 1.5k on shoes",
+      "out": {
+        "kind": "expense",
+        "amount": 150000,
+        "categoryId": "cat_shopping",
+        "description": "shoes"
+      }
+    },
+    {
+      "in": "airtime 100",
+      "out": { "kind": "expense", "amount": 10000, "categoryId": "cat_phone" }
+    },
+    {
+      "in": "groceries 1,250",
+      "out": { "kind": "expense", "amount": 125000, "categoryId": "cat_food" }
+    },
+    {
+      "in": "medicine 340 br",
+      "out": { "kind": "expense", "amount": 34000, "categoryId": "cat_health" }
+    },
+    {
+      "in": "bajaj 50birr",
+      "out": { "kind": "expense", "amount": 5000, "categoryId": "cat_transport" }
+    },
+    {
+      "in": "gift for mom 2k",
+      "out": { "kind": "expense", "amount": 200000, "categoryId": "cat_family" }
+    },
+    {
+      "in": "udemy course 600",
+      "out": { "kind": "expense", "amount": 60000, "categoryId": "cat_learning" }
+    },
+    {
+      "in": "stuff 75",
+      "out": {
+        "kind": "expense",
+        "amount": 7500,
+        "categoryId": "cat_other",
+        "description": "stuff"
+      }
+    },
+    {
+      "in": "lunch 120 yesterday",
+      "out": { "kind": "expense", "amount": 12000, "description": "lunch", "date": "2026-11-10" }
+    },
+    { "in": "lunch 120 #jobA", "out": { "kind": "expense", "amount": 12000, "area": "joba" } },
+    {
+      "in": "+25000 salary",
+      "out": { "kind": "income", "amount": 2500000, "categoryId": "cat_salary" }
+    },
+    {
+      "in": "salary 25000",
+      "out": { "kind": "income", "amount": 2500000, "categoryId": "cat_salary" }
+    },
+    {
+      "in": "+3000 freelance",
+      "out": { "kind": "income", "amount": 300000, "categoryId": "cat_income" }
+    },
+    {
+      "in": "   lunch    120   ",
+      "out": { "kind": "expense", "amount": 12000, "description": "lunch" }
+    },
+
+    {
+      "in": "pay EEU 600 fri",
+      "out": { "kind": "task", "title": "pay EEU 600", "dueDate": "2026-11-13" }
+    },
+    {
+      "in": "call bank tomorrow 10am",
+      "out": {
+        "kind": "task",
+        "title": "call bank",
+        "dueDate": "2026-11-12",
+        "dueAt": "2026-11-12T10:00"
+      }
+    },
+    {
+      "in": "call bank at 3",
+      "out": {
+        "kind": "task",
+        "title": "call bank",
+        "dueDate": "2026-11-11",
+        "dueAt": "2026-11-11T15:00"
+      }
+    },
+    {
+      "in": "call bank at 3",
+      "clockStyle": "ethiopian",
+      "out": { "kind": "task", "dueDate": "2026-11-12", "dueAt": "2026-11-12T09:00" }
+    },
+    {
+      "in": "call bank at 3pm",
+      "clockStyle": "ethiopian",
+      "out": { "kind": "task", "dueAt": "2026-11-11T15:00" }
+    },
+    {
+      "in": "standup 9:30",
+      "out": {
+        "kind": "task",
+        "title": "standup",
+        "dueDate": "2026-11-12",
+        "dueAt": "2026-11-12T09:30"
+      }
+    },
+    {
+      "in": "dentist 15:00",
+      "out": {
+        "kind": "task",
+        "title": "dentist",
+        "dueDate": "2026-11-11",
+        "dueAt": "2026-11-11T15:00"
+      }
+    },
+    {
+      "in": "submit report today",
+      "out": { "kind": "task", "title": "submit report", "dueDate": "2026-11-11" }
+    },
+    {
+      "in": "submit report tonight",
+      "out": { "kind": "task", "dueDate": "2026-11-11", "dueAt": "2026-11-11T20:00" }
+    },
+    {
+      "in": "send invoice to Hana fri",
+      "out": { "kind": "task", "title": "send invoice to Hana", "dueDate": "2026-11-13" }
+    },
+    { "in": "gym wed", "out": { "kind": "task", "title": "gym", "dueDate": "2026-11-18" } },
+    {
+      "in": "review PR next mon",
+      "out": { "kind": "task", "title": "review PR", "dueDate": "2026-11-16" }
+    },
+    {
+      "in": "review PR on friday",
+      "out": { "kind": "task", "title": "review PR", "dueDate": "2026-11-13" }
+    },
+    {
+      "in": "renew passport in 3 days",
+      "out": { "kind": "task", "title": "renew passport", "dueDate": "2026-11-14" }
+    },
+    {
+      "in": "visa interview in 2 weeks",
+      "out": { "kind": "task", "title": "visa interview", "dueDate": "2026-11-25" }
+    },
+    {
+      "in": "build CLI tool by 20 dec",
+      "out": { "kind": "task", "title": "build CLI tool", "dueDate": "2026-12-20" }
+    },
+    {
+      "in": "pay rent dec 1",
+      "out": { "kind": "task", "title": "pay rent", "dueDate": "2026-12-01" }
+    },
+    {
+      "in": "car service 12/11",
+      "out": { "kind": "task", "title": "car service", "dueDate": "2026-11-12" }
+    },
+    { "in": "car service 5/11", "out": { "kind": "task", "dueDate": "2027-11-05" } },
+    { "in": "tax filing 31/12/2026", "out": { "kind": "task", "dueDate": "2026-12-31" } },
+    {
+      "in": "call mom sat 7pm",
+      "out": {
+        "kind": "task",
+        "title": "call mom",
+        "dueDate": "2026-11-14",
+        "dueAt": "2026-11-14T19:00"
+      }
+    },
+    {
+      "in": "meet Abel at 10:30 thu",
+      "out": {
+        "kind": "task",
+        "title": "meet Abel",
+        "dueDate": "2026-11-12",
+        "dueAt": "2026-11-12T10:30"
+      }
+    },
+    {
+      "in": "gym at noon",
+      "out": {
+        "kind": "task",
+        "title": "gym",
+        "dueDate": "2026-11-12",
+        "dueAt": "2026-11-12T12:00"
+      }
+    },
+    { "in": "call tom", "out": { "kind": "task", "title": "call tom" } },
+    { "in": "buy charger", "out": { "kind": "task", "title": "buy charger" } },
+    { "in": "call 0911223344", "out": { "kind": "task", "title": "call 0911223344" } },
+    {
+      "in": "fix login bug #jobA",
+      "out": { "kind": "task", "title": "fix login bug", "area": "joba" }
+    },
+    {
+      "in": "apply to fintech role #jobhunt fri",
+      "out": {
+        "kind": "task",
+        "title": "apply to fintech role",
+        "area": "jobhunt",
+        "dueDate": "2026-11-13"
+      }
+    },
+    { "in": "t: dentist maybe", "out": { "kind": "task", "title": "dentist maybe" } },
+    { "in": "T: something", "out": { "kind": "task", "title": "something" } },
+    { "in": "learn rust", "out": { "kind": "task", "title": "learn rust" } },
+
+    {
+      "in": "wait: recruiter reply mon",
+      "out": { "kind": "task", "waitingOn": "recruiter reply", "dueDate": "2026-11-16" }
+    },
+    {
+      "in": "wait: on Hana for the contract",
+      "out": { "kind": "task", "waitingOn": "Hana for the contract" }
+    },
+
+    { "in": "idea: sell old monitor", "out": { "kind": "idea", "body": "sell old monitor" } },
+    {
+      "in": "idea: build a CLI budget tool #experiments",
+      "out": { "kind": "idea", "body": "build a CLI budget tool", "area": "experiments" }
+    },
+    {
+      "in": "n: the wifi password is on the router",
+      "out": { "kind": "note", "body": "the wifi password is on the router" }
+    },
+    {
+      "in": "pin: git undo last commit = git reset --soft HEAD~1 #coding",
+      "out": {
+        "kind": "cheat",
+        "body": "git undo last commit = git reset --soft HEAD~1",
+        "area": "coding"
+      }
+    },
+    {
+      "in": "pin: elevator pitch: backend dev, 3 years Go",
+      "out": { "kind": "cheat", "body": "elevator pitch: backend dev, 3 years Go" }
+    },
+    { "in": "fb: review too long", "out": { "kind": "feedback", "body": "review too long" } },
+    { "in": "FB: brief is great", "out": { "kind": "feedback", "body": "brief is great" } },
+
+    {
+      "in": "dentist maybe sometime",
+      "out": { "kind": "inbox", "body": "dentist maybe sometime" }
+    },
+    { "in": "something about the car", "out": { "kind": "inbox" } },
+    { "in": "meeting with Tom", "out": { "kind": "inbox" } },
+    { "in": "the sun is out", "out": { "kind": "inbox" } },
+    { "in": "maybe learn rust", "out": { "kind": "inbox" } },
+    { "in": "3 eggs", "out": { "kind": "inbox" } },
+    { "in": "2 hours coding", "out": { "kind": "inbox" } },
+
+    { "in": "? equb", "out": { "kind": "search", "query": "equb" } },
+    { "in": "?git reset", "out": { "kind": "search", "query": "git reset" } },
+    { "in": "away till mon", "out": { "kind": "away", "until": "2026-11-16" } },
+    { "in": "away", "out": { "kind": "away" } },
+    { "in": "focus", "out": { "kind": "focus" } }
+  ]
+}

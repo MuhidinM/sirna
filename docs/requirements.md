@@ -9,8 +9,8 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 |---|---|---|---|---|
 | R-CAP-01 | One box, opened by a global hotkey (Ctrl+Alt+Space, configurable) from any app | T-008, T-015 | Hotkey with fallbacks (ADR-0004); 20 scripted opens from another app all became ready to type, and a typed line was saved unchanged (#8). Choosing your own key: T-015 | ◐ |
 | R-CAP-02 | A capture saves in < 2 s (p95, installed build) and never waits on parsing, network or AI | T-013, T-015 | | ☐ |
-| R-CAP-03 | Parses tasks, timed reminders, cash expenses, ideas, `pin:`, `wait:`, `fb:`, `?` search, `away`, `#area` | T-014 | | ☐ |
-| R-CAP-04 | Unparsed text becomes an inbox note; nothing is lost | T-014 | | ☐ |
+| R-CAP-03 | Parses tasks, timed reminders, cash expenses, ideas, `pin:`, `wait:`, `fb:`, `?` search, `away`, `#area` | T-014 | `parse.test.ts`: 69 fixtures + ops and echo tests; in the real box "lunch 120" → −12,000 santim Food and "call bank tomorrow 10am" → task with a 10:00 reminder (#14) | ☑ |
+| R-CAP-04 | Unparsed text becomes an inbox note; nothing is lost | T-014 | No-match lines become `note_items` kind inbox (fixtures: "dentist maybe sometime", "3 eggs", "the sun is out"); the raw line is always stored first (#14) | ☑ |
 | R-CAP-05 | The last capture can be edited (Up arrow) or undone (Ctrl+Z, tray) | T-015, T-016 | | ☐ |
 
 ## B. Routine and day plan (§3.2–3.3)
