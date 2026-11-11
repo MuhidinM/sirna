@@ -18,6 +18,13 @@ describe("readings", () => {
     expect(options[1]).toMatchObject({ kind: "task", title: "buy charger 600" });
   });
 
+  it("takes the amount from the parse, not the first number in the line", () => {
+    const text = "10 nov dinner 300";
+    const options = readings(parseCapture(text, { nowMs }), text, nowMs);
+    expect(options[0]).toMatchObject({ kind: "expense", amount: 30000 });
+    expect(options[1]).toMatchObject({ kind: "task", title: "dinner 300" });
+  });
+
   it("offers today for a someday task", () => {
     const options = readings(parseCapture("buy charger", { nowMs }), "buy charger", nowMs);
     expect(options[1]).toMatchObject({ kind: "task", title: "buy charger", dueDate: "2026-11-11" });

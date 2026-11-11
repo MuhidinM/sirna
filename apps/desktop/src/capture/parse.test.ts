@@ -103,3 +103,28 @@ describe("echo", () => {
     expect(echo(parseCapture(text, { nowMs }), nowMs)).toBe(line);
   });
 });
+
+describe("after midnight, before 03:00 (still the evening before)", () => {
+  // 01:00 on Thursday 12 Nov in Addis Ababa belongs to logical Wednesday 11 Nov.
+  const late = Date.parse("2026-11-12T01:00:00+03:00");
+
+  it("dates spending to the logical day", () => {
+    expect(parseCapture("dinner 300", { nowMs: late })).toMatchObject({
+      kind: "expense",
+      date: "2026-11-11",
+    });
+  });
+
+  it("reads tomorrow as the coming day, not the one after", () => {
+    expect(parseCapture("call bank tomorrow", { nowMs: late })).toMatchObject({
+      dueDate: "2026-11-12",
+    });
+  });
+
+  it("reads a bare clock time against the real calendar", () => {
+    expect(parseCapture("standup 9:30", { nowMs: late })).toMatchObject({
+      dueDate: "2026-11-12",
+      dueAt: Date.parse("2026-11-12T09:30:00+03:00"),
+    });
+  });
+});

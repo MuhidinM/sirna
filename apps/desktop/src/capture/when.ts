@@ -6,7 +6,7 @@
  *
  * Dates are local (Africa/Addis_Ababa, UTC+3, no daylight saving).
  */
-import { HOME_UTC_OFFSET_MIN, localDate } from "../kernel/dates";
+import { HOME_UTC_OFFSET_MIN, localDate, logicalDate } from "../kernel/dates";
 
 /** How "at 3" (no am/pm) is read: 15:00, or the Ethiopian clock's 3 o'clock = 09:00. */
 export type ClockStyle = "western" | "ethiopian";
@@ -95,13 +95,17 @@ function isValidDate(y: number, m: number, d: number): boolean {
   return probe.getUTCMonth() === m - 1 && probe.getUTCDate() === d;
 }
 
-/** The next date with month/day on or after today (rolls into next year). */
-function nextMonthDay(today: string, month: number, day: number): string | undefined {
+/**
+ * The month/day on or after today (forward), or on or before today (past,
+ * for spending). Looks up to 4 years so 29 Feb always finds a leap year.
+ */
+function monthDay(today: string, month: number, day: number, past: boolean): string | undefined {
   const [y] = parts(today);
-  for (const year of [y, y + 1]) {
+  for (let step = 0; step <= 4; step++) {
+    const year = past ? y - step : y + step;
     if (!isValidDate(year, month, day)) continue;
     const candidate = format(year, month, day);
-    if (candidate >= today) return candidate;
+    if (past ? candidate <= today : candidate >= today) return candidate;
   }
   return undefined;
 }
@@ -126,8 +130,22 @@ function readHour(hour: number, ampm: string | undefined, style: ClockStyle): nu
   return hour <= 6 ? hour + 12 : hour;
 }
 
-export function readWhen(text: string, nowMs: number, style: ClockStyle = "western"): When {
-  const today = localDate(nowMs);
+export interface ReadOptions {
+  /** Read day words backwards: "mon" is last Monday, "20 dec" the last 20 Dec. For spending. */
+  past?: boolean;
+}
+
+export function readWhen(
+  text: string,
+  nowMs: number,
+  style: ClockStyle = "western",
+  { past = false }: ReadOptions = {},
+): When {
+  // Day words follow the logical day (it starts at 03:00), so "tomorrow" said
+  // at 01:00 is the coming day, not the one after (plan §5.1 rule 4).
+  const today = logicalDate(nowMs);
+  // A bare clock time is about the real calendar: "at 10" said at 01:30 is this morning.
+  const calendarToday = localDate(nowMs);
   let rest = ` ${text} `;
   let date: string | undefined;
   let minutes: number | undefined;
@@ -156,6 +174,23 @@ export function readWhen(text: string, nowMs: number, style: ClockStyle = "weste
     minutes = hour * 60 + minute;
     return true;
   });
+  if (minutes === undefined) {
+    // "at 10.30" or "10.30pm": a dot only counts as a time with "at" or am/pm,
+    // so "coffee 30.50" stays money.
+    take(
+      /\s(?:at\s+(\d{1,2})\.(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?|(\d{1,2})\.(\d{2})\s*(am|pm|a\.m\.|p\.m\.))(?=\s)/i,
+      (m) => {
+        const hourText = m[1] ?? m[4];
+        const minuteText = m[2] ?? m[5];
+        const ampm = (m[3] ?? m[6])?.toLowerCase();
+        const hour = readHour(Number(hourText), ampm, style);
+        const minute = Number(minuteText);
+        if (hour === undefined || minute > 59) return false;
+        minutes = hour * 60 + minute;
+        return true;
+      },
+    );
+  }
   if (minutes === undefined) {
     take(/\s(?:at\s+)?(\d{1,2})\s*(am|pm|a\.m\.|p\.m\.)(?=\s)/i, (m) => {
       const hour = readHour(Number(m[1]), m[2]?.toLowerCase(), style);
@@ -197,9 +232,16 @@ export function readWhen(text: string, nowMs: number, style: ClockStyle = "weste
       const target = WEEKDAY_WORDS[m[2]?.toLowerCase() ?? ""];
       if (target === undefined) return false;
       const isLast = rest.slice(m.index + m[0].length).trim() === "";
-      if (!m[1] && !isLast) return false;
+      const prefix = m[1]?.toLowerCase();
+      if (!prefix && !isLast) return false;
+      if (past) {
+        // Spending: the most recent such day, today included.
+        date = addDays(today, -((weekday(today) - target + 7) % 7));
+        return true;
+      }
       let ahead = (target - weekday(today) + 7) % 7;
-      if (ahead === 0) ahead = 7; // "fri" on a Friday means next Friday; "next fri" is the coming one
+      // "fri" on a Friday means next Friday; "this fri" means today.
+      if (ahead === 0 && prefix !== "this") ahead = 7;
       date = addDays(today, ahead);
       return true;
     });
@@ -208,7 +250,7 @@ export function readWhen(text: string, nowMs: number, style: ClockStyle = "weste
     take(/\s(?:on\s+)?(\d{1,2})\s*(?:st|nd|rd|th)?\s+([a-z]{3,9})(?=\s)/i, (m) => {
       const month = MONTHS[m[2]?.toLowerCase() ?? ""];
       if (!month) return false;
-      date = nextMonthDay(today, month, Number(m[1]));
+      date = monthDay(today, month, Number(m[1]), past);
       return date !== undefined;
     });
   }
@@ -216,7 +258,7 @@ export function readWhen(text: string, nowMs: number, style: ClockStyle = "weste
     take(/\s(?:on\s+)?([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?=\s)/i, (m) => {
       const month = MONTHS[m[1]?.toLowerCase() ?? ""];
       if (!month) return false;
-      date = nextMonthDay(today, month, Number(m[2]));
+      date = monthDay(today, month, Number(m[2]), past);
       return date !== undefined;
     });
   }
@@ -231,14 +273,14 @@ export function readWhen(text: string, nowMs: number, style: ClockStyle = "weste
         date = format(year, month, day);
         return true;
       }
-      date = nextMonthDay(today, month, day);
+      date = monthDay(today, month, day, past);
       return date !== undefined;
     });
   }
 
   // A time with no day means today, or tomorrow if that time has passed.
   if (minutes !== undefined && !date) {
-    date = localToEpoch(today, minutes) > nowMs ? today : addDays(today, 1);
+    date = localToEpoch(calendarToday, minutes) > nowMs ? calendarToday : addDays(calendarToday, 1);
   }
 
   const result: When = { rest: rest.replace(/\s+/g, " ").trim() };
