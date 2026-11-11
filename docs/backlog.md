@@ -45,7 +45,7 @@ Areas, weekly routine, day-plan generator, timeline, block toasts, Rust focus ti
 | T-020 | [#20](https://github.com/MuhidinM/sirna/issues/20) | Show Today as a timeline with Now, a countdown and area colours | R-PLAN-04 | M | done |
 | T-021 | [#21](https://github.com/MuhidinM/sirna/issues/21) | Toast block starts, one start nudge, and email-check blocks | R-FOC-03 | M | todo |
 | T-022 | [#22](https://github.com/MuhidinM/sirna/issues/22) | Run the focus timer in Rust and survive sleep and restart | R-FOC-01, R-BRN-03 | L | done |
-| T-023 | [#23](https://github.com/MuhidinM/sirna/issues/23) | Control focus from the tray with a live countdown | R-FOC-02 | M | todo |
+| T-023 | [#23](https://github.com/MuhidinM/sirna/issues/23) | Control focus from the tray with a live countdown | R-FOC-02 | M | done |
 | T-024 | [#24](https://github.com/MuhidinM/sirna/issues/24) | Add the design tokens: dark and light themes, area colours | R-PLAN-04 | M | done |
 
 ## M3 — Check-ins, guard rails, focus set-up, cheat sheets
