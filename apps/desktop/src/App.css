@@ -419,7 +419,8 @@ input[type="number"] {
   color: var(--text-primary);
 }
 
-.sidebar-item[aria-current="page"] {
+.sidebar-item[aria-current="page"],
+.project-picker .sidebar-item[aria-current="page"] {
   background: var(--surface-3);
   color: var(--text-primary);
 }
@@ -461,4 +462,130 @@ input[type="number"] {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: var(--space-2);
+}
+
+/* Projects (plan §3.8, §3.14). */
+.projects {
+  padding: var(--space-6);
+}
+
+.projects-layout {
+  display: flex;
+  gap: var(--space-6);
+  align-items: flex-start;
+}
+
+.project-picker {
+  flex: 0 0 200px;
+}
+
+.project-picker .sidebar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-view {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-view > header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.project-form {
+  margin-bottom: var(--space-6);
+}
+
+.project-form input,
+.project-form textarea,
+.project-form select,
+.board input,
+.board select {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  font: inherit;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.board-column {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+  min-height: 160px;
+}
+
+.board-column h3 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.95rem;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: grab;
+}
+
+.board input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.project-list {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--space-4);
+}
+
+.project-list th,
+.project-list td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Narrow windows: the project list goes on top and the board scrolls sideways. */
+@media (max-width: 1100px) {
+  .projects-layout {
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .project-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    flex: none;
+  }
+
+  .project-picker .sidebar-item {
+    width: auto;
+  }
+
+  .project-view {
+    width: 100%;
+  }
+}
+
+.board {
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
 }

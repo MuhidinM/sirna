@@ -59,7 +59,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 |---|---|---|---|---|
 | R-PRJ-01 | An idea with a date gets a Good / Tight / Too much verdict from the numbers, with reasons and alternatives | T-034, T-035, T-038 | | ☐ |
 | R-PRJ-02 | An idea without a date is placed in the first slot that keeps load ≤ 85%, automatically, with undo | T-034, T-035 | | ☐ |
-| R-PRJ-03 | Project board: To do / Doing / Waiting / Done, plus a list view | T-033 | | ☐ |
+| R-PRJ-03 | Project board: To do / Doing / Waiting / Done, plus a list view | T-033 | Moving a card writes the task status (To do and Doing are `todo` without or with `started_at`, Waiting `waiting`, Done `done` with `completed_at`), checked against the real schema through every column (projects.test.ts); a changed next step becomes a To do card | ☑ |
 | R-PRJ-04 | Waiting-on items with a follow-up reminder | T-030 | `wait: recruiter reply mon` fires at 09:00 on its date (reminders.rs test); the toast offers "Got a reply" or "Still waiting · 3 days", which only moves the date the toast was shown for (tasks.rs test, #30) | ☑ |
 | R-PRJ-05 | At-risk deadlines flagged in the brief | T-035 | | ☐ |
 
