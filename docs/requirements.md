@@ -37,11 +37,11 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-BRN-01 | Daily focus cap (default 4 h outside job blocks) with a stop toast; overruns allowed but marked | T-027 | | ☐ |
-| R-BRN-02 | Hard stop (default 22:30) | T-027 | | ☐ |
+| R-BRN-01 | Daily focus cap (default 4 h outside job blocks) with a stop toast; overruns allowed but marked | T-027 | Focus minutes outside job blocks counted (guard.rs tests); one toast at the cap; later sessions get `overrun = 1`; `focus.daily_cap_min` overrides 240 (#27) | ☑ |
+| R-BRN-02 | Hard stop (default 22:30) | T-027 | One toast at the hard stop; until 03:00 the tray shows "Stopped for today" and Start focus asks "It's past your hard stop. Start anyway?" (live check on the debug build, guard.rs tests, #27) | ☑ |
 | R-BRN-03 | Long break after 4 sessions; starting early needs a second tap | T-022, T-027 | Every 4th session in a row gets a 20-min long break; starting focus in its first 10 minutes returns "confirm" and needs a second tap (tested) (#22) | ☑ |
-| R-BRN-04 | Two low-energy nights make the next day light; one rest day a week | T-026, T-027 | Energy 1–3 is recorded each night (#26); the light day comes in T-027 | ◐ |
-| R-BRN-05 | At most 2 active personal projects; Experiments capped at its target | T-027, T-034 | | ☐ |
+| R-BRN-04 | Two low-energy nights make the next day light; one rest day a week | T-026, T-027 | Energy 1–3 is recorded each night (#26); two 1s in a row plan the next day light, and the rest day from setup has no area blocks (dayplan.test.ts, #27) | ☑ |
+| R-BRN-05 | At most 2 active personal projects; Experiments capped at its target | T-027, T-034 | Capped areas stop at their target when the day is planned (generate.test.ts); the 2-project limit comes with projects in T-034 | ◐ |
 
 ## E. Check-ins (§3.4, §3.9, §3.10)
 

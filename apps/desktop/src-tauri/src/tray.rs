@@ -74,12 +74,17 @@ fn short(text: &str) -> String {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let (top, last, offer_review) = {
+    let (top, last, offer_review, stopped) = {
         let db = app.state::<Db>();
         let conn = db.write.lock();
         let now = clock::now_ms();
         let top = tasks::today_top(&conn, now).unwrap_or_default();
-        (top, tasks::last_capture(&conn), review::offered(&conn, now))
+        (
+            top,
+            tasks::last_capture(&conn),
+            review::offered(&conn, now),
+            crate::guard::stopped_now(&conn, now),
+        )
     };
 
     let status = {
@@ -134,10 +139,23 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             )?));
         }
         _ => {
+            if stopped {
+                items.push(Box::new(MenuItem::with_id(
+                    app,
+                    "stopped",
+                    "Stopped for today",
+                    false,
+                    None::<&str>,
+                )?));
+            }
             items.push(Box::new(MenuItem::with_id(
                 app,
                 FOCUS_START_ID,
-                "Start focus",
+                if stopped {
+                    "Start anyway"
+                } else {
+                    "Start focus"
+                },
                 true,
                 None::<&str>,
             )?));

@@ -5,6 +5,7 @@ mod clock;
 mod commands;
 mod db;
 mod focus;
+mod guard;
 mod hotkey;
 mod migrate;
 mod notify;

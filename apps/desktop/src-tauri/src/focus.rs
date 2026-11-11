@@ -143,6 +143,8 @@ pub enum Effect {
     /// Starting now would cut a long break short; ask again with force.
     NeedConfirm,
     AlreadyFocusing,
+    /// Past the hard stop: starting needs a second tap (T-027).
+    PastHardStop,
 }
 
 #[derive(Debug, Default)]
@@ -581,6 +583,18 @@ pub fn dispatch(app: &AppHandle, event: Event) -> Vec<Effect> {
             Effect::Save(_) | Effect::Close { .. } | Effect::AddDistraction { .. }
         )
     });
+    let completed = effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::Close {
+                outcome: Outcome::Completed,
+                ..
+            }
+        )
+    });
+    if completed {
+        crate::guard::after_complete(app);
+    }
     if changed {
         let _ = app.emit("focus-changed", ());
         let _ = app.emit("data-changed", ["focus_sessions"]);
@@ -669,8 +683,26 @@ pub fn start_with_block(app: &AppHandle, block_id: Option<String>, force: bool) 
     };
     match context {
         Ok(context) => {
-            let id = new_id(clock::now_ms());
-            dispatch(app, Event::Start { context, force, id })
+            let now = clock::now_ms();
+            if !force && crate::guard::stopped_now(&app.state::<Db>().write.lock(), now) {
+                return vec![Effect::PastHardStop];
+            }
+            let id = new_id(now);
+            let effects = dispatch(
+                app,
+                Event::Start {
+                    context,
+                    force,
+                    id: id.clone(),
+                },
+            );
+            if effects
+                .iter()
+                .any(|e| matches!(e, Effect::Save(s) if s.id == id))
+            {
+                crate::guard::after_start(app, &id);
+            }
+            effects
         }
         Err(error) => {
             log::error!("could not read the block for focus: {error}");

@@ -357,11 +357,13 @@ pub fn autostart_status(app: AppHandle) -> Result<bool, String> {
 
 /// Starts a focus session for a block (or a plain one). Returns "started",
 /// "confirm" (it would cut a long break short; call again with force) or
-/// "already" (a session is running).
+/// "already" (a session is running) or "confirm-stop" (past the hard stop).
 #[tauri::command]
 pub fn focus_start(block_id: Option<String>, force: Option<bool>, app: AppHandle) -> String {
     let effects = crate::focus::start_with_block(&app, block_id, force.unwrap_or(false));
-    if effects.contains(&crate::focus::Effect::NeedConfirm) {
+    if effects.contains(&crate::focus::Effect::PastHardStop) {
+        "confirm-stop".into()
+    } else if effects.contains(&crate::focus::Effect::NeedConfirm) {
         "confirm".into()
     } else if effects.contains(&crate::focus::Effect::AlreadyFocusing) {
         "already".into()
