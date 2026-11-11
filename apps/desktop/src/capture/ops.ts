@@ -1,6 +1,6 @@
 /** Turns a parsed capture into database ops and a one-line echo (plan §3.5). */
 import { type Op } from "../kernel/db";
-import { localDate } from "../kernel/dates";
+import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
 import { type Parsed } from "./parse";
 import { weekdayName } from "./when";
@@ -95,9 +95,9 @@ export function toOps(parsed: Parsed, { nowMs, newId }: OpsContext): Op[] {
 }
 
 function dayLabel(date: string, nowMs: number): string {
-  const today = localDate(nowMs);
+  const today = logicalDate(nowMs);
   if (date === today) return "Today";
-  const tomorrow = localDate(nowMs + 24 * 60 * 60 * 1000);
+  const tomorrow = logicalDate(nowMs + 24 * 60 * 60 * 1000);
   if (date === tomorrow) return "Tomorrow";
   const [, month = "", day = ""] = date.split("-");
   const months = [

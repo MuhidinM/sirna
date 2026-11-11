@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import { systemClock } from "../kernel/clock";
 import { transact } from "../kernel/db";
 import { formatAmount } from "../kernel/money";
@@ -52,14 +54,43 @@ function TaskLine({ task, today }: { task: TaskRow; today: string }) {
         <span className={task.status === "done" ? "done" : undefined}>{task.title}</span>
       </label>
       <span className="meta">
-        {task.due_at !== null ? time.format(task.due_at) : overdue ? `since ${task.due_date}` : ""}
+        {overdue
+          ? `since ${task.due_date}${task.due_at !== null ? ` ${time.format(task.due_at)}` : ""}`
+          : task.due_at !== null
+            ? time.format(task.due_at)
+            : ""}
       </span>
     </li>
   );
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The current time, moved on at the next 03:00 and whenever the window gets
+ * focus, so a window left open overnight shows the new day.
+ */
+function useNow(): number {
+  const [nowMs, setNow] = useState(() => systemClock.now());
+  const [, dayStart] = todayParams(nowMs);
+  useEffect(() => {
+    const nextDay = dayStart + DAY_MS;
+    const timer = setTimeout(
+      () => setNow(systemClock.now()),
+      Math.max(1000, nextDay - systemClock.now()),
+    );
+    const onFocus = () => setNow(systemClock.now());
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [dayStart]);
+  return nowMs;
+}
+
 export function Today() {
-  const nowMs = systemClock.now();
+  const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
   const top = useLiveQuery<TaskRow>(todayTopSql, [today, dayStart]);
   const due = useLiveQuery<TaskRow>(DUE_SQL, [today]);

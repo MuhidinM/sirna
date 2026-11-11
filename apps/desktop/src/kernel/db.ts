@@ -40,6 +40,16 @@ export function commitCapture(rawText: string, ops: Op[] = [], parser?: string):
   return invoke<number>("capture_commit", { rawText, ops, parser: parser ?? null });
 }
 
+/** Fixes a capture: undoes the old one and saves the new text, in one transaction. */
+export function replaceCapture(
+  rawId: number,
+  rawText: string,
+  ops: Op[],
+  parser?: string,
+): Promise<number> {
+  return invoke<number>("capture_replace", { rawId, rawText, ops, parser: parser ?? null });
+}
+
 /** Undoes a capture's records; returns how many changes were reversed. */
 export function undoCapture(rawId: number): Promise<number> {
   return invoke<number>("capture_undo", { rawId });

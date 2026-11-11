@@ -29,6 +29,10 @@ pub struct Due {
     pub kind: String,
     pub entity_id: String,
     pub fire_at: i64,
+    /// When it became due: the snooze end for a snoozed reminder, else fire_at.
+    /// Lateness is measured from here, so a snoozed reminder comes back as a
+    /// normal toast, not a summary.
+    pub due_at: i64,
     pub title: String,
 }
 
@@ -45,7 +49,7 @@ pub fn plan_tick(due: Vec<Due>, now_ms: i64) -> Vec<Action> {
     let mut fresh = Vec::new();
     let mut late = Vec::new();
     for item in due {
-        let age = now_ms - item.fire_at;
+        let age = now_ms - item.due_at;
         if age > EXPIRE_MS {
             actions.push(Action::Expire(item));
         } else if age > LATE_MS {
@@ -68,7 +72,9 @@ pub fn plan_tick(due: Vec<Due>, now_ms: i64) -> Vec<Action> {
 /// Reminders whose time has come and that haven't been shown (or whose snooze ended).
 pub fn due_now(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<Due>> {
     let mut statement = conn.prepare(
-        "SELECT r.key, r.kind, r.entity_id, r.fire_at, r.title
+        "SELECT r.key, r.kind, r.entity_id, r.fire_at,
+                COALESCE(CASE WHEN n.outcome = 'snoozed' THEN n.snoozed_until END, r.fire_at),
+                r.title
          FROM v_reminders_task AS r
          LEFT JOIN core_notifications AS n ON n.key = r.key
          WHERE r.fire_at <= ?1
@@ -81,7 +87,8 @@ pub fn due_now(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<Due>> {
             kind: row.get(1)?,
             entity_id: row.get(2)?,
             fire_at: row.get(3)?,
-            title: row.get(4)?,
+            due_at: row.get(4)?,
+            title: row.get(5)?,
         })
     })?;
     rows.collect()
@@ -157,11 +164,11 @@ fn show_one(app: &AppHandle, item: Due) {
     ];
     let result = notify::show(app, &title, "Sirna reminder", &buttons, move |action| {
         let db = handle.state::<Db>();
-        let conn = db.write.lock();
+        let mut conn = db.write.lock();
         let now = clock::now_ms();
         let outcome = match action.as_deref() {
             Some("done") => {
-                if let Err(error) = tasks::toggle_done(&conn, &task_id, now) {
+                if let Err(error) = tasks::mark_done(&mut conn, &task_id, now) {
                     log::warn!("could not mark the task done from a toast: {error}");
                 }
                 set_outcome(&conn, &key, "done", now, None)
@@ -242,6 +249,7 @@ pub fn start(app: AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("sirna-tick".into())
         .spawn(move || {
+            let mut day = tasks::logical_day(clock::now_ms()).0;
             loop {
                 let now = clock::now_ms();
                 let wait = MINUTE_MS - now.rem_euclid(MINUTE_MS) + 50;
@@ -251,6 +259,13 @@ pub fn start(app: AppHandle) {
                 }));
                 if result.is_err() {
                     log::error!("the reminder tick panicked; it will run again next minute");
+                }
+                // At 03:00 a new logical day starts: the tray and Today must show it
+                // even when nothing was written overnight.
+                let today = tasks::logical_day(clock::now_ms()).0;
+                if today != day {
+                    day = today;
+                    let _ = app.emit("data-changed", ["day"]);
                 }
             }
         });
@@ -272,6 +287,7 @@ mod tests {
             kind: "task".into(),
             entity_id: key.into(),
             fire_at: NOW - minutes_ago * MINUTE_MS,
+            due_at: NOW - minutes_ago * MINUTE_MS,
             title: key.into(),
         }
     }
@@ -379,5 +395,23 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Follow up: recruiter");
         assert_eq!(local_time(items[0].fire_at), "09:00");
+    }
+
+    #[test]
+    fn a_snoozed_reminder_comes_back_as_its_own_toast() {
+        let conn = conn();
+        conn.execute(
+            "INSERT INTO task_items (id, title, status, remind_at, created_at, updated_at)
+             VALUES ('t1', 'Call bank', 'todo', ?1, 0, 0)",
+            [NOW - 30 * MINUTE_MS],
+        )
+        .expect("task");
+        let item = &due_now(&conn, NOW - 30 * MINUTE_MS).expect("due")[0];
+        record(&conn, item, NOW - 30 * MINUTE_MS, None).expect("record");
+        set_outcome(&conn, &item.key, "snoozed", NOW - 25 * MINUTE_MS, Some(NOW)).expect("snooze");
+
+        let back = due_now(&conn, NOW).expect("due again");
+        assert_eq!(back[0].due_at, NOW);
+        assert!(matches!(plan_tick(back, NOW).as_slice(), [Action::Show(_)]));
     }
 }

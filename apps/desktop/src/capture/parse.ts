@@ -3,7 +3,7 @@
  * an idea, a cheat-sheet line… Deterministic; the AI fallback comes in M4.
  * The live chip and the save use this same function.
  */
-import { localDate } from "../kernel/dates";
+import { logicalDate } from "../kernel/dates";
 import { parseAmount, type Santim } from "../kernel/money";
 import { type ClockStyle, localToEpoch, readWhen } from "./when";
 
@@ -125,7 +125,8 @@ function guessCategory(text: string, income: boolean): string {
 
 /** Pulls `#area` tags out of the text. */
 function readTag(text: string): { rest: string; area?: string } {
-  const match = /(?:^|\s)#([\p{L}\p{N}_-]+)/u.exec(text);
+  // A tag starts with a letter, so "issue #42" keeps its number.
+  const match = /(?:^|\s)#(\p{L}[\p{L}\p{N}_-]*)/u.exec(text);
   if (!match?.[1]) return { rest: text };
   const rest = (text.slice(0, match.index) + text.slice(match.index + match[0].length))
     .replace(/\s+/g, " ")
@@ -144,8 +145,9 @@ function readMoney(
 ): { label: string; amount: Santim } | undefined {
   const match = AMOUNT.exec(text);
   if (!match?.[1]) return undefined;
-  // A leading zero with no decimals is a phone number or a code, not money.
-  if (/^0\d/.test(match[1])) return undefined;
+  // Phone numbers and codes are not money: a leading zero, or an Ethiopian
+  // mobile number with or without 251 (911234567, 251911234567).
+  if (/^0\d/.test(match[1]) || /^(?:251)?[79]\d{8}$/.test(match[1])) return undefined;
   const amount = parseAmount(match[1]);
   if (amount === null || amount === 0) return undefined;
   const before = text.slice(0, match.index).trim();
@@ -155,9 +157,12 @@ function readMoney(
     .trim()
     .replace(/^(?:on|for)\s+/i, "");
   if (!label || /\d/.test(label)) return undefined;
-  // Amount first ("120 lunch") only for things we know cost money, so
-  // "2 hours coding" or "3 eggs" stay text.
-  if (!before && !amountFirstOk && !isKnownSpend(label)) return undefined;
+  // Only plain "label amount" is money by default. Amount first ("120 lunch"),
+  // amount mid-line ("get 3 eggs today") or a task verb first ("read chapter 5",
+  // "renew passport 2027") need a word we know costs money.
+  const firstWord = before.split(" ")[0]?.toLowerCase() ?? "";
+  const plain = before !== "" && after === "" && !TASK_VERBS.has(firstWord);
+  if (!plain && !amountFirstOk && !isKnownSpend(label)) return undefined;
   return { label, amount };
 }
 
@@ -219,7 +224,7 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
           description: money.label,
           amount: money.amount,
           categoryId: guessCategory(money.label, true),
-          date: localDate(nowMs),
+          date: logicalDate(nowMs),
         },
         area,
       );
@@ -228,18 +233,21 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
 
   // "pay EEU 600 fri" is something to do; "paid rent 12000" happened.
   if (!PAY_WORD.test(untagged)) {
+    const spent = SPENT_WORDS.test(untagged);
     const spentText = untagged.replace(SPENT_WORDS, "");
-    const when = readWhen(spentText, nowMs, clockStyle);
-    const money = readMoney(when.rest);
+    // Spending happened, so its day words point back: "lunch 120 mon" is last Monday.
+    const when = readWhen(spentText, nowMs, clockStyle, { past: true });
+    const money = readMoney(when.rest, spent);
     if (money && when.minutes === undefined) {
-      const isIncome = INCOME_WORDS.some(([pattern]) => pattern.test(money.label));
+      // "paid salary 3000 to the house help" is spending, not income.
+      const isIncome = !spent && INCOME_WORDS.some(([pattern]) => pattern.test(money.label));
       return withArea(
         {
           kind: isIncome ? "income" : "expense",
           description: money.label,
           amount: money.amount,
           categoryId: guessCategory(money.label, isIncome),
-          date: when.date ?? localDate(nowMs),
+          date: when.date ?? logicalDate(nowMs),
         },
         area,
       );

@@ -32,6 +32,42 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
     tables
 }
 
+/// A capture may only add tasks, notes and money. Anything else (updates,
+/// deletes, settings) goes through db_tx, which the capture window can't call.
+pub fn capture_ops_allowed(ops: &[Op]) -> bool {
+    ops.iter().all(|op| {
+        matches!(op, Op::Insert { table, .. }
+            if matches!(table.as_str(), "task_items" | "note_items" | "money_txns"))
+    })
+}
+
+/// Stores the raw line and its records inside an open transaction.
+fn store_capture(
+    txn: &rusqlite::Transaction<'_>,
+    raw_text: &str,
+    ops: &[Op],
+    parser: Option<&str>,
+    now: i64,
+) -> Result<i64, String> {
+    let raw_id = db::insert_capture(txn, raw_text, now).map_err(|error| error.to_string())?;
+    if !ops.is_empty() {
+        let context = format!("capture:{raw_id}");
+        tx::apply_ops(txn, "user", Some(&context), ops, now).map_err(|error| error.to_string())?;
+        db::mark_parsed(txn, raw_id, parser, now).map_err(|error| error.to_string())?;
+    }
+    Ok(raw_id)
+}
+
+fn check_capture(raw_text: &str, ops: &[Op]) -> Result<(), String> {
+    if raw_text.trim().is_empty() {
+        return Err("Nothing to save".into());
+    }
+    if !capture_ops_allowed(ops) {
+        return Err("A capture can only add tasks, notes or money".into());
+    }
+    Ok(())
+}
+
 /// Saves a capture exactly as typed, plus the records the parser made from
 /// it, in one transaction (plan §5.1 rule 1). The records are logged under
 /// `capture:<raw id>` so the whole capture can be undone.
@@ -43,22 +79,13 @@ pub fn capture_commit(
     app: AppHandle,
     db: State<'_, Db>,
 ) -> Result<i64, String> {
-    if raw_text.trim().is_empty() {
-        return Err("Nothing to save".into());
-    }
     let ops = ops.unwrap_or_default();
+    check_capture(&raw_text, &ops)?;
     let now = clock::now_ms();
     let raw_id = {
         let mut conn = db.write.lock();
         let txn = conn.transaction().map_err(|error| error.to_string())?;
-        let raw_id = db::insert_capture(&txn, &raw_text, now).map_err(|error| error.to_string())?;
-        if !ops.is_empty() {
-            let context = format!("capture:{raw_id}");
-            tx::apply_ops(&txn, "user", Some(&context), &ops, now)
-                .map_err(|error| error.to_string())?;
-            db::mark_parsed(&txn, raw_id, parser.as_deref(), now)
-                .map_err(|error| error.to_string())?;
-        }
+        let raw_id = store_capture(&txn, &raw_text, &ops, parser.as_deref(), now)?;
         txn.commit().map_err(|error| error.to_string())?;
         raw_id
     };
@@ -66,6 +93,42 @@ pub fn capture_commit(
     tables.push("core_raw_items".into());
     emit_changed(&app, tables);
     Ok(raw_id)
+}
+
+/// Fixing a capture (Up arrow): undo the old one and save the new one in one
+/// transaction, so a failed save never leaves the old capture undone.
+#[tauri::command]
+pub fn capture_replace(
+    raw_id: i64,
+    raw_text: String,
+    ops: Option<Vec<Op>>,
+    parser: Option<String>,
+    app: AppHandle,
+    db: State<'_, Db>,
+) -> Result<i64, String> {
+    let ops = ops.unwrap_or_default();
+    check_capture(&raw_text, &ops)?;
+    let now = clock::now_ms();
+    let new_id = {
+        let mut conn = db.write.lock();
+        let txn = conn.transaction().map_err(|error| error.to_string())?;
+        tx::undo_context(&txn, "user", &format!("capture:{raw_id}"), now)
+            .map_err(|error| error.to_string())?;
+        db::mark_ignored(&txn, raw_id).map_err(|error| error.to_string())?;
+        let new_id = store_capture(&txn, &raw_text, &ops, parser.as_deref(), now)?;
+        txn.commit().map_err(|error| error.to_string())?;
+        new_id
+    };
+    emit_changed(
+        &app,
+        vec![
+            "core_raw_items".into(),
+            "task_items".into(),
+            "note_items".into(),
+            "money_txns".into(),
+        ],
+    );
+    Ok(new_id)
 }
 
 /// Undoes everything a capture created or changed, and marks it ignored.
@@ -117,7 +180,33 @@ fn is_read_query(sql: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_read_query;
+    use super::{capture_ops_allowed, is_read_query};
+    use crate::tx::Op;
+    use serde_json::Map;
+
+    #[test]
+    fn captures_may_only_insert_tasks_notes_and_money() {
+        let insert = |table: &str| Op::Insert {
+            table: table.into(),
+            id: "x".into(),
+            values: Map::new(),
+        };
+        assert!(capture_ops_allowed(&[
+            insert("task_items"),
+            insert("money_txns"),
+            insert("note_items")
+        ]));
+        assert!(!capture_ops_allowed(&[insert("core_settings")]));
+        assert!(!capture_ops_allowed(&[Op::Delete {
+            table: "task_items".into(),
+            id: "x".into()
+        }]));
+        assert!(!capture_ops_allowed(&[Op::Update {
+            table: "task_items".into(),
+            id: "x".into(),
+            values: Map::new()
+        }]));
+    }
 
     #[test]
     fn reads_are_allowed_after_comments() {
