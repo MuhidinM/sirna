@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { type ClockStyle } from "../capture/when";
+import { systemClock } from "../kernel/clock";
+import { logicalDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import { DEFAULT_ANSWERS, type JobAnswer, type Weekday } from "../features/plan/routine";
@@ -75,6 +77,59 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
+  // Running setup again starts from what you chose last time.
+  useEffect(() => {
+    void Promise.all([
+      query<{ key: string; value_json: string }>(
+        "SELECT key, value_json FROM core_settings WHERE key IN ('day.wake', 'day.hard_stop', 'day.review', 'capture.clock_style', 'setup.answers')",
+      ),
+      query<{ id: string; weekly_target_min: number; active: number }>(
+        "SELECT id, weekly_target_min, active FROM area_items WHERE deleted_at IS NULL",
+      ),
+      invoke<boolean>("autostart_status").catch(() => true),
+    ]).then(([settings, savedAreas, autostart]) => {
+      const value = (key: string): unknown => {
+        const row = settings.find((setting) => setting.key === key);
+        try {
+          return row ? (JSON.parse(row.value_json) as unknown) : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const text = (key: string) =>
+        typeof value(key) === "string" ? (value(key) as string) : undefined;
+      const answers = value("setup.answers") as Partial<SetupChoices> | undefined;
+      if (!answers) return; // first run: keep the defaults
+      setWake(text("day.wake") ?? DEFAULT_ANSWERS.wake);
+      setHardStop(text("day.hard_stop") ?? DEFAULT_ANSWERS.hardStop);
+      setReview(text("day.review") ?? DEFAULT_ANSWERS.review);
+      if (text("capture.clock_style") === "ethiopian") setClockStyle("ethiopian");
+      if (answers.jobs) {
+        const activeIds = new Set(
+          savedAreas.filter((area) => area.active === 1).map((area) => area.id),
+        );
+        setJobs(answers.jobs.map((job) => ({ ...job, enabled: activeIds.has(job.areaId) })));
+      }
+      if (answers.gymDays) setGymDays(answers.gymDays);
+      if (answers.gymTime) setGymTime(answers.gymTime);
+      if (answers.restDay) setRestDay(answers.restDay);
+      setAreas(
+        Object.fromEntries(
+          AREAS.map((area) => {
+            const saved = savedAreas.find((row) => row.id === area.id);
+            return [
+              area.id,
+              saved
+                ? { on: saved.active === 1, hours: saved.weekly_target_min / 60 }
+                : { on: true, hours: area.hours },
+            ];
+          }),
+        ),
+      );
+      setStartWithWindows(autostart);
+    });
+  }, []);
+
   const updateJob = (index: number, change: Partial<JobAnswer & { enabled: boolean }>) =>
     setJobs((current) => current.map((job, i) => (i === index ? { ...job, ...change } : job)));
 
@@ -108,14 +163,27 @@ export function Setup({ onDone }: { onDone: () => void }) {
       const allAreas = await query<{ id: string }>(
         "SELECT id FROM area_items WHERE deleted_at IS NULL",
       );
+      // Today's generated blocks follow the old routine; drop them so Today replans.
+      const today = logicalDate(systemClock.now());
+      const generated = await query<{ id: string }>(
+        "SELECT id FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL AND source IN ('template', 'generator') AND user_edited_at IS NULL",
+        [today],
+      );
       await transact(
         "user",
-        setupOps(
-          choices,
-          existing.map((row) => row.id),
-          allAreas.map((row) => row.id),
-          () => ulid(),
-        ),
+        [
+          ...setupOps(
+            choices,
+            existing.map((row) => row.id),
+            allAreas.map((row) => row.id),
+            () => ulid(),
+          ),
+          ...generated.map((row) => ({
+            op: "delete" as const,
+            table: "day_blocks" as const,
+            id: row.id,
+          })),
+        ],
         "setup",
       );
       await invoke("autostart_set", { enabled: startWithWindows });
