@@ -38,6 +38,8 @@ export interface BriefInput {
   hardStopMin: number;
   /** What changed since yesterday (T-030); the line is hidden when nothing did. */
   changed?: ChangedCounts | undefined;
+  /** Projects whose plan falls short of their deadline (T-035). */
+  atRisk?: string | null;
 }
 
 export interface BriefLine {
@@ -158,6 +160,8 @@ export function buildBrief(input: BriefInput): BriefLine[] {
         .map((area) => `${area.name} ${progress(area.done_min, area.target_min)}`)
         .join(" · "),
     });
+
+  if (input.atRisk) lines.push({ label: "AT RISK", text: input.atRisk });
 
   const changed = changedText(input.changed);
   if (changed) lines.push({ label: "CHANGED", text: changed });

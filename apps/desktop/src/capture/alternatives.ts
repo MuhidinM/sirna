@@ -4,7 +4,7 @@
  */
 import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
-import { type Parsed } from "./parse";
+import { type Parsed, readIdea } from "./parse";
 
 /** The parser's reading first, then the other useful kinds, without repeats. */
 export function readings(parsed: Parsed, raw: string, nowMs: number): Parsed[] {
@@ -29,7 +29,7 @@ export function readings(parsed: Parsed, raw: string, nowMs: number): Parsed[] {
     options.push(withArea({ kind: "task", title: `${parsed.description} ${amount}`.trim() }));
   }
   if (parsed.kind !== "task") options.push(withArea({ kind: "task", title }));
-  if (parsed.kind !== "idea") options.push(withArea({ kind: "idea", body: text }));
+  if (parsed.kind !== "idea") options.push(withArea(readIdea(text, nowMs)));
   if (parsed.kind !== "note") options.push(withArea({ kind: "note", body: text }));
   if (parsed.kind !== "cheat") options.push(withArea({ kind: "cheat", body: text }));
   if (parsed.kind === "task" && !parsed.dueDate) {

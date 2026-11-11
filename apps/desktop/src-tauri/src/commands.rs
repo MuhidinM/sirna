@@ -37,7 +37,7 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
 pub fn capture_ops_allowed(ops: &[Op]) -> bool {
     ops.iter().all(|op| {
         matches!(op, Op::Insert { table, .. }
-            if matches!(table.as_str(), "task_items" | "note_items" | "money_txns"))
+            if matches!(table.as_str(), "task_items" | "note_items" | "money_txns" | "project_items"))
     })
 }
 
@@ -63,7 +63,7 @@ fn check_capture(raw_text: &str, ops: &[Op]) -> Result<(), String> {
         return Err("Nothing to save".into());
     }
     if !capture_ops_allowed(ops) {
-        return Err("A capture can only add tasks, notes or money".into());
+        return Err("A capture can only add tasks, notes, money or ideas".into());
     }
     Ok(())
 }
@@ -185,7 +185,7 @@ mod tests {
     use serde_json::Map;
 
     #[test]
-    fn captures_may_only_insert_tasks_notes_and_money() {
+    fn captures_may_only_insert_tasks_notes_money_and_ideas() {
         let insert = |table: &str| Op::Insert {
             table: table.into(),
             id: "x".into(),
@@ -194,8 +194,10 @@ mod tests {
         assert!(capture_ops_allowed(&[
             insert("task_items"),
             insert("money_txns"),
-            insert("note_items")
+            insert("note_items"),
+            insert("project_items")
         ]));
+        assert!(!capture_ops_allowed(&[insert("area_items")]));
         assert!(!capture_ops_allowed(&[insert("core_settings")]));
         assert!(!capture_ops_allowed(&[Op::Delete {
             table: "task_items".into(),

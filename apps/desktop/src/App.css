@@ -614,3 +614,16 @@ input[type="number"] {
 .timing-too_much {
   border-left-color: var(--danger);
 }
+
+.idea-card {
+  margin: var(--space-4) 0;
+}
+
+.idea-card h3 {
+  margin: 0;
+}
+
+.at-risk {
+  color: var(--danger);
+  font-weight: 600;
+}
