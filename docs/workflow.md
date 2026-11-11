@@ -32,7 +32,13 @@ An empty checkbox on something closed reads as forgotten work, so deferred items
 
 ## Protected `main`
 
-`main` only changes through pull requests once CI exists (T-006). Branch protection then requires the CI checks to pass, the branch to be up to date with `main`, and review conversations resolved. Force-pushes to `main` and deleting it are blocked.
+`main` only changes through pull requests. Branch protection requires:
+
+- the CI check **Lint, type-check, test and build** to pass ([ci.yml](../.github/workflows/ci.yml)),
+- the branch to be up to date with `main` before merging,
+- all review conversations to be resolved.
+
+The rules apply to administrators too. Force-pushes to `main` and deleting it are blocked. Only merge commits are allowed, and merged branches are deleted automatically.
 
 ## Commits
 
