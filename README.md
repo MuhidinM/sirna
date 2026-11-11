@@ -28,3 +28,15 @@ Local-first: one SQLite file on your machine. Gemini is optional and only sees t
 ## Stack
 
 Tauri v2 (Rust core + WebView2) · React · TypeScript · Vite · SQLite (rusqlite) · Vitest · pnpm.
+
+## Run it
+
+Needs Node 24, pnpm 12, Rust (see [dev machine setup](docs/workflow.md#dev-machine-setup)) and WebView2.
+
+```bash
+pnpm install
+```
+
+```bash
+pnpm dev
+```
