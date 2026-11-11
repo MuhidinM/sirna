@@ -28,7 +28,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
 | R-FOC-01 | A focus timer (default 25/5, long break after 4) runs with no window open and survives sleep and restart | T-022 | `focus.rs`: pure state machine (10 tests: break after a session, long break on the 4th in a row, a 15-min gap starts a new row, interrupted after sleep, pause moves the end, stop/distracted, +5 once, area lengths, save and restore); a thread wakes at each deadline. Checked by hand: started from Today, quit and restarted mid-session — it resumed at 24:47; Stop recorded `stopped` (#22) | ☑ |
-| R-FOC-02 | Tray shows the timer and offers Pause, Stop, Distracted | T-023 | | ☐ |
+| R-FOC-02 | Tray shows the timer and offers Pause, Stop, Distracted | T-023 | The tray menu leads with the session line ("Focus · Coding skills · 19 min left") and Pause/Resume, Distracted, Stop / End break, or Start focus when idle; the tooltip shows the countdown each minute (tested); no webview needed. Clicking the menu by hand is on the smoke list (#23) | ◐ |
 | R-FOC-03 | Block start toast names a ≤ 5-minute first step; one start nudge per block | T-021 | | ☐ |
 | R-FOC-04 | Focus set-up sheet: intent line, minimize listed apps, open the area's work, checklist; one key to start | T-028 | | ☐ |
 | R-FOC-05 | Do Not Disturb switched on automatically if a tested route works, otherwise a one-tick reminder | T-029 | | ☐ |

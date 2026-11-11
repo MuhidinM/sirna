@@ -8,10 +8,11 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 2. **Capture:** press the capture key from another app. The box appears and you can type straight away. Enter shows "Saved" and closes it; Escape closes it; clicking elsewhere closes it.
 3. **Saved unchanged:** `node scripts/read-captures.mjs` shows the line exactly as typed.
 4. **Toast:** tray → Test notification. The toast says "Sirna" (not PowerShell) and has two buttons. "Open Sirna" opens the main window; "Got it" just closes. Both appear in the log as `toast action: …`.
-5. **Window:** close the main window; Sirna stays in the tray. Tray → Open Sirna brings it back.
-6. **Second launch:** start Sirna from the Start menu while it runs: no second tray icon; the main window opens.
-7. **Quit:** tray → Quit. The tray icon and all `sirna.exe` / `msedgewebview2.exe` children are gone.
-8. **Memory:** start it again with `--autostart`, wait a minute, run `scripts/measure.ps1`, and add a line to [measurements.md](measurements.md) if it moved.
+5. **Focus from the tray:** tray → Start focus. The tooltip reads "Focus · … · 25 min left" and counts down; Pause, Resume, Distracted and Stop work from the menu with no window open.
+6. **Window:** close the main window; Sirna stays in the tray. Tray → Open Sirna brings it back.
+7. **Second launch:** start Sirna from the Start menu while it runs: no second tray icon; the main window opens.
+8. **Quit:** tray → Quit. The tray icon and all `sirna.exe` / `msedgewebview2.exe` children are gone.
+9. **Memory:** start it again with `--autostart`, wait a minute, run `scripts/measure.ps1`, and add a line to [measurements.md](measurements.md) if it moved.
 
 ## After milestones that touch time
 
