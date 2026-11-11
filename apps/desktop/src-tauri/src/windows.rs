@@ -76,6 +76,9 @@ fn open_main(app: &AppHandle) -> tauri::Result<()> {
     }
     WebviewWindowBuilder::new(app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
         .title("Sirna")
+        // Tauri's own file-drop handler would swallow HTML drag and drop
+        // (the project board), and Sirna takes no dropped files.
+        .disable_drag_drop_handler()
         .inner_size(1040.0, 720.0)
         .min_inner_size(720.0, 480.0)
         .background_color(BACKGROUND)

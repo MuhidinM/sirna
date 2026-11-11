@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - **Sidebar** on every page: Today, Cheat sheets, Focus kits, Night review, My week, Settings.
 - **Settings:** save, replace or remove the Gemini API key and the Google Calendar secret address (kept in Windows Credential Manager, never shown again); change the capture key without restarting; focus cap, Do not disturb during focus, theme and start with Windows.
+- **Projects:** a page per project with a board (To do / Doing / Waiting / Done; drag a card or pick its column) and a list, a next step that goes on the board, weekly hours, deadline and status.
 - **My week:** choose the "Check email" reminder times (or none) instead of the fixed 10:00 and 15:00.
 
 ## [0.1.0] - 2026-11-11

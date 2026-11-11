@@ -11,6 +11,7 @@ export type Row = Record<string, SqlValue>;
 /** The tables `transact` may write, mirroring `TABLES` in tx.rs. */
 export type WritableTable =
   | "task_items"
+  | "project_items"
   | "note_items"
   | "money_txns"
   | "money_templates"

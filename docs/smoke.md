@@ -26,6 +26,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Away:** capture `away till mon`: the echo says "Away until …", Today shows the banner, and no brief, review or block toast comes until then; a timed reminder still fires. "I'm back" ends it (T-032).
 - **Daily backup:** after the first minute of a new day, `D:\Sirna\backups` has `sirna-<today>.db` and the log says `daily backup:` (T-032).
 - **Settings:** the sidebar reaches every page. In Settings, save a Gemini key: it shows "Saved in Windows Credential Manager" and the box stays empty; Replace and Remove work, and Credential Manager → Windows Credentials lists `gemini_api_key` under `dev.sirna.app`. Set the capture key to `Ctrl+Alt+K`: it works at once and the tray tooltip names it. In My week, set email checks to `11:00`: tomorrow's plan has one check at 11:00.
+- **Projects:** New project with a next step: it shows on the board under To do. Drag it to Doing: Today still lists it. Move it to Done: the project asks for the next step. The List tab shows every card with its column (T-033).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)
