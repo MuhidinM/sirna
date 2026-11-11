@@ -133,8 +133,8 @@ fn on_menu(app: &AppHandle, id: &str) {
     if let Some(task_id) = id.strip_prefix(TASK_PREFIX) {
         let result = {
             let db = app.state::<Db>();
-            let conn = db.write.lock();
-            tasks::toggle_done(&conn, task_id, clock::now_ms())
+            let mut conn = db.write.lock();
+            tasks::toggle_done(&mut conn, task_id, clock::now_ms())
         };
         if let Err(error) = result {
             log::warn!("could not tick the task: {error}");

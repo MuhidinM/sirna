@@ -60,14 +60,31 @@ pub fn today_top(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<TopTask
     rows.collect()
 }
 
-/// Marks a task done, or back to todo if it was done.
-pub fn toggle_done(conn: &Connection, id: &str, now_ms: i64) -> Result<bool, tx::TxError> {
-    let status: String = conn
-        .query_row("SELECT status FROM task_items WHERE id = ?1", [id], |row| {
-            row.get(0)
-        })
-        .map_err(|error| tx::TxError::Sql(error.to_string()))?;
-    let done = status != "done";
+fn sql_error(error: rusqlite::Error) -> tx::TxError {
+    tx::TxError::Sql(error.to_string())
+}
+
+/// The task's status, or None when it doesn't exist or was deleted.
+fn live_status(conn: &Connection, id: &str) -> Result<Option<String>, tx::TxError> {
+    match conn.query_row(
+        "SELECT status FROM task_items WHERE id = ?1 AND deleted_at IS NULL",
+        [id],
+        |row| row.get(0),
+    ) {
+        Ok(status) => Ok(Some(status)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(sql_error(error)),
+    }
+}
+
+/// Writes the done state and its audit row in one transaction.
+fn write_done(
+    conn: &mut Connection,
+    id: &str,
+    done: bool,
+    context: &str,
+    now_ms: i64,
+) -> Result<(), tx::TxError> {
     let mut values = Map::new();
     values.insert(
         "status".into(),
@@ -86,8 +103,28 @@ pub fn toggle_done(conn: &Connection, id: &str, now_ms: i64) -> Result<bool, tx:
         id: id.into(),
         values,
     };
-    tx::apply_ops(conn, "user", Some("tray"), &[op], now_ms)?;
+    let txn = conn.transaction().map_err(sql_error)?;
+    tx::apply_ops(&txn, "user", Some(context), &[op], now_ms)?;
+    txn.commit().map_err(sql_error)
+}
+
+/// Tray and Today tick box: done ↔ todo. Returns the new done state.
+pub fn toggle_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<bool, tx::TxError> {
+    let Some(status) = live_status(conn, id)? else {
+        return Ok(false);
+    };
+    let done = status != "done";
+    write_done(conn, id, done, "tray", now_ms)?;
     Ok(done)
+}
+
+/// A reminder's Done button: always ends up done, never reopens a task that
+/// was finished elsewhere, and ignores deleted tasks.
+pub fn mark_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<(), tx::TxError> {
+    match live_status(conn, id)?.as_deref() {
+        None | Some("done") => Ok(()),
+        Some(_) => write_done(conn, id, true, "reminder", now_ms),
+    }
 }
 
 pub fn last_capture(conn: &Connection) -> Option<(i64, String)> {
@@ -139,7 +176,7 @@ mod tests {
 
     #[test]
     fn tray_shows_todays_top_and_toggles_done() {
-        let conn = conn();
+        let mut conn = conn();
         add(&conn, "a", "2026-11-11");
         add(&conn, "b", "2026-11-20");
         let top = today_top(&conn, NOON_11_NOV).expect("top");
@@ -152,9 +189,9 @@ mod tests {
             }]
         );
 
-        assert!(toggle_done(&conn, "a", NOON_11_NOV).expect("toggle"));
+        assert!(toggle_done(&mut conn, "a", NOON_11_NOV).expect("toggle"));
         assert!(today_top(&conn, NOON_11_NOV).expect("top")[0].done);
-        assert!(!toggle_done(&conn, "a", NOON_11_NOV).expect("toggle back"));
+        assert!(!toggle_done(&mut conn, "a", NOON_11_NOV).expect("toggle back"));
     }
 
     #[test]
@@ -167,5 +204,30 @@ mod tests {
         )
         .expect("seed");
         assert_eq!(last_capture(&conn), Some((1, "lunch 120".into())));
+    }
+
+    #[test]
+    fn mark_done_never_reopens_and_ignores_deleted_tasks() {
+        let mut conn = conn();
+        add(&conn, "a", "2026-11-11");
+        mark_done(&mut conn, "a", NOON_11_NOV).expect("done");
+        mark_done(&mut conn, "a", NOON_11_NOV + 1).expect("done again");
+        let status: String = conn
+            .query_row("SELECT status FROM task_items WHERE id = 'a'", [], |r| {
+                r.get(0)
+            })
+            .expect("status");
+        assert_eq!(status, "done");
+
+        add(&conn, "gone", "2026-11-11");
+        conn.execute("UPDATE task_items SET deleted_at = 1 WHERE id = 'gone'", [])
+            .expect("delete");
+        mark_done(&mut conn, "gone", NOON_11_NOV).expect("deleted is a no-op");
+        let status: String = conn
+            .query_row("SELECT status FROM task_items WHERE id = 'gone'", [], |r| {
+                r.get(0)
+            })
+            .expect("status");
+        assert_eq!(status, "todo");
     }
 }
