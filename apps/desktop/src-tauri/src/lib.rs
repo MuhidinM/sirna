@@ -9,6 +9,7 @@ mod hotkey;
 mod migrate;
 mod notify;
 mod reminders;
+mod review;
 mod secrets;
 mod session;
 mod startup;
@@ -76,6 +77,7 @@ pub fn run() {
             // The timer's state first: the tray menu shows it.
             let focus_state = focus::restore_state(app.handle());
             app.manage(focus_state.clone());
+            review::manage(app.handle());
             tray::create(app.handle(), capture_key.as_deref())?;
             // Any write (capture, Today screen, tray) refreshes the tray menu.
             let handle = app.handle().clone();
@@ -111,7 +113,8 @@ pub fn run() {
             commands::capture_replace,
             commands::close_window,
             commands::secret_set,
-            commands::secret_status
+            commands::secret_status,
+            commands::take_screen
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sirna");

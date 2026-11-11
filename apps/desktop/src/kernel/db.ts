@@ -18,6 +18,7 @@ export type WritableTable =
   | "routine_blocks"
   | "day_blocks"
   | "task_daily_top"
+  | "day_reviews"
   | "core_settings";
 
 export type Op =

@@ -106,7 +106,13 @@ function useMinute(): number {
   return minute;
 }
 
-export function Today({ onChangeWeek }: { onChangeWeek?: () => void }) {
+export function Today({
+  onChangeWeek,
+  onReview,
+}: {
+  onChangeWeek?: () => void;
+  onReview?: () => void;
+}) {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
 
@@ -148,6 +154,11 @@ export function Today({ onChangeWeek }: { onChangeWeek?: () => void }) {
         {onChangeWeek && (
           <Button onClick={onChangeWeek} className="change-week">
             Change my week
+          </Button>
+        )}
+        {onReview && (
+          <Button onClick={onReview} className="change-week">
+            Night review
           </Button>
         )}
       </header>
