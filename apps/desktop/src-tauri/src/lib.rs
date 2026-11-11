@@ -9,11 +9,12 @@ mod migrate;
 mod notify;
 mod secrets;
 mod startup;
+mod tasks;
 mod tray;
 mod tx;
 mod windows;
 
-use tauri::{Manager, RunEvent};
+use tauri::{Listener, Manager, RunEvent};
 
 /// The argument the autostart entry passes, meaning "start in the tray only".
 pub const AUTOSTART_ARG: &str = "--autostart";
@@ -60,6 +61,9 @@ pub fn run() {
                 db::setting_string(&app.state::<db::Db>().write.lock(), "capture.hotkey");
             let capture_key = hotkey::register(app.handle(), saved_key);
             tray::create(app.handle(), capture_key.as_deref())?;
+            // Any write (capture, Today screen, tray) refreshes the tray menu.
+            let handle = app.handle().clone();
+            app.listen_any("data-changed", move |_| tray::rebuild(&handle));
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }
