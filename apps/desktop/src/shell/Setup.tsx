@@ -1,0 +1,293 @@
+import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
+
+import { type ClockStyle } from "../capture/when";
+import { query, transact } from "../kernel/db";
+import { ulid } from "../kernel/ulid";
+import { DEFAULT_ANSWERS, type JobAnswer, type Weekday } from "../features/plan/routine";
+import { setupOps, type SetupChoices } from "../features/plan/setup";
+import { Button } from "./ui";
+
+const DAYS: [Weekday, string][] = [
+  [1, "Mon"],
+  [2, "Tue"],
+  [3, "Wed"],
+  [4, "Thu"],
+  [5, "Fri"],
+  [6, "Sat"],
+  [7, "Sun"],
+];
+
+const AREAS: { id: string; name: string; hours: number; note?: string }[] = [
+  { id: "jobhunt", name: "Job hunt", hours: 4 },
+  { id: "coding", name: "Coding skills", hours: 4 },
+  { id: "experiments", name: "Experiments", hours: 3, note: "capped: never more than this" },
+  { id: "gym", name: "Gym", hours: 2.25, note: "protected" },
+  { id: "quran", name: "Quran", hours: 2.3, note: "protected, 20 min a day" },
+  { id: "admin", name: "Life admin", hours: 2.3, note: "email checks, errands" },
+];
+
+function DayPicker({
+  value,
+  onChange,
+  label,
+}: {
+  value: Weekday[];
+  onChange: (days: Weekday[]) => void;
+  label: string;
+}) {
+  return (
+    <fieldset className="days">
+      <legend className="visually-hidden">{label}</legend>
+      {DAYS.map(([day, name]) => (
+        <label key={day} className={value.includes(day) ? "day on" : "day"}>
+          <input
+            type="checkbox"
+            checked={value.includes(day)}
+            onChange={(event) =>
+              onChange(
+                event.target.checked ? [...value, day].sort() : value.filter((d) => d !== day),
+              )
+            }
+          />
+          {name}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+export function Setup({ onDone }: { onDone: () => void }) {
+  const [wake, setWake] = useState(DEFAULT_ANSWERS.wake);
+  const [hardStop, setHardStop] = useState(DEFAULT_ANSWERS.hardStop);
+  const [review, setReview] = useState(DEFAULT_ANSWERS.review);
+  const [jobs, setJobs] = useState<(JobAnswer & { enabled: boolean })[]>(
+    DEFAULT_ANSWERS.jobs.map((job) => ({ ...job, enabled: true })),
+  );
+  const [areas, setAreas] = useState(() =>
+    Object.fromEntries(AREAS.map((area) => [area.id, { on: true, hours: area.hours }])),
+  );
+  const [gymDays, setGymDays] = useState<Weekday[]>(DEFAULT_ANSWERS.gymDays);
+  const [gymTime, setGymTime] = useState(DEFAULT_ANSWERS.gymTime);
+  const [restDay, setRestDay] = useState<Weekday>(DEFAULT_ANSWERS.restDay);
+  const [clockStyle, setClockStyle] = useState<ClockStyle>("western");
+  const [startWithWindows, setStartWithWindows] = useState(true);
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  const updateJob = (index: number, change: Partial<JobAnswer & { enabled: boolean }>) =>
+    setJobs((current) => current.map((job, i) => (i === index ? { ...job, ...change } : job)));
+
+  async function save() {
+    setSaving(true);
+    setError(undefined);
+    try {
+      const activeAreas = [
+        ...jobs.filter((job) => job.enabled).map((job) => job.areaId),
+        ...Object.entries(areas)
+          .filter(([, area]) => area.on)
+          .map(([id]) => id),
+      ];
+      const choices: SetupChoices = {
+        wake,
+        hardStop,
+        review,
+        jobs: jobs.map(({ enabled: _enabled, ...job }) => job),
+        activeAreas,
+        restDay,
+        gymDays,
+        gymTime,
+        clockStyle,
+        targetsHours: Object.fromEntries(
+          Object.entries(areas).map(([id, area]) => [id, area.hours]),
+        ),
+      };
+      const existing = await query<{ id: string }>(
+        "SELECT id FROM routine_blocks WHERE deleted_at IS NULL",
+      );
+      const allAreas = await query<{ id: string }>(
+        "SELECT id FROM area_items WHERE deleted_at IS NULL",
+      );
+      await transact(
+        "user",
+        setupOps(
+          choices,
+          existing.map((row) => row.id),
+          allAreas.map((row) => row.id),
+          () => ulid(),
+        ),
+        "setup",
+      );
+      await invoke("autostart_set", { enabled: startWithWindows });
+      onDone();
+    } catch (problem) {
+      setError(String(problem));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <main className="setup">
+      <h1>Set up your week</h1>
+      <p className="meta">About 5 minutes. You can change all of this later.</p>
+
+      <section aria-labelledby="day">
+        <h2 id="day">Your day</h2>
+        <div className="row">
+          <label>
+            Wake <input type="time" value={wake} onChange={(e) => setWake(e.target.value)} />
+          </label>
+          <label>
+            Night review{" "}
+            <input type="time" value={review} onChange={(e) => setReview(e.target.value)} />
+          </label>
+          <label>
+            Hard stop{" "}
+            <input type="time" value={hardStop} onChange={(e) => setHardStop(e.target.value)} />
+          </label>
+        </div>
+      </section>
+
+      <section aria-labelledby="jobs">
+        <h2 id="jobs">Your jobs</h2>
+        {jobs.map((job, index) => (
+          <div className="card job" key={job.areaId}>
+            <label>
+              <input
+                type="checkbox"
+                checked={job.enabled}
+                onChange={(e) => updateJob(index, { enabled: e.target.checked })}
+              />
+              <input
+                aria-label="Job name"
+                value={job.name}
+                onChange={(e) => updateJob(index, { name: e.target.value })}
+              />
+            </label>
+            <DayPicker
+              value={job.days}
+              onChange={(days) => updateJob(index, { days })}
+              label={`${job.name} days`}
+            />
+            <div className="row">
+              <label>
+                From{" "}
+                <input
+                  type="time"
+                  value={job.start}
+                  onChange={(e) => updateJob(index, { start: e.target.value })}
+                />
+              </label>
+              <label>
+                To{" "}
+                <input
+                  type="time"
+                  value={job.end}
+                  onChange={(e) => updateJob(index, { end: e.target.value })}
+                />
+              </label>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section aria-labelledby="areas">
+        <h2 id="areas">What else gets your time each week</h2>
+        <ul className="areas">
+          {AREAS.map((area) => {
+            const state = areas[area.id] ?? { on: true, hours: area.hours };
+            return (
+              <li key={area.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={state.on}
+                    onChange={(e) =>
+                      setAreas({ ...areas, [area.id]: { ...state, on: e.target.checked } })
+                    }
+                  />
+                  {area.name}
+                </label>
+                <label className="hours">
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={state.hours}
+                    aria-label={`${area.name} hours a week`}
+                    onChange={(e) =>
+                      setAreas({ ...areas, [area.id]: { ...state, hours: Number(e.target.value) } })
+                    }
+                  />
+                  h / week
+                </label>
+                {area.note && <span className="meta">{area.note}</span>}
+              </li>
+            );
+          })}
+        </ul>
+        <div className="row">
+          <span>Gym days</span>
+          <DayPicker value={gymDays} onChange={setGymDays} label="Gym days" />
+          <label>
+            at <input type="time" value={gymTime} onChange={(e) => setGymTime(e.target.value)} />
+          </label>
+        </div>
+        <div className="row">
+          <label>
+            Rest day{" "}
+            <select value={restDay} onChange={(e) => setRestDay(Number(e.target.value) as Weekday)}>
+              {DAYS.map(([day, name]) => (
+                <option key={day} value={day}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section aria-labelledby="small">
+        <h2 id="small">Two small things</h2>
+        <fieldset className="row">
+          <legend>When you write &ldquo;at 3&rdquo;, you mean</legend>
+          <label>
+            <input
+              type="radio"
+              checked={clockStyle === "western"}
+              onChange={() => setClockStyle("western")}
+            />{" "}
+            15:00
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={clockStyle === "ethiopian"}
+              onChange={() => setClockStyle("ethiopian")}
+            />{" "}
+            09:00 (Ethiopian clock)
+          </label>
+        </fieldset>
+        <label>
+          <input
+            type="checkbox"
+            checked={startWithWindows}
+            onChange={(e) => setStartWithWindows(e.target.checked)}
+          />{" "}
+          Start Sirna with Windows (it waits in the tray)
+        </label>
+      </section>
+
+      {error && (
+        <p role="alert" className="error">
+          Couldn&apos;t save: {error}
+        </p>
+      )}
+      <p>
+        <Button primary disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Start my week"}
+        </Button>
+      </p>
+    </main>
+  );
+}
