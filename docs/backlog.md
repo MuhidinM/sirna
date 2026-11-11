@@ -31,7 +31,7 @@ Kernel, migrations, IPC, capture parser and window, Today list, tray menu, remin
 | T-013 | [#13](https://github.com/MuhidinM/sirna/issues/13) | Add db_query, db_tx with an allowlist and audit, and capture undo | R-CAP-02, R-CAP-05 | L | done |
 | T-014 | [#14](https://github.com/MuhidinM/sirna/issues/14) | Parse captures into tasks, expenses, ideas and notes (60 fixtures) | R-CAP-03, R-CAP-04 | L | done |
 | T-015 | [#15](https://github.com/MuhidinM/sirna/issues/15) | Finish the capture window: chip, Tab, echo, Up-arrow edit | R-CAP-01, R-CAP-02, R-CAP-05 | M | done |
-| T-016 | [#16](https://github.com/MuhidinM/sirna/issues/16) | Show Today's tasks and the native tray menu | R-CAP-05, R-PLAN-04 | M | todo |
+| T-016 | [#16](https://github.com/MuhidinM/sirna/issues/16) | Show Today's tasks and the native tray menu | R-CAP-05, R-PLAN-04 | M | done |
 | T-017 | [#17](https://github.com/MuhidinM/sirna/issues/17) | Fire reminders with no window, with quiet hours and catch-up | R-NOT-01, R-NOT-02, R-NOT-03 | L | todo |
 
 ## M2 — Routine, day plan and focus timer
