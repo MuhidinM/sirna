@@ -12,6 +12,7 @@
     "allow-secret-set",
     "allow-secret-status",
     "allow-autostart-set",
-    "allow-autostart-status"
+    "allow-autostart-status",
+    "allow-capture-replace"
   ]
 }

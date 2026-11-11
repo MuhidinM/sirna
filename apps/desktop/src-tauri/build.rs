@@ -57,6 +57,7 @@ fn main() {
         "capture_commit",
         "capture_undo",
         "capture_ready",
+        "capture_replace",
         "close_window",
         "db_query",
         "db_tx",

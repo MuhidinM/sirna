@@ -89,6 +89,7 @@ pub fn run() {
             commands::db_query,
             commands::db_tx,
             commands::capture_ready,
+            commands::capture_replace,
             commands::close_window,
             commands::secret_set,
             commands::secret_status

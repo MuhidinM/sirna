@@ -9,6 +9,7 @@
     "allow-capture-undo",
     "allow-capture-ready",
     "allow-close-window",
-    "allow-db-query"
+    "allow-db-query",
+    "allow-capture-replace"
   ]
 }
