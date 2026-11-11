@@ -33,8 +33,8 @@ Questions whose answers change what gets built. Answer them before the milestone
 
 ## Answered
 
-| Question | Answer | Date |
-| --- | --- | --- |
-| App name | Sirna (Oromo: order, system) | 2026-11-11 |
-| Email integration | None; check-email routine blocks instead | 2026-11-11 |
+| Question             | Answer                                                 | Date       |
+| -------------------- | ------------------------------------------------------ | ---------- |
+| App name             | Sirna (Oromo: order, system)                           | 2026-11-11 |
+| Email integration    | None; check-email routine blocks instead               | 2026-11-11 |
 | Bank/SMS integration | None; spending asked in the night review (mostly cash) | 2026-11-11 |

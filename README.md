@@ -14,16 +14,16 @@ Local-first: one SQLite file on your machine. Gemini is optional and only sees t
 
 ## Documentation
 
-| Doc | What's in it |
-| --- | --- |
-| [docs/plan.md](docs/plan.md) | Flows, architecture, data model, AI, roadmap |
-| [docs/requirements.md](docs/requirements.md) | Every requirement with an ID and evidence |
-| [docs/backlog.md](docs/backlog.md) | Tasks per milestone, linked to issues |
-| [docs/workflow.md](docs/workflow.md) | How work moves from issue to `main` |
-| [docs/testing.md](docs/testing.md) | Test layers and how to run them |
-| [docs/decisions/](docs/decisions/README.md) | Architecture decision records |
-| [docs/open-questions.md](docs/open-questions.md) | Questions still to answer |
-| [CHANGELOG.md](CHANGELOG.md) | Releases |
+| Doc                                              | What's in it                                 |
+| ------------------------------------------------ | -------------------------------------------- |
+| [docs/plan.md](docs/plan.md)                     | Flows, architecture, data model, AI, roadmap |
+| [docs/requirements.md](docs/requirements.md)     | Every requirement with an ID and evidence    |
+| [docs/backlog.md](docs/backlog.md)               | Tasks per milestone, linked to issues        |
+| [docs/workflow.md](docs/workflow.md)             | How work moves from issue to `main`          |
+| [docs/testing.md](docs/testing.md)               | Test layers and how to run them              |
+| [docs/decisions/](docs/decisions/README.md)      | Architecture decision records                |
+| [docs/open-questions.md](docs/open-questions.md) | Questions still to answer                    |
+| [CHANGELOG.md](CHANGELOG.md)                     | Releases                                     |
 
 ## Stack
 
