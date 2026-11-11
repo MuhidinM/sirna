@@ -7,7 +7,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-CAP-01 | One box, opened by a global hotkey (Ctrl+Alt+Space, configurable) from any app | T-008, T-015 | | ☐ |
+| R-CAP-01 | One box, opened by a global hotkey (Ctrl+Alt+Space, configurable) from any app | T-008, T-015 | Hotkey with fallbacks (ADR-0004); 20 scripted opens from another app all became ready to type, and a typed line was saved unchanged (#8). Choosing your own key: T-015 | ◐ |
 | R-CAP-02 | A capture saves in < 2 s (p95, installed build) and never waits on parsing, network or AI | T-013, T-015 | | ☐ |
 | R-CAP-03 | Parses tasks, timed reminders, cash expenses, ideas, `pin:`, `wait:`, `fb:`, `?` search, `away`, `#area` | T-014 | | ☐ |
 | R-CAP-04 | Unparsed text becomes an inbox note; nothing is lost | T-014 | | ☐ |
@@ -107,7 +107,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-PLT-01 | Idle in the tray ≤ 30 MB private bytes with no webview | T-010 | | ☐ |
 | R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | | ☐ |
 | R-PLT-03 | One SQLite file; forward-only migrations with checksums; daily checked backups and a written restore | T-012, T-032 | | ☐ |
-| R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | | ☐ |
+| R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | `secrets.rs` on keyring-core + the Windows native store; round-trip test passes against Credential Manager; no command returns a secret value (#8). Gemini key use: T-036 | ◐ |
 | R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007 | single-instance plugin first; `--autostart` stays in the tray with 0 webviews; a second launch opens `main` in the first process; closing `main` keeps the tray (measured, #7). Autostart registration is switched on in setup (T-018) | ◐ |
 | R-CQ-01 | TypeScript strict, ESLint, Prettier, clippy, rustfmt; pre-commit hooks | T-003, T-004 | | ☐ |
 | R-CQ-02 | Unit tests for every parser, planner and the timer; CI runs them on every pull request | T-005, T-006 | | ☐ |
