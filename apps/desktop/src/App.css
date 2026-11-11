@@ -267,3 +267,78 @@ input[type="number"] {
 .brief-reopen {
   margin-bottom: var(--space-4);
 }
+
+/* Night review (plan §3.9). */
+.review {
+  max-width: 720px;
+  padding: var(--space-6);
+}
+
+.review-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+  margin-bottom: var(--space-6);
+}
+
+.review-head h1 {
+  margin: 0;
+  flex: 1 0 100%;
+}
+
+.steps {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+}
+
+.step {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  padding: 2px var(--space-2);
+  cursor: pointer;
+}
+
+.step.current {
+  border-color: var(--accent-strong);
+  color: var(--text-primary);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.actions {
+  margin-top: var(--space-6);
+}
+
+.chips {
+  margin: var(--space-4) 0;
+}
+
+.review input,
+.review textarea {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  font: inherit;
+  flex: 1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}

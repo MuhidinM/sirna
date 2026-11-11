@@ -321,6 +321,12 @@ pub fn brief_ready(requested_at: State<'_, crate::session::BriefRequestedAt>) {
     }
 }
 
+/// The screen the main window should open on (the night review), once.
+#[tauri::command]
+pub fn take_screen(pending: State<'_, crate::review::PendingScreen>) -> Option<String> {
+    pending.0.lock().take()
+}
+
 /// Closes the calling window (the capture box).
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {

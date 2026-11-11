@@ -55,7 +55,7 @@ Morning brief, night review, burnout rules, focus kits, DND, waiting-on, cheat s
 | ID | Issue | Task | Reqs | Size | Status |
 |---|---|---|---|---|---|
 | T-025 | [#25](https://github.com/MuhidinM/sirna/issues/25) | Open the morning brief at first unlock | R-CHK-01, R-NOT-03 | L | done |
-| T-026 | [#26](https://github.com/MuhidinM/sirna/issues/26) | Run the night review: today, spending, energy, tomorrow | R-CHK-02, R-CHK-03, R-BRN-04 | L | todo |
+| T-026 | [#26](https://github.com/MuhidinM/sirna/issues/26) | Run the night review: today, spending, energy, tomorrow | R-CHK-02, R-CHK-03, R-BRN-04 | L | done |
 | T-027 | [#27](https://github.com/MuhidinM/sirna/issues/27) | Enforce the burnout rules: cap, hard stop, light and rest days | R-BRN-01, R-BRN-02, R-BRN-04, R-BRN-05 | M | todo |
 | T-028 | [#28](https://github.com/MuhidinM/sirna/issues/28) | Add the focus set-up sheet and per-area focus kits | R-FOC-04 | L | todo |
 | T-029 | [#29](https://github.com/MuhidinM/sirna/issues/29) | Spike: switch Do Not Disturb on during focus | R-FOC-05 | M | todo |

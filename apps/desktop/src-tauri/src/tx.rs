@@ -153,6 +153,14 @@ pub const TABLES: &[TableSpec] = &[
         has_user_edited_at: false,
     },
     TableSpec {
+        name: "day_reviews",
+        id_column: "logical_date",
+        columns: &["status", "energy", "spent_none", "mind"],
+        has_created_at: true,
+        soft_delete: false,
+        has_user_edited_at: false,
+    },
+    TableSpec {
         name: "core_settings",
         id_column: "key",
         columns: &["value_json"],

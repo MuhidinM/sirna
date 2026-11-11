@@ -40,7 +40,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-BRN-01 | Daily focus cap (default 4 h outside job blocks) with a stop toast; overruns allowed but marked | T-027 | | ☐ |
 | R-BRN-02 | Hard stop (default 22:30) | T-027 | | ☐ |
 | R-BRN-03 | Long break after 4 sessions; starting early needs a second tap | T-022, T-027 | Every 4th session in a row gets a 20-min long break; starting focus in its first 10 minutes returns "confirm" and needs a second tap (tested) (#22) | ☑ |
-| R-BRN-04 | Two low-energy nights make the next day light; one rest day a week | T-026, T-027 | | ☐ |
+| R-BRN-04 | Two low-energy nights make the next day light; one rest day a week | T-026, T-027 | Energy 1–3 is recorded each night (#26); the light day comes in T-027 | ◐ |
 | R-BRN-05 | At most 2 active personal projects; Experiments capped at its target | T-027, T-034 | | ☐ |
 
 ## E. Check-ins (§3.4, §3.9, §3.10)
@@ -48,8 +48,8 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
 | R-CHK-01 | Morning brief opens at first unlock after wake time (toast otherwise), ≤ 12 lines, no questions | T-025 | Opens at logon or unlock after wake and before 13:00, toast at 07:30 or when full screen (session.rs tests); golden brief test; ready in 722 ms on a debug build (#25) | ☑ |
-| R-CHK-02 | Night review in 4 steps, ≤ 7 taps, works offline, "Skip tonight" counts against nothing | T-026 | | ☐ |
-| R-CHK-03 | Review asks what you spent today, with one-tap chips for repeated expenses | T-026 | | ☐ |
+| R-CHK-02 | Night review in 4 steps, ≤ 7 taps, works offline, "Skip tonight" counts against nothing | T-026 | Four steps, all local; a full run took 5 taps in the debug build with the test data; prompt timing, snooze and skip in review.rs tests (#26) | ☑ |
+| R-CHK-03 | Review asks what you spent today, with one-tap chips for repeated expenses | T-026 | `lunch 120, taxi 40` saves two expenses, unread lines are named; chips for an expense typed 3 times in 60 days (review.test.ts, #26) | ☑ |
 | R-CHK-04 | Sunday week card: time per area vs target, next week's load, projects, spending pace, one suggested change | T-039 | | ☐ |
 | R-CHK-05 | "What changed since yesterday" line in the brief | T-030 | | ☐ |
 

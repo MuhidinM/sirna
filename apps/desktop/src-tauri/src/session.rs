@@ -183,6 +183,7 @@ pub fn start(app: AppHandle, logon: bool) {
                 let locked = platform::locked();
                 if was_locked && !locked {
                     handle(&app, Trigger::Unlock);
+                    crate::review::tick(&app);
                 }
                 was_locked = locked;
                 polls += 1;
@@ -190,6 +191,7 @@ pub fn start(app: AppHandle, logon: bool) {
                     polls = 0;
                     if !locked {
                         handle(&app, Trigger::Tick);
+                        crate::review::tick(&app);
                     }
                 }
             }

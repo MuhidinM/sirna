@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Error, Manager, Wry};
 
 use crate::db::Db;
 use crate::hotkey::ActiveHotkey;
-use crate::{clock, db, focus, notify, tasks, tx, windows};
+use crate::{clock, db, focus, notify, review, tasks, tx, windows};
 
 const TRAY_ID: &str = "sirna";
 const OPEN_ID: &str = "open";
@@ -22,6 +22,7 @@ const FOCUS_PAUSE_ID: &str = "focus-pause";
 const FOCUS_RESUME_ID: &str = "focus-resume";
 const FOCUS_STOP_ID: &str = "focus-stop";
 const FOCUS_DISTRACTED_ID: &str = "focus-distracted";
+const REVIEW_ID: &str = "review";
 const MENU_TEXT_MAX: usize = 48;
 
 /// The tooltip names the capture hotkey, so a fallback key is never a surprise.
@@ -73,11 +74,12 @@ fn short(text: &str) -> String {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let (top, last) = {
+    let (top, last, offer_review) = {
         let db = app.state::<Db>();
         let conn = db.write.lock();
-        let top = tasks::today_top(&conn, clock::now_ms()).unwrap_or_default();
-        (top, tasks::last_capture(&conn))
+        let now = clock::now_ms();
+        let top = tasks::today_top(&conn, now).unwrap_or_default();
+        (top, tasks::last_capture(&conn), review::offered(&conn, now))
     };
 
     let status = {
@@ -140,6 +142,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 None::<&str>,
             )?));
         }
+    }
+    if offer_review {
+        items.push(Box::new(MenuItem::with_id(
+            app,
+            REVIEW_ID,
+            "Night review",
+            true,
+            None::<&str>,
+        )?));
     }
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
     if top.is_empty() {
@@ -299,6 +310,7 @@ fn on_menu(app: &AppHandle, id: &str) {
             focus::dispatch(app, focus::Event::Distracted);
         }
         OPEN_ID => windows::spawn_open_main(app.clone()),
+        REVIEW_ID => review::open(app),
         TEST_TOAST_ID => notify::show_check(app),
         QUIT_ID => app.exit(0),
         _ => {}
