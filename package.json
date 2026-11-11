@@ -1,0 +1,13 @@
+{
+  "name": "sirna",
+  "private": true,
+  "packageManager": "pnpm@12.4.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @sirna/desktop tauri dev",
+    "build": "pnpm --filter @sirna/desktop tauri build",
+    "typecheck": "pnpm --filter @sirna/desktop typecheck"
+  }
+}

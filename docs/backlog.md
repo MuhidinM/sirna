@@ -11,7 +11,7 @@ Repo, tooling, CI, and the risky Tauri parts measured: tray-only app, hotkey, ca
 |---|---|---|---|---|---|
 | T-001 | [#1](https://github.com/MuhidinM/sirna/issues/1) | Set up docs, templates, labels, milestones, issues and the project board | R-CQ-03 | S | done |
 | T-002 | [#2](https://github.com/MuhidinM/sirna/issues/2) | Install the Rust toolchain on D: with the minimal profile | R-PLT-02 | S | done |
-| T-003 | [#3](https://github.com/MuhidinM/sirna/issues/3) | Scaffold Tauri v2 + React + TypeScript + Vite with pnpm | R-PLT-05, R-CQ-01 | M | todo |
+| T-003 | [#3](https://github.com/MuhidinM/sirna/issues/3) | Scaffold Tauri v2 + React + TypeScript + Vite with pnpm | R-PLT-05, R-CQ-01 | M | done |
 | T-004 | [#4](https://github.com/MuhidinM/sirna/issues/4) | Add lint, format and pre-commit hooks for TypeScript and Rust | R-CQ-01 | M | todo |
 | T-005 | [#5](https://github.com/MuhidinM/sirna/issues/5) | Set up Vitest with a fake clock and node:sqlite | R-CQ-02 | S | todo |
 | T-006 | [#6](https://github.com/MuhidinM/sirna/issues/6) | Add CI on GitHub Actions (Windows runner) | R-CQ-02 | M | todo |
