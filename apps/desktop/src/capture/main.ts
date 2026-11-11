@@ -126,14 +126,23 @@ form.addEventListener("submit", (event) => {
   const saved = editing
     ? replaceCapture(editing.id, rawText, ops, parser)
     : commitCapture(rawText, ops, parser);
+  const fixed = editing ? "Fixed · " : "";
   saved
-    .then(() => {
+    .then((rawId) => {
       // `? query`: the search is stored like any capture, then Notes opens on it.
       if (parsed.kind === "search" && !editing) {
         void invoke("open_notes", { query: parsed.query }).finally(() => void close());
         return;
       }
-      finish((editing ? "Fixed · " : "") + echoLine(parsed, nowMs));
+      // `away till mon` (plan §3.11): Rust stores the return day, logged under
+      // this capture, so undoing or fixing the capture undoes away too.
+      if (parsed.kind === "away") {
+        void invoke<string>("set_away", { until: parsed.until ?? null, rawId })
+          .then((date) => finish(fixed + echoLine({ kind: "away", until: date }, nowMs)))
+          .catch(() => finish("Couldn't set away. Try again."));
+        return;
+      }
+      finish(fixed + echoLine(parsed, nowMs));
     })
     .catch((error: unknown) => {
       busy = false;

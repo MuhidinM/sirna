@@ -23,11 +23,26 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Focus set-up:** in Focus kits, give Coding `notepad` under Open and `Telegram.exe` under Minimize. Tray → Start focus during a coding block: the sheet shows the checklist and "Opens notepad · Minimizes Telegram". Type an intent, press Enter once: the timer starts, Telegram is minimized (not closed), Notepad opens, and the tray tooltip shows the intent. At the break toast, "Done with: …?" Yes writes `intent_done = yes` (T-028).
 - **Do not disturb:** with it off, start focus: the sheet says "Do not disturb on", and Win+N shows the bell on. Stop the session: it is off again. Turn it on yourself first: Sirna leaves it on after the session (T-029, ADR-0007).
 - **Cheat sheets:** capture `pin: undo = git reset --soft HEAD~1 #coding`; type `? reset` in the capture box: the chip shows that line, Enter opens Cheat sheets on it. Start focus on a Coding block: the sheet shows the card. Edit the card, Save, Undo (T-031).
+- **Away:** capture `away till mon`: the echo says "Away until …", Today shows the banner, and no brief, review or block toast comes until then; a timed reminder still fires. "I'm back" ends it (T-032).
+- **Daily backup:** after the first minute of a new day, `D:\Sirna\backups` has `sirna-<today>.db` and the log says `daily backup:` (T-032).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)
 
-Written when backups exist.
+Sirna makes a checked copy once a day (`VACUUM INTO`, then `quick_check`) and before every migration. It keeps the newest 14 daily copies (`sirna-YYYY-MM-DD.db`) and 5 pre-migration copies in `D:\Sirna\backups` (next to the data when there is no D:).
+
+1. Tray → Quit (it folds recent changes into `sirna.db` first). Check no `sirna.exe` is left in Task Manager.
+2. In `%APPDATA%\dev.sirna.app`, rename the database files, keeping their endings together:
+   - `sirna.db` → `sirna-before-restore.db`
+   - `sirna.db-wal` → `sirna-before-restore.db-wal` (if it exists)
+   - `sirna.db-shm` → `sirna-before-restore.db-shm` (if it exists)
+3. Copy the backup you want, for example `D:\Sirna\backups\sirna-2026-11-10.db`, to `%APPDATA%\dev.sirna.app\sirna.db`. A backup is a single file; there is no `-wal` to copy.
+4. Start Sirna. An older copy is migrated forward on start (with its own pre-migration copy first). Today shows that day's data.
+5. To go back: Tray → Quit, check no `sirna.exe` is left, delete the restored `sirna.db`, `sirna.db-wal` and `sirna.db-shm`, then rename the three `sirna-before-restore.db*` files back to `sirna.db`, `sirna.db-wal` and `sirna.db-shm`. Never leave a `-wal` next to a database it didn't come from.
+
+Tested at file level on 2026-11-11: a pre-migration copy restored into an empty folder passed `quick_check` and read back (areas, blocks, schema at 0010). Repeat steps 1–4 on the installed build after `pnpm ship`.
+
+Usage numbers: `pnpm usage` (last 7 days) or `pnpm usage 30`. Read-only, local only.
 
 ## Where things are
 

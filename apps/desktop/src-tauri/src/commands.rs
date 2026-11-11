@@ -491,6 +491,56 @@ pub fn open_notes(query: String, app: AppHandle) {
     crate::review::open_screen(&app, &format!("notes:{query}"));
 }
 
+/// `away till mon` (plan §3.11): pauses the brief, the review and block
+/// toasts until that logical date. Returns the date stored.
+#[tauri::command]
+pub fn set_away(
+    until: Option<String>,
+    raw_id: Option<i64>,
+    app: AppHandle,
+    db: State<'_, Db>,
+) -> Result<String, String> {
+    let now = clock::now_ms();
+    let (today, day_start) = crate::tasks::logical_day(now);
+    let tomorrow = crate::tasks::logical_day(day_start + 25 * 60 * 60 * 1000).0;
+    let date = crate::away::return_date(until.as_deref(), &today, &tomorrow);
+    // Logged under the capture that asked for it: undoing or fixing that
+    // capture (capture_undo, capture_replace, tray Undo) undoes away too.
+    let context = raw_id.map_or_else(|| "away".to_string(), |id| format!("capture:{id}"));
+    write_away(&app, &db, &date, &context, now)?;
+    Ok(date)
+}
+
+/// "I'm back" on Today.
+#[tauri::command]
+pub fn clear_away(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+    // An empty date is never later than today, so it means "not away".
+    write_away(&app, &db, "", "away", clock::now_ms())
+}
+
+fn write_away(app: &AppHandle, db: &Db, date: &str, context: &str, now: i64) -> Result<(), String> {
+    {
+        let mut conn = db.write.lock();
+        let txn = conn.transaction().map_err(|error| error.to_string())?;
+        let mut values = Map::new();
+        values.insert(
+            "value_json".into(),
+            Value::from(Value::from(date).to_string()),
+        );
+        let op = Op::Upsert {
+            table: "core_settings".into(),
+            id: crate::away::AWAY_KEY.into(),
+            values,
+        };
+        tx::apply_ops(&txn, "user", Some(context), &[op], now)
+            .map_err(|error| error.to_string())?;
+        txn.commit().map_err(|error| error.to_string())?;
+    }
+    emit_changed(app, vec!["core_settings".into()]);
+    crate::tray::rebuild(app);
+    Ok(())
+}
+
 /// Closes the calling window (the capture box).
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {

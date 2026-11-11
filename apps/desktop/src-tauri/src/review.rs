@@ -80,7 +80,7 @@ pub fn offered(conn: &Connection, now_ms: i64) -> bool {
     tray_offers(
         session::local_minutes(now_ms),
         minutes_setting(conn, "day.review", DEFAULT_REVIEW_MIN),
-        finished(conn, &date),
+        finished(conn, &date) || crate::away::is_away(conn, &date),
     )
 }
 
@@ -115,7 +115,8 @@ pub fn tick(app: &AppHandle) {
             session::local_minutes(now),
             minutes_setting(&conn, "day.review", DEFAULT_REVIEW_MIN),
             minutes_setting(&conn, "day.hard_stop", DEFAULT_HARD_STOP_MIN),
-            finished(&conn, &date),
+            // Away pauses the review (plan §3.11).
+            finished(&conn, &date) || crate::away::is_away(&conn, &date),
             crate::db::setting_string(&conn, PROMPTED_KEY).as_deref() == Some(date.as_str()),
             snooze_over,
         )

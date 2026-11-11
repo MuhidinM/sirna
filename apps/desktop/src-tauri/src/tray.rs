@@ -330,7 +330,19 @@ fn on_menu(app: &AppHandle, id: &str) {
         OPEN_ID => windows::spawn_open_main(app.clone()),
         REVIEW_ID => review::open(app),
         TEST_TOAST_ID => notify::show_check(app),
-        QUIT_ID => app.exit(0),
+        QUIT_ID => {
+            // Fold the WAL into sirna.db first, so a quit leaves one file
+            // (what the restore steps in docs/smoke.md expect).
+            if let Err(error) = app
+                .state::<Db>()
+                .write
+                .lock()
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            {
+                log::warn!("could not checkpoint before quitting: {error}");
+            }
+            app.exit(0)
+        }
         _ => {}
     }
 }
