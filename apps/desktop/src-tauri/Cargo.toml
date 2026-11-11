@@ -26,6 +26,9 @@ parking_lot = "0.12.5"
 keyring-core = "1.0.1"
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
 tauri-plugin-global-shortcut = "2"
+tauri-winrt-notification = "0.8.1"
+tauri-plugin-log = "2"
+log = "0.4.35"
 
 # Plan §10: keep the build cache small on a disk with little free space.
 [profile.dev]

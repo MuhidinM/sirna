@@ -68,7 +68,7 @@ pub fn capture_ready(
 ) -> Result<(), String> {
     window.set_focus().map_err(|error| error.to_string())?;
     if let Some(pressed) = pressed_at.0.lock().take() {
-        eprintln!("capture ready in {} ms", pressed.elapsed().as_millis());
+        log::info!("capture ready in {} ms", pressed.elapsed().as_millis());
     }
     Ok(())
 }

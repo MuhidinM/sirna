@@ -3,6 +3,7 @@
 mod commands;
 mod db;
 mod hotkey;
+mod notify;
 mod secrets;
 mod startup;
 mod tray;
@@ -17,20 +18,32 @@ pub const AUTOSTART_ARG: &str = "--autostart";
 pub fn run() {
     let app = tauri::Builder::default()
         // Registered first so a second launch never initialises anything else.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            windows::spawn_open_main(app.clone());
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            match startup::second_launch_action(args) {
+                startup::SecondLaunch::OpenMain => windows::spawn_open_main(app.clone()),
+                startup::SecondLaunch::TestToast => notify::show_check(app),
+            }
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_ARG]),
         ))
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                // Plan §9: size-based rotation, about 10 MB at most.
+                .max_file_size(1_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(10))
+                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(hotkey::plugin())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             app.manage(db::Db::open(&data_dir.join("sirna.db"))?);
             if let Err(error) = secrets::init() {
-                eprintln!("could not open Windows Credential Manager: {error}");
+                log::error!("could not open Windows Credential Manager: {error}");
             }
             app.manage(hotkey::ActiveHotkey::default());
             app.manage(hotkey::CapturePressedAt::default());
