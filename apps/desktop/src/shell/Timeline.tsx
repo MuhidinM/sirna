@@ -1,7 +1,8 @@
 import { type CSSProperties } from "react";
 
 import { type BlockRow, firstStep, formatMinutes, nowAndNext } from "../features/plan/now";
-import { Card } from "./ui";
+import { type FocusStatus, startFocus } from "./Focus";
+import { Button, Card } from "./ui";
 
 const time = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
@@ -17,7 +18,15 @@ function areaStyle(block: BlockRow): CSSProperties {
 }
 
 /** The Now card and the countdown to the next block. */
-export function NowCards({ blocks, nowMs }: { blocks: BlockRow[]; nowMs: number }) {
+export function NowCards({
+  blocks,
+  nowMs,
+  focus,
+}: {
+  blocks: BlockRow[];
+  nowMs: number;
+  focus?: FocusStatus | undefined;
+}) {
   const { now, next, minutesToNext } = nowAndNext(blocks, nowMs);
   return (
     <div className="now-row">
@@ -25,6 +34,11 @@ export function NowCards({ blocks, nowMs }: { blocks: BlockRow[]; nowMs: number 
         <p className="meta">{now ? `Now · ${range(now)}` : "Now"}</p>
         <p className="now-title">{now ? now.title : "Free time"}</p>
         {now && now.kind === "area" && <p className="meta">First step: {firstStep(now)}</p>}
+        {focus?.kind === null && (now?.kind === "area" || !now) && (
+          <Button primary onClick={() => void startFocus(now?.id ?? null)}>
+            Start focus
+          </Button>
+        )}
       </Card>
       <Card className="next-card">
         <p className="meta">Next</p>

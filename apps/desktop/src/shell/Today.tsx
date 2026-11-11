@@ -14,6 +14,7 @@ import {
   WAITING_SQL,
 } from "../features/tasks/today";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { FocusPanel, useFocus } from "./Focus";
 import { NowCards, Timeline } from "./Timeline";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -131,6 +132,7 @@ export function Today({ onChangeWeek }: { onChangeWeek?: () => void }) {
     today,
   ]);
   const minuteNow = useMinute();
+  const focus = useFocus();
 
   const topIds = new Set(top.rows.map((task) => task.id));
   const moreDue = due.rows.filter((task) => !topIds.has(task.id));
@@ -155,7 +157,8 @@ export function Today({ onChangeWeek }: { onChangeWeek?: () => void }) {
         </p>
       )}
 
-      <NowCards blocks={blocks.rows} nowMs={minuteNow} />
+      {focus && focus.kind !== null && <FocusPanel status={focus} />}
+      <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
 
       <section aria-labelledby="top3">
         <h2 id="top3">Top 3</h2>
