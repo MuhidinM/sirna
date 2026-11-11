@@ -26,7 +26,7 @@ Kernel, migrations, IPC, capture parser and window, Today list, tray menu, remin
 
 | ID | Issue | Task | Reqs | Size | Status |
 |---|---|---|---|---|---|
-| T-011 | [#11](https://github.com/MuhidinM/sirna/issues/11) | Add the kernel: clock, logicalDate, ULIDs and money | R-CAP-03 | M | todo |
+| T-011 | [#11](https://github.com/MuhidinM/sirna/issues/11) | Add the kernel: clock, logicalDate, ULIDs and money | R-CAP-03 | M | done |
 | T-012 | [#12](https://github.com/MuhidinM/sirna/issues/12) | Run forward-only migrations with checksums and a backup first | R-PLT-03 | M | todo |
 | T-013 | [#13](https://github.com/MuhidinM/sirna/issues/13) | Add db_query, db_tx with an allowlist and audit, and capture undo | R-CAP-02, R-CAP-05 | L | todo |
 | T-014 | [#14](https://github.com/MuhidinM/sirna/issues/14) | Parse captures into tasks, expenses, ideas and notes (60 fixtures) | R-CAP-03, R-CAP-04 | L | todo |
