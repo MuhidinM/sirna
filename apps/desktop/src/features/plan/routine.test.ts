@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_ANSWERS, defaultRoutine, toHhmm, toMinutes, type Weekday } from "./routine";
+import {
+  DEFAULT_ANSWERS,
+  defaultRoutine,
+  parseTimes,
+  toHhmm,
+  toMinutes,
+  type Weekday,
+} from "./routine";
 
 const day = (weekday: Weekday) =>
   defaultRoutine(DEFAULT_ANSWERS)
@@ -84,5 +91,60 @@ describe("defaultRoutine", () => {
     expect(
       blocks.filter((block) => block.weekday === 1).some((block) => block.title === "Check email"),
     ).toBe(false);
+  });
+});
+
+describe("email check times", () => {
+  const checks = (emailChecks: string[]) =>
+    defaultRoutine({ ...DEFAULT_ANSWERS, emailChecks })
+      .filter((block) => block.weekday === 1 && block.title === "Check email")
+      .map((block) => toHhmm(block.startMin));
+
+  it("uses the times you set", () => {
+    expect(checks(["09:30"])).toEqual(["09:30"]);
+    expect(checks(["11:00", "16:45"])).toEqual(["11:00", "16:45"]);
+  });
+
+  it("has none when the list is empty", () => {
+    expect(checks([])).toEqual([]);
+  });
+
+  it("keeps the defaults for answers saved before the setting existed", () => {
+    const old = { ...DEFAULT_ANSWERS } as Partial<typeof DEFAULT_ANSWERS>;
+    delete old.emailChecks;
+    const blocks = defaultRoutine(old as typeof DEFAULT_ANSWERS).filter(
+      (block) => block.weekday === 1 && block.title === "Check email",
+    );
+    expect(blocks.map((block) => toHhmm(block.startMin))).toEqual(["10:00", "15:00"]);
+  });
+});
+
+describe("parseTimes", () => {
+  it("reads, sorts and dedupes times", () => {
+    expect(parseTimes("15:00, 9:30 15:00")).toEqual(["09:30", "15:00"]);
+  });
+
+  it("reads empty text as no times", () => {
+    expect(parseTimes("  ")).toEqual([]);
+  });
+
+  it("rejects anything that is not a time", () => {
+    expect(parseTimes("10:00, lunch")).toBeNull();
+    expect(parseTimes("25:00")).toBeNull();
+  });
+});
+
+describe("email checks outside work hours", () => {
+  it("never share time with a focus block", () => {
+    const monday = defaultRoutine({ ...DEFAULT_ANSWERS, emailChecks: ["18:30"] }).filter(
+      (block) => block.weekday === 1,
+    );
+    const check = monday.find((block) => block.title === "Check email");
+    expect(check && toHhmm(check.startMin)).toBe("18:30");
+    for (const block of monday.filter((other) => other.kind === "area")) {
+      const end = block.startMin + block.durationMin;
+      const overlaps = block.startMin < 18 * 60 + 40 && 18 * 60 + 30 < end;
+      expect(overlaps, `${toHhmm(block.startMin)} focus overlaps the 18:30 check`).toBe(false);
+    }
   });
 });

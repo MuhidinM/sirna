@@ -69,14 +69,20 @@ pub fn parse_key(text: &str) -> Option<Shortcut> {
     if normalised.is_empty() {
         return None;
     }
-    normalised.parse::<Shortcut>().ok()
+    // A key without Ctrl, Alt or Win would swallow normal typing in every app.
+    normalised.parse::<Shortcut>().ok().filter(|shortcut| {
+        shortcut
+            .mods
+            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+    })
 }
 
 /// Registers the saved key if there is one, else the first free candidate.
 /// Returns the label of the key in use, or None if every candidate is taken.
 pub fn register(app: &AppHandle, saved: Option<String>) -> Option<String> {
     let mut choices: Vec<(Shortcut, String)> = Vec::new();
-    if let Some(text) = saved {
+    // An empty saved key means "use the defaults" (cleared in Settings).
+    if let Some(text) = saved.filter(|text| !text.trim().is_empty()) {
         match parse_key(&text) {
             Some(shortcut) => choices.push((shortcut, text.trim().to_string())),
             None => log::warn!("ignoring the saved capture hotkey {text:?}: not a key combination"),
@@ -97,6 +103,57 @@ pub fn register(app: &AppHandle, saved: Option<String>) -> Option<String> {
     None
 }
 
+/// The label of the capture key in use, if any.
+pub fn current(app: &AppHandle) -> Option<String> {
+    app.state::<ActiveHotkey>()
+        .0
+        .lock()
+        .as_ref()
+        .map(|(_, label)| label.clone())
+}
+
+/// Switches the capture key at run time. A chosen key is registered before
+/// the old one is let go, so a key another app owns leaves the old one in
+/// place. `None` goes back to the first free default.
+pub fn switch(app: &AppHandle, choice: Option<(Shortcut, String)>) -> Result<String, String> {
+    let active = app.state::<ActiveHotkey>();
+    let old = active.0.lock().clone();
+    let release = |old: Option<(Shortcut, String)>| {
+        if let Some((shortcut, label)) = old
+            && let Err(error) = app.global_shortcut().unregister(shortcut)
+        {
+            log::warn!("could not release {label}: {error}");
+        }
+    };
+    match choice {
+        Some((shortcut, label)) => {
+            if old
+                .as_ref()
+                .is_some_and(|(current, _)| *current == shortcut)
+            {
+                *active.0.lock() = Some((shortcut, label.clone()));
+                return Ok(label);
+            }
+            if let Err(error) = app.global_shortcut().register(shortcut) {
+                log::warn!("could not register {label}: {error}");
+                let still = old.map_or("no key".to_string(), |(_, label)| label);
+                return Err(format!(
+                    "{label} is taken by another app; still using {still}."
+                ));
+            }
+            *active.0.lock() = Some((shortcut, label.clone()));
+            release(old);
+            Ok(label)
+        }
+        None => {
+            active.0.lock().take();
+            release(old);
+            register(app, None)
+                .ok_or_else(|| "Every capture key is taken by other apps.".to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,5 +169,14 @@ mod tests {
     fn rejects_text_that_is_not_a_key() {
         assert_eq!(parse_key(""), None);
         assert_eq!(parse_key("banana"), None);
+    }
+
+    #[test]
+    fn rejects_keys_that_would_swallow_typing() {
+        assert_eq!(parse_key("K"), None);
+        assert_eq!(parse_key("Space"), None);
+        assert_eq!(parse_key("Shift+A"), None);
+        assert!(parse_key("Ctrl+K").is_some());
+        assert!(parse_key("Alt+Shift+K").is_some());
     }
 }

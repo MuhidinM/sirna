@@ -541,6 +541,48 @@ fn write_away(app: &AppHandle, db: &Db, date: &str, context: &str, now: i64) -> 
     Ok(())
 }
 
+/// The capture key in use, for Settings.
+#[tauri::command]
+pub fn hotkey_current(app: AppHandle) -> Option<String> {
+    crate::hotkey::current(&app)
+}
+
+/// Switches to a new capture key (empty: back to the defaults) and saves it
+/// once it is in use. A key another app owns is refused and the old one stays.
+#[tauri::command]
+pub fn hotkey_set(key: String, app: AppHandle, db: State<'_, Db>) -> Result<String, String> {
+    let key = key.trim().to_string();
+    let choice = if key.is_empty() {
+        None
+    } else {
+        let shortcut = crate::hotkey::parse_key(&key).ok_or_else(|| {
+            format!("\"{key}\" isn't a key combination with Ctrl, Alt or Win. Try Ctrl+Alt+K.")
+        })?;
+        Some((shortcut, key.clone()))
+    };
+    let in_use = crate::hotkey::switch(&app, choice)?;
+    {
+        let mut conn = db.write.lock();
+        let txn = conn.transaction().map_err(|error| error.to_string())?;
+        let mut values = Map::new();
+        values.insert(
+            "value_json".into(),
+            Value::from(Value::from(key.as_str()).to_string()),
+        );
+        let op = Op::Upsert {
+            table: "core_settings".into(),
+            id: "capture.hotkey".into(),
+            values,
+        };
+        tx::apply_ops(&txn, "user", Some("settings"), &[op], clock::now_ms())
+            .map_err(|error| error.to_string())?;
+        txn.commit().map_err(|error| error.to_string())?;
+    }
+    emit_changed(&app, vec!["core_settings".into()]);
+    crate::tray::refresh_tooltip(&app);
+    Ok(in_use)
+}
+
 /// Closes the calling window (the capture box).
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {
