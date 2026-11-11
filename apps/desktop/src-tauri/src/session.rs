@@ -192,6 +192,7 @@ pub fn start(app: AppHandle, logon: bool) {
                     if !locked {
                         handle(&app, Trigger::Tick);
                         crate::review::tick(&app);
+                        crate::guard::tick(&app);
                     }
                 }
             }

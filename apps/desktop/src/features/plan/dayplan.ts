@@ -54,6 +54,17 @@ export const KEPT_BLOCKS_SQL = `
 
 export const REST_DAY_SQL = "SELECT value_json FROM core_settings WHERE key = 'setup.answers'";
 
+/** Energy from the last two night reviews, newest first (plan §3.7: two 1s → light day). */
+export const ENERGY_SQL = `
+  SELECT energy FROM day_reviews
+  WHERE logical_date IN (?, ?) AND energy IS NOT NULL
+  ORDER BY logical_date DESC`;
+
+/** A YYYY-MM-DD date moved by whole days. */
+export function shiftDate(date: string, days: number): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
 export async function loadPlanInput(query: Query, date: string): Promise<PlanInput> {
   const dayStartMs = localToEpoch(date, 0);
   const minuteOf = (epochMs: number) => Math.round((epochMs - dayStartMs) / 60000);
@@ -88,6 +99,10 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
     query<{ id: string; start_at: number; end_at: number }>(KEPT_BLOCKS_SQL, [date]),
     query<{ value_json: string }>(REST_DAY_SQL),
   ]);
+  const energy = await query<{ energy: number }>(ENERGY_SQL, [
+    shiftDate(date, -1),
+    shiftDate(date, -2),
+  ]);
 
   let restDay: number | undefined;
   try {
@@ -107,8 +122,7 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
   return {
     date,
     isRestDay: restDay === isoWeekday(date),
-    // Evening energy arrives with the night review (T-026); until then no day is light for energy.
-    recentEnergy: [],
+    recentEnergy: energy.map((row) => row.energy),
     template: template.map((block) => ({
       startMin: block.start_min,
       durationMin: block.duration_min,

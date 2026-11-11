@@ -142,6 +142,40 @@ describe("ensureDayPlan", () => {
     expect(input.isRestDay).toBe(true);
   });
 
+  it("reads the last two nights' energy, newest first", async () => {
+    const h = harness();
+    h.db
+      .prepare(
+        `INSERT INTO day_reviews (logical_date, status, energy, created_at, updated_at) VALUES
+       ('2026-11-10', 'done', 1, 0, 0),
+       ('2026-11-09', 'done', 2, 0, 0),
+       ('2026-11-08', 'done', 1, 0, 0),
+       ('2026-11-11', 'done', 3, 0, 0)`,
+      )
+      .run();
+    expect((await loadPlanInput(h.query, "2026-11-11")).recentEnergy).toEqual([1, 2]);
+  });
+
+  it("makes tomorrow light after two drained nights", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps({ ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} }, [], [], h.newId),
+    );
+    h.db
+      .prepare(
+        `INSERT INTO day_reviews (logical_date, status, energy, created_at, updated_at) VALUES
+       ('2026-11-10', 'done', 1, 0, 0), ('2026-11-09', 'done', 1, 0, 0)`,
+      )
+      .run();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    const kinds = h.db
+      .prepare("SELECT DISTINCT kind FROM day_blocks WHERE logical_date = '2026-11-11'")
+      .all()
+      .map((row) => row.kind);
+    expect(kinds).not.toContain("area");
+  });
+
   it("counts this week's done minutes per area", async () => {
     const h = harness();
     h.db
