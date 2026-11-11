@@ -4,6 +4,7 @@ One line per check, newest first. Targets from [plan §10](plan.md#10-resource-b
 
 | Date       | Milestone | Check                                                                         | Result                                                                                               | Target                         | Pass |
 | ---------- | --------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------ | ---- |
+| 2026-11-11 | M1        | Debug build: hotkey → ready to type, cold, 20 tries (T-013)                   | 374–411 ms, p95 410 ms                                                                               | ≤ 700 ms cold                  | ✅   |
 | 2026-11-11 | M0        | Release, installed: tray only, 60 s after closing `main` (T-009)              | 5.0 MB, 0 webviews, 0.17 s CPU                                                                       | idle + ≤ 10 MB, 0 webviews     | ✅   |
 | 2026-11-11 | M0        | Release, installed: tray only after `--autostart` (T-009)                     | 3.4 MB, 0 webviews, 0.12 s CPU                                                                       | ≤ 30 MB                        | ✅   |
 | 2026-11-11 | M0        | Installer / installed size (T-009)                                            | 2.8 MB / 11.4 MB                                                                                     | ≤ 8 MB / ≤ 25 MB               | ✅   |
