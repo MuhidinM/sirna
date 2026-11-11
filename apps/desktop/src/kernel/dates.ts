@@ -1,6 +1,9 @@
 /** Sirna's home timezone (plan §5.1). Africa/Addis_Ababa is UTC+3 with no daylight saving. */
 export const HOME_TIME_ZONE = "Africa/Addis_Ababa";
 
+/** Africa/Addis_Ababa's fixed offset from UTC, in minutes (UTC+3, no daylight saving). */
+export const HOME_UTC_OFFSET_MIN = 180;
+
 /** A logical day starts at 03:00 local time, so a 00:30 review belongs to the evening before. */
 export const LOGICAL_DAY_START_HOUR = 3;
 
