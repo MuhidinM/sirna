@@ -2,11 +2,15 @@
 
 One line per check, newest first. Targets from [plan §10](plan.md#10-resource-budget). Measured with `scripts/measure.ps1` (private bytes, `sirna.exe` and its child processes).
 
-| Date       | Milestone | Check                                                                         | Result                        | Target                     | Pass |
-| ---------- | --------- | ----------------------------------------------------------------------------- | ----------------------------- | -------------------------- | ---- |
-| 2026-11-11 | M0        | Debug build + Vite dev server: hotkey → ready to type, cold, 20 tries (T-008) | 508–876 ms, p95 860 ms        | ≤ 700 ms cold (release)    | —    |
-| 2026-11-11 | M0        | Debug build: 60 s after closing `main` (T-007)                                | 6.1 MB, 0 webviews            | idle + ≤ 10 MB, 0 webviews | ✅   |
-| 2026-11-11 | M0        | Debug build: `main` open (T-007)                                              | 163.7 MB, 6 webview processes | ≤ 200 MB                   | ✅   |
-| 2026-11-11 | M0        | Debug build: tray only after `--autostart` (T-007)                            | 3.8 MB, 0 webviews            | ≤ 30 MB                    | ✅   |
-| 2026-11-11 | M0        | Build cache after the first debug build (`D:\dev\target`)                     | 1.4 GB, 3 min 30 s            | ≤ 5 GB                     | ✅   |
-| 2026-11-11 | M0        | Rust toolchain on D: (rustup minimal + clippy + rustfmt, Rust 1.99.1)         | 640 MB                        | ~1 GB                      | ✅   |
+| Date       | Milestone | Check                                                                         | Result                                                                                               | Target                         | Pass |
+| ---------- | --------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------ | ---- |
+| 2026-11-11 | M0        | Release, installed: tray only, 60 s after closing `main` (T-009)              | 5.0 MB, 0 webviews, 0.17 s CPU                                                                       | idle + ≤ 10 MB, 0 webviews     | ✅   |
+| 2026-11-11 | M0        | Release, installed: tray only after `--autostart` (T-009)                     | 3.4 MB, 0 webviews, 0.12 s CPU                                                                       | ≤ 30 MB                        | ✅   |
+| 2026-11-11 | M0        | Installer / installed size (T-009)                                            | 2.8 MB / 11.4 MB                                                                                     | ≤ 8 MB / ≤ 25 MB               | ✅   |
+| 2026-11-11 | M0        | Toast buttons in the installed build (T-009)                                  | "Got it" reached Rust with no window (`toast action: ok`); branded "Sirna" via AUMID `dev.sirna.app` | buttons handled with no window | ✅   |
+| 2026-11-11 | M0        | Debug build + Vite dev server: hotkey → ready to type, cold, 20 tries (T-008) | 508–876 ms, p95 860 ms                                                                               | ≤ 700 ms cold (release)        | —    |
+| 2026-11-11 | M0        | Debug build: 60 s after closing `main` (T-007)                                | 6.1 MB, 0 webviews                                                                                   | idle + ≤ 10 MB, 0 webviews     | ✅   |
+| 2026-11-11 | M0        | Debug build: `main` open (T-007)                                              | 163.7 MB, 6 webview processes                                                                        | ≤ 200 MB                       | ✅   |
+| 2026-11-11 | M0        | Debug build: tray only after `--autostart` (T-007)                            | 3.8 MB, 0 webviews                                                                                   | ≤ 30 MB                        | ✅   |
+| 2026-11-11 | M0        | Build cache after the first debug build (`D:\dev\target`)                     | 1.4 GB, 3 min 30 s                                                                                   | ≤ 5 GB                         | ✅   |
+| 2026-11-11 | M0        | Rust toolchain on D: (rustup minimal + clippy + rustfmt, Rust 1.99.1)         | 640 MB                                                                                               | ~1 GB                          | ✅   |

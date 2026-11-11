@@ -105,7 +105,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
 | R-PLT-01 | Idle in the tray ≤ 30 MB private bytes with no webview | T-010 | | ☐ |
-| R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | | ☐ |
+| R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | NSIS installer 2.8 MB, installed 11.4 MB (#9, docs/measurements.md) | ☑ |
 | R-PLT-03 | One SQLite file; forward-only migrations with checksums; daily checked backups and a written restore | T-012, T-032 | | ☐ |
 | R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | `secrets.rs` on keyring-core + the Windows native store; round-trip test passes against Credential Manager; no command returns a secret value (#8). Gemini key use: T-036 | ◐ |
 | R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007 | single-instance plugin first; `--autostart` stays in the tray with 0 webviews; a second launch opens `main` in the first process; closing `main` keeps the tray (measured, #7). Autostart registration is switched on in setup (T-018) | ◐ |
