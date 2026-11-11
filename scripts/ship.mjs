@@ -1,8 +1,17 @@
 // `pnpm ship`: build the release installer, install it over the running app,
 // and start it in the tray (plan §11). Toasts, the tray and the hotkey only
 // behave correctly in the installed build, so every milestone ends here.
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, statSync, statfsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  statfsSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const MIN_FREE_GB = 3;
@@ -16,13 +25,6 @@ function gb(bytes) {
 
 function mb(bytes) {
   return (bytes / 1024 ** 2).toFixed(1);
-}
-
-function dirSize(dir) {
-  return readdirSync(dir, { withFileTypes: true }).reduce((sum, entry) => {
-    const path = join(dir, entry.name);
-    return sum + (entry.isDirectory() ? dirSize(path) : statSync(path).size);
-  }, 0);
 }
 
 // 1. Refuse to build when the build disk is nearly full (plan §10 floors).
@@ -51,29 +53,57 @@ if (!installer) {
   process.exit(1);
 }
 
-// 3. Quit the running app, then install silently over it.
-try {
-  execFileSync("taskkill", ["/IM", "sirna.exe", "/F"], { stdio: "ignore" });
-} catch {
-  // Not running.
-}
-execFileSync(installer, ["/S"], { stdio: "inherit" });
-
-// 4. Start the installed app in the tray.
+// 3. Quit the running app, install silently over it and start it in the tray.
+// This runs through the desktop shell (explorer): started from a packaged app
+// such as the Claude desktop app, the installer would otherwise land in that
+// app's private copy of AppData, out of sight of the Start menu and autostart.
+// The script reports back in a status file: the installer's exit code, then
+// the installed size as cmd sees it (Node may be shown the private copy).
 const exe = join(installDir, "sirna.exe");
-if (!existsSync(exe)) {
-  console.error(`Installed app not found at ${exe}`);
+const script = join(tmpdir(), `sirna-install-${process.pid}.cmd`);
+const status = `${script}.status`;
+writeFileSync(
+  script,
+  [
+    "@echo off",
+    "setlocal",
+    "taskkill /IM sirna.exe /F >nul 2>&1",
+    // Give Windows a moment to release the old exe before overwriting it.
+    "ping -n 2 127.0.0.1 >nul",
+    `"${installer}" /S`,
+    "set code=%ERRORLEVEL%",
+    `if not exist "${exe}" set code=missing`,
+    "set bytes=0",
+    `for %%F in ("${installDir}\\*") do set /a bytes+=%%~zF`,
+    `if "%code%"=="0" start "" "${exe}" --autostart`,
+    `(echo %code%& echo %bytes%) > "${status}"`,
+    'del "%~f0"',
+    "",
+  ].join("\r\n"),
+);
+try {
+  execFileSync("explorer.exe", [script]);
+} catch {
+  // explorer.exe exits with 1 even when it ran the file.
+}
+const deadline = Date.now() + 180_000;
+while (!existsSync(status) || existsSync(script)) {
+  if (Date.now() > deadline) {
+    console.error(`Install did not report back in 3 minutes (${script})`);
+    process.exit(1);
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+}
+const [code, bytes] = readFileSync(status, "utf8").trim().split(/\s+/);
+rmSync(status, { force: true });
+if (code !== "0") {
+  console.error(
+    code === "missing"
+      ? `Installed app not found at ${exe}`
+      : `Installer failed with exit code ${code}`,
+  );
   process.exit(1);
 }
-// `start` fully detaches it, so it outlives this script and the terminal.
-spawn("cmd", ["/c", "start", '""', `"${exe}"`, "--autostart"], {
-  detached: true,
-  stdio: "ignore",
-  windowsHide: true,
-  windowsVerbatimArguments: true,
-}).unref();
 
 console.log(`Installed ${installer}`);
-console.log(
-  `Installer: ${mb(statSync(installer).size)} MB · installed: ${mb(dirSize(installDir))} MB`,
-);
+console.log(`Installer: ${mb(statSync(installer).size)} MB · installed: ${mb(Number(bytes))} MB`);

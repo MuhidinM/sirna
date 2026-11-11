@@ -10,7 +10,7 @@ _Sirna_ (Oromo: order, system) is a small Windows tray app that keeps your day i
 
 Local-first: one SQLite file on your machine. Gemini is optional and only sees task titles, area names and minutes.
 
-> Status: planning done, building milestone M0. See [docs/backlog.md](docs/backlog.md).
+> Status: v0.1.0 in daily use (milestones M0–M3). Next: M4, projects and the AI timing check. See [docs/backlog.md](docs/backlog.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 
