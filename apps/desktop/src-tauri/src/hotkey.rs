@@ -73,7 +73,7 @@ pub fn register(app: &AppHandle) -> Option<&'static str> {
                 *app.state::<ActiveHotkey>().0.lock() = Some((shortcut, label));
                 return Some(label);
             }
-            Err(error) => eprintln!("could not register {label}: {error}"),
+            Err(error) => log::warn!("could not register {label}: {error}"),
         }
     }
     None

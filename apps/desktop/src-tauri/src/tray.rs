@@ -4,10 +4,11 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Error};
 
-use crate::windows;
+use crate::{notify, windows};
 
 const OPEN_ID: &str = "open";
 const QUIT_ID: &str = "quit";
+const TEST_TOAST_ID: &str = "test-toast";
 
 /// The tooltip names the capture hotkey, so a fallback key is never a surprise.
 pub fn tooltip(capture_key: Option<&str>) -> String {
@@ -19,9 +20,11 @@ pub fn tooltip(capture_key: Option<&str>) -> String {
 
 pub fn create(app: &AppHandle, capture_key: Option<&str>) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, OPEN_ID, "Open Sirna", true, None::<&str>)?;
+    let test_toast =
+        MenuItem::with_id(app, TEST_TOAST_ID, "Test notification", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, QUIT_ID, "Quit", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &test_toast, &separator, &quit])?;
 
     let icon = app
         .default_window_icon()
@@ -35,6 +38,7 @@ pub fn create(app: &AppHandle, capture_key: Option<&str>) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             OPEN_ID => windows::spawn_open_main(app.clone()),
+            TEST_TOAST_ID => notify::show_check(app),
             QUIT_ID => app.exit(0),
             _ => {}
         })

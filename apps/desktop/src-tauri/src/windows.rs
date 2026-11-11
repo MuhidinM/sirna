@@ -16,7 +16,7 @@ const BACKGROUND: Color = Color(0x12, 0x12, 0x12, 0xff);
 pub fn spawn_open_main(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(error) = open_main(&app) {
-            eprintln!("could not open the main window: {error}");
+            log::error!("could not open the main window: {error}");
         }
     });
 }
@@ -24,7 +24,7 @@ pub fn spawn_open_main(app: AppHandle) {
 pub fn spawn_open_capture(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(error) = open_capture(&app) {
-            eprintln!("could not open the capture box: {error}");
+            log::error!("could not open the capture box: {error}");
         }
     });
 }

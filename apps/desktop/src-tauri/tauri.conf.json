@@ -30,5 +30,6 @@
         "installMode": "currentUser"
       }
     }
-  }
+  },
+  "mainBinaryName": "sirna"
 }
