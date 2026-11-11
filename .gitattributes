@@ -1,0 +1,14 @@
+# Normalise line endings to LF in the repository and working tree, so
+# Windows and Linux (CI) checkouts produce identical files and diffs.
+* text=auto eol=lf
+
+# Windows scripts keep CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary files: never touch line endings or show text diffs.
+*.ico binary
+*.png binary
+*.jpg binary
+*.icns binary
+*.db binary
