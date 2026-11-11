@@ -108,7 +108,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | | ☐ |
 | R-PLT-03 | One SQLite file; forward-only migrations with checksums; daily checked backups and a written restore | T-012, T-032 | | ☐ |
 | R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | | ☐ |
-| R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007 | | ☐ |
+| R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007 | single-instance plugin first; `--autostart` stays in the tray with 0 webviews; a second launch opens `main` in the first process; closing `main` keeps the tray (measured, #7). Autostart registration is switched on in setup (T-018) | ◐ |
 | R-CQ-01 | TypeScript strict, ESLint, Prettier, clippy, rustfmt; pre-commit hooks | T-003, T-004 | | ☐ |
 | R-CQ-02 | Unit tests for every parser, planner and the timer; CI runs them on every pull request | T-005, T-006 | | ☐ |
 | R-CQ-03 | Issue → branch → PR → merge-commit flow with templates and a project board | T-001 | Templates in `.github/`; labels, milestones M0–M7, issues and board created from backlog.md | ☑ |
