@@ -4,6 +4,7 @@ mod backup;
 mod clock;
 mod commands;
 mod db;
+mod dnd;
 mod focus;
 mod guard;
 mod hotkey;
@@ -87,6 +88,9 @@ pub fn run() {
             app.listen_any("data-changed", move |_| tray::rebuild(&handle));
             reminders::start(app.handle().clone());
             focus::run(app.handle(), focus_state);
+            // Undo a Do not disturb left on by a crash (or keep it for a restored session).
+            let dnd_handle = app.handle().clone();
+            std::thread::spawn(move || focus::sync_dnd(&dnd_handle));
             // The tray follows the timer: menu on each change, tooltip each minute.
             let on_change = app.handle().clone();
             app.listen_any("focus-changed", move |_| tray::rebuild(&on_change));

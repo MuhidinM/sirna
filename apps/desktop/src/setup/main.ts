@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import "../theme/tokens.css";
 import "./setup.css";
-import { actionsLine, confirmText, type SetupInfo } from "./sheet";
+import { actionsLine, confirmText, type SetupInfo, visibleChecklist } from "./sheet";
 
 const form = document.querySelector<HTMLFormElement>("#setup");
 const title = document.querySelector<HTMLElement>("#setup-title");
@@ -24,7 +24,7 @@ function render(info: SetupInfo) {
   if (minutes) minutes.textContent = `${info.minutes} min`;
   if (checklist) {
     checklist.replaceChildren(
-      ...info.kit.checklist.map((text, index) => {
+      ...visibleChecklist(info.kit, info.dnd).map((text, index) => {
         const item = document.createElement("li");
         const label = document.createElement("label");
         const box = document.createElement("input");
@@ -36,7 +36,7 @@ function render(info: SetupInfo) {
       }),
     );
   }
-  if (actions) actions.textContent = actionsLine(info.kit);
+  if (actions) actions.textContent = actionsLine(info.kit, info.dnd);
 }
 
 async function start() {

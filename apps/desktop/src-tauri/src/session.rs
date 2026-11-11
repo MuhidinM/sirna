@@ -193,6 +193,7 @@ pub fn start(app: AppHandle, logon: bool) {
                         handle(&app, Trigger::Tick);
                         crate::review::tick(&app);
                         crate::guard::tick(&app);
+                        crate::focus::sync_dnd(&app);
                     }
                 }
             }

@@ -339,21 +339,30 @@ pub struct SetupInfo {
     pub title: String,
     pub minutes: i64,
     pub kit: crate::kit::Kit,
+    /// Do not disturb is switched on automatically (T-029).
+    pub dnd: bool,
 }
 
-#[tauri::command]
+/// Async: it probes the Do not disturb COM server, which must never block
+/// the main thread.
+#[tauri::command(async)]
 pub fn setup_info(
     db: State<'_, Db>,
     pending: State<'_, crate::kit::PendingSetup>,
 ) -> Result<SetupInfo, String> {
     let block = pending.0.lock().clone().flatten();
-    let conn = db.write.lock();
-    let context =
-        crate::focus::context_for(&conn, block.as_deref()).map_err(|error| error.to_string())?;
+    let (context, kit) = {
+        let conn = db.write.lock();
+        let context = crate::focus::context_for(&conn, block.as_deref())
+            .map_err(|error| error.to_string())?;
+        let kit = crate::kit::load(&conn, context.area_id.as_deref());
+        (context, kit)
+    };
     Ok(SetupInfo {
-        kit: crate::kit::load(&conn, context.area_id.as_deref()),
+        kit,
         title: context.title,
         minutes: context.focus_min,
+        dnd: crate::dnd::available(),
     })
 }
 
