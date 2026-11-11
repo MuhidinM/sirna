@@ -4,6 +4,7 @@ mod backup;
 mod clock;
 mod commands;
 mod db;
+mod focus;
 mod hotkey;
 mod migrate;
 mod notify;
@@ -76,6 +77,9 @@ pub fn run() {
             let handle = app.handle().clone();
             app.listen_any("data-changed", move |_| tray::rebuild(&handle));
             reminders::start(app.handle().clone());
+            let focus_state = focus::restore_state(app.handle());
+            app.manage(focus_state.clone());
+            focus::run(app.handle(), focus_state);
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }
@@ -88,6 +92,9 @@ pub fn run() {
             commands::capture_undo,
             commands::db_query,
             commands::db_tx,
+            commands::focus_control,
+            commands::focus_start,
+            commands::focus_status,
             commands::capture_ready,
             commands::capture_replace,
             commands::close_window,

@@ -27,7 +27,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-FOC-01 | A focus timer (default 25/5, long break after 4) runs with no window open and survives sleep and restart | T-022 | | ☐ |
+| R-FOC-01 | A focus timer (default 25/5, long break after 4) runs with no window open and survives sleep and restart | T-022 | `focus.rs`: pure state machine (10 tests: break after a session, long break on the 4th in a row, a 15-min gap starts a new row, interrupted after sleep, pause moves the end, stop/distracted, +5 once, area lengths, save and restore); a thread wakes at each deadline. Checked by hand: started from Today, quit and restarted mid-session — it resumed at 24:47; Stop recorded `stopped` (#22) | ☑ |
 | R-FOC-02 | Tray shows the timer and offers Pause, Stop, Distracted | T-023 | | ☐ |
 | R-FOC-03 | Block start toast names a ≤ 5-minute first step; one start nudge per block | T-021 | | ☐ |
 | R-FOC-04 | Focus set-up sheet: intent line, minimize listed apps, open the area's work, checklist; one key to start | T-028 | | ☐ |
@@ -39,7 +39,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 |---|---|---|---|---|
 | R-BRN-01 | Daily focus cap (default 4 h outside job blocks) with a stop toast; overruns allowed but marked | T-027 | | ☐ |
 | R-BRN-02 | Hard stop (default 22:30) | T-027 | | ☐ |
-| R-BRN-03 | Long break after 4 sessions; starting early needs a second tap | T-022, T-027 | | ☐ |
+| R-BRN-03 | Long break after 4 sessions; starting early needs a second tap | T-022, T-027 | Every 4th session in a row gets a 20-min long break; starting focus in its first 10 minutes returns "confirm" and needs a second tap (tested) (#22) | ☑ |
 | R-BRN-04 | Two low-energy nights make the next day light; one rest day a week | T-026, T-027 | | ☐ |
 | R-BRN-05 | At most 2 active personal projects; Experiments capped at its target | T-027, T-034 | | ☐ |
 
