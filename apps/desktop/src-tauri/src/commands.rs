@@ -92,6 +92,48 @@ pub fn capture_undo(raw_id: i64, app: AppHandle, db: State<'_, Db>) -> Result<us
     Ok(undone)
 }
 
+/// True when the first statement word, after any comments, is SELECT or WITH.
+/// The connection is query_only anyway; this keeps the intent clear.
+fn is_read_query(sql: &str) -> bool {
+    let mut rest = sql;
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = rest.strip_prefix("--") {
+            rest = after.split_once('\n').map_or("", |(_, tail)| tail);
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.split_once("*/").map_or("", |(_, tail)| tail);
+        } else {
+            break;
+        }
+    }
+    let first_word = rest
+        .split(|c: char| c.is_whitespace() || c == '(')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    first_word == "select" || first_word == "with"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_read_query;
+
+    #[test]
+    fn reads_are_allowed_after_comments() {
+        assert!(is_read_query("SELECT 1"));
+        assert!(is_read_query("  with x as (select 1) select * from x"));
+        assert!(is_read_query("-- note\n-- more\nSELECT 1"));
+        assert!(is_read_query("/* block */ select 1"));
+    }
+
+    #[test]
+    fn writes_are_refused() {
+        assert!(!is_read_query("DELETE FROM task_items"));
+        assert!(!is_read_query("-- SELECT\nUPDATE x SET y = 1"));
+        assert!(!is_read_query("-- only a comment"));
+    }
+}
+
 /// Reads through a connection that cannot write.
 #[tauri::command]
 pub fn db_query(
@@ -99,12 +141,7 @@ pub fn db_query(
     params: Option<Vec<Value>>,
     db: State<'_, Db>,
 ) -> Result<Vec<Map<String, Value>>, String> {
-    let first_word = sql
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if first_word != "select" && first_word != "with" {
+    if !is_read_query(&sql) {
         return Err("db_query only runs SELECT queries".into());
     }
     let conn = db.read.lock();

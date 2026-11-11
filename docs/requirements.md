@@ -11,7 +11,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-CAP-02 | A capture saves in < 2 s (p95, installed build) and never waits on parsing, network or AI | T-013, T-015 | Parsing is local and synchronous; the raw line and its records commit in one local SQLite transaction (`capture_commit`), no network call; echo appears and the box closes 1.5 s later (#13, #15) | ☑ |
 | R-CAP-03 | Parses tasks, timed reminders, cash expenses, ideas, `pin:`, `wait:`, `fb:`, `?` search, `away`, `#area` | T-014 | `parse.test.ts`: 69 fixtures + ops and echo tests; in the real box "lunch 120" → −12,000 santim Food and "call bank tomorrow 10am" → task with a 10:00 reminder (#14) | ☑ |
 | R-CAP-04 | Unparsed text becomes an inbox note; nothing is lost | T-014 | No-match lines become `note_items` kind inbox (fixtures: "dentist maybe sometime", "3 eggs", "the sun is out"); the raw line is always stored first (#14) | ☑ |
-| R-CAP-05 | The last capture can be edited (Up arrow) or undone (Ctrl+Z, tray) | T-015, T-016 | In the real box: Up arrow brought back "buy charger 600", the fix replaced it (old row soft-deleted, raw marked ignored); Ctrl+Z undid the last capture (#15). Tray Undo: T-016 | ◐ |
+| R-CAP-05 | The last capture can be edited (Up arrow) or undone (Ctrl+Z, tray) | T-015, T-016 | Up arrow fix and Ctrl+Z checked in the real box (#15); the tray menu shows "Last: … · Undo" for the newest capture, which runs the same undo (#16) | ☑ |
 
 ## B. Routine and day plan (§3.2–3.3)
 
