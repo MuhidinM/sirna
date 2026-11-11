@@ -1,0 +1,35 @@
+[package]
+name = "sirna"
+version = "0.1.0"
+description = "Sirna: plans the week, runs focus sessions, guards against burnout"
+authors = ["Muhidin Misbah"]
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name on Windows
+# (https://github.com/rust-lang/cargo/issues/8519).
+name = "sirna_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Plan §10: keep the build cache small on a disk with little free space.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+opt-level = 2
+strip = true
+panic = "unwind" # a panic in one job must not take the tray down (plan §4.1)
