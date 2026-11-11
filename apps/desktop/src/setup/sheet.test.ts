@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { actionsLine, confirmText, shortName } from "./sheet";
+import { actionsLine, confirmText, shortName, visibleChecklist } from "./sheet";
 
 describe("actionsLine", () => {
   it("says what Enter will open and minimize", () => {
@@ -15,6 +15,24 @@ describe("actionsLine", () => {
 
   it("is empty for an empty kit", () => {
     expect(actionsLine({ open: [], minimize: [], checklist: ["Water"] })).toBe("");
+  });
+});
+
+describe("Do not disturb on the sheet", () => {
+  const kit = {
+    open: [],
+    minimize: [],
+    checklist: ["Phone in another room", "Do not disturb on (Win+N)"],
+  };
+
+  it("says it and drops the manual tick when Sirna does it", () => {
+    expect(actionsLine(kit, true)).toBe("Do not disturb on");
+    expect(visibleChecklist(kit, true)).toEqual(["Phone in another room"]);
+  });
+
+  it("keeps the tick as the fallback when it can't", () => {
+    expect(actionsLine(kit, false)).toBe("");
+    expect(visibleChecklist(kit, false)).toEqual(kit.checklist);
   });
 });
 

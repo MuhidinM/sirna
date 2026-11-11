@@ -31,7 +31,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-FOC-02 | Tray shows the timer and offers Pause, Stop, Distracted | T-023 | The tray menu leads with the session line ("Focus · Coding skills · 19 min left") and Pause/Resume, Distracted, Stop / End break, or Start focus when idle; the tooltip shows the countdown each minute (tested); no webview needed. Clicking the menu by hand is on the smoke list (#23) | ◐ |
 | R-FOC-03 | Block start toast names a ≤ 5-minute first step; one start nudge per block | T-021 | Focus and routine blocks toast at start with the first step and Start focus / Skip; an area block with no session 10 minutes in gets one nudge (#21, reminders.rs tests) | ☑ |
 | R-FOC-04 | Focus set-up sheet: intent line, minimize listed apps, open the area's work, checklist; one key to start | T-028 | Sheet pre-filled from the area's kit, Enter starts; kits edited on Today → Focus kits; target parsing, window filtering, intent and restore tested (kit.rs, focus.rs, sheet.test.ts, kits.test.ts, #28). Live run on the installed build pending (docs/smoke.md) | ◐ |
-| R-FOC-05 | Do Not Disturb switched on automatically if a tested route works, otherwise a one-tick reminder | T-029 | | ☐ |
+| R-FOC-05 | Do Not Disturb switched on automatically if a tested route works, otherwise a one-tick reminder | T-029 | QuietHoursSettings COM route works on build 26300: on at focus start, restored at the end, confirmed by the WNF state (live round-trip test); manual tick stays as the fallback (ADR-0007, #29) | ☑ |
 
 ## D. Burnout guard (§3.7)
 

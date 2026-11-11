@@ -105,7 +105,7 @@ pub enum Event {
     },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Completed,
     Stopped,
@@ -122,7 +122,7 @@ impl Outcome {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     /// Insert or update this session's row.
     Save(Session),
@@ -577,8 +577,27 @@ pub fn dispatch(app: &AppHandle, event: Event) -> Vec<Effect> {
         effects
     };
     focus.wake.notify_all();
-    for effect in &effects {
-        show_toast(app, effect);
+    let changed_session = effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::Save(_) | Effect::Close { .. }));
+    // Toasts wait for Do not disturb to be restored (a break toast must not
+    // land while it is on). Switching it can take a moment, so both run off
+    // the calling thread (the tray menu and commands must stay responsive).
+    let toasts: Vec<Effect> = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::BreakStarted { .. } | Effect::BreakOver))
+        .cloned()
+        .collect();
+    if changed_session || !toasts.is_empty() {
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            if changed_session {
+                sync_dnd(&handle);
+            }
+            for effect in &toasts {
+                show_toast(&handle, effect);
+            }
+        });
     }
     let changed = effects.iter().any(|effect| {
         matches!(
@@ -693,6 +712,18 @@ fn show_toast(app: &AppHandle, effect: &Effect) {
     if let Err(error) = result {
         log::warn!("could not show a focus toast: {error}");
     }
+}
+
+/// Do not disturb follows the timer: on during focus, restored otherwise.
+pub fn sync_dnd(app: &AppHandle) {
+    crate::dnd::sync(app, || {
+        let focus = app.state::<FocusState>();
+        let machine = focus.machine.lock();
+        machine
+            .current
+            .as_ref()
+            .is_some_and(|session| session.kind == Kind::Focus)
+    });
 }
 
 /// "This session I will…": shown as the session's title and stored on its row.
