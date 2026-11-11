@@ -16,6 +16,8 @@ export type WritableTable =
   | "money_templates"
   | "area_items"
   | "routine_blocks"
+  | "day_blocks"
+  | "task_daily_top"
   | "core_settings";
 
 export type Op =

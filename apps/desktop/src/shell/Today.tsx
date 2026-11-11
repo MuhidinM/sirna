@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
-import { transact } from "../kernel/db";
+import { query, transact } from "../kernel/db";
+import { ulid } from "../kernel/ulid";
+import { ensureDayPlan } from "../features/plan/dayplan";
 import { formatAmount } from "../kernel/money";
 import {
   DUE_SQL,
@@ -92,6 +94,16 @@ function useNow(): number {
 export function Today() {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
+
+  // Make today's plan from the routine the first time the day is opened.
+  useEffect(() => {
+    void ensureDayPlan(
+      query,
+      (ops) => transact("system", ops, "day-plan"),
+      nowMs,
+      () => ulid(),
+    ).catch((error: unknown) => console.error("could not plan the day", error));
+  }, [today, nowMs]);
   const top = useLiveQuery<TaskRow>(todayTopSql, [today, dayStart]);
   const due = useLiveQuery<TaskRow>(DUE_SQL, [today]);
   const waiting = useLiveQuery<{
