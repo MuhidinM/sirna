@@ -7,6 +7,7 @@ mod db;
 mod hotkey;
 mod migrate;
 mod notify;
+mod reminders;
 mod secrets;
 mod startup;
 mod tasks;
@@ -64,6 +65,7 @@ pub fn run() {
             // Any write (capture, Today screen, tray) refreshes the tray menu.
             let handle = app.handle().clone();
             app.listen_any("data-changed", move |_| tray::rebuild(&handle));
+            reminders::start(app.handle().clone());
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }
