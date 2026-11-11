@@ -222,6 +222,28 @@ mod tests {
         assert!(!is_read_query("-- SELECT\nUPDATE x SET y = 1"));
         assert!(!is_read_query("-- only a comment"));
     }
+
+    #[test]
+    fn the_sheet_shows_the_areas_cheat_lines_in_card_order() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure(&conn).unwrap();
+        crate::migrate::run(&mut conn, crate::migrate::MIGRATIONS, 0).unwrap();
+        conn.execute_batch(
+            "INSERT INTO note_items (id, kind, status, body, area_id, sort_order, created_at, updated_at, deleted_at) VALUES
+               ('a', 'cheat', 'kept', 'pinned later', 'coding', NULL, 30, 0, NULL),
+               ('b', 'cheat', 'kept', 'first by hand', 'coding', 0, 20, 0, NULL),
+               ('c', 'cheat', 'kept', 'pinned first', 'coding', NULL, 10, 0, NULL),
+               ('d', 'cheat', 'kept', 'deleted', 'coding', NULL, 5, 0, 1),
+               ('e', 'cheat', 'kept', 'other area', 'quran', NULL, 1, 0, NULL),
+               ('f', 'note', 'kept', 'not a cheat', 'coding', NULL, 1, 0, NULL);",
+        )
+        .unwrap();
+        assert_eq!(
+            super::cheat_lines(&conn, Some("coding")),
+            vec!["first by hand", "pinned first", "pinned later"]
+        );
+        assert!(super::cheat_lines(&conn, None).is_empty());
+    }
 }
 
 /// Reads through a connection that cannot write.
@@ -341,6 +363,36 @@ pub struct SetupInfo {
     pub kit: crate::kit::Kit,
     /// Do not disturb is switched on automatically (T-029).
     pub dnd: bool,
+    /// The area's cheat sheet, shown next to the timer (plan §3.15).
+    pub notes: Vec<String>,
+}
+
+/// Most cheat lines a sheet shows; the card itself stays short on purpose.
+const SHEET_NOTES: usize = 12;
+
+/// An area's cheat lines in card order (same order as the Notes page).
+pub fn cheat_lines(conn: &rusqlite::Connection, area_id: Option<&str>) -> Vec<String> {
+    let Some(area_id) = area_id else {
+        return Vec::new();
+    };
+    let lines = conn
+        .prepare(
+            "SELECT body FROM note_items
+             WHERE kind = 'cheat' AND status = 'kept' AND deleted_at IS NULL AND area_id = ?1
+             ORDER BY sort_order IS NULL, sort_order, created_at, id
+             LIMIT ?2",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map(rusqlite::params![area_id, SHEET_NOTES as i64], |row| {
+                    row.get(0)
+                })?
+                .collect::<rusqlite::Result<Vec<String>>>()
+        });
+    lines.unwrap_or_else(|error| {
+        log::warn!("could not read the cheat sheet: {error}");
+        Vec::new()
+    })
 }
 
 /// Async: it probes the Do not disturb COM server, which must never block
@@ -351,18 +403,20 @@ pub fn setup_info(
     pending: State<'_, crate::kit::PendingSetup>,
 ) -> Result<SetupInfo, String> {
     let block = pending.0.lock().clone().flatten();
-    let (context, kit) = {
+    let (context, kit, notes) = {
         let conn = db.write.lock();
         let context = crate::focus::context_for(&conn, block.as_deref())
             .map_err(|error| error.to_string())?;
         let kit = crate::kit::load(&conn, context.area_id.as_deref());
-        (context, kit)
+        let notes = cheat_lines(&conn, context.area_id.as_deref());
+        (context, kit, notes)
     };
     Ok(SetupInfo {
         kit,
         title: context.title,
         minutes: context.focus_min,
         dnd: crate::dnd::available(),
+        notes,
     })
 }
 
@@ -409,6 +463,32 @@ pub fn setup_start(
         );
     });
     result
+}
+
+/// Undoes one Notes save (plan §3.15: an overwrite can be undone). Only
+/// `notes:` contexts, so the webview can't undo other people's work.
+#[tauri::command]
+pub fn notes_undo(context: String, app: AppHandle, db: State<'_, Db>) -> Result<usize, String> {
+    if !context.starts_with("notes:") || context.len() > 64 {
+        return Err("only a Notes edit can be undone here".into());
+    }
+    let undone = {
+        let mut conn = db.write.lock();
+        let txn = conn.transaction().map_err(|error| error.to_string())?;
+        let undone = tx::undo_context(&txn, "user", &context, clock::now_ms())
+            .map_err(|error| error.to_string())?;
+        txn.commit().map_err(|error| error.to_string())?;
+        undone
+    };
+    emit_changed(&app, vec!["note_items".into()]);
+    Ok(undone)
+}
+
+/// `? query` + Enter in the capture box: the main window opens on Notes.
+#[tauri::command]
+pub fn open_notes(query: String, app: AppHandle) {
+    let query: String = query.chars().take(200).collect();
+    crate::review::open_screen(&app, &format!("notes:{query}"));
 }
 
 /// Closes the calling window (the capture box).

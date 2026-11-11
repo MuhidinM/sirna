@@ -351,3 +351,25 @@ input[type="number"] {
 .kit h2 {
   margin-top: 0;
 }
+
+/* Cheat sheets. */
+.cheat {
+  margin-bottom: var(--space-6);
+}
+
+.cheat h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.cheat-lines li {
+  padding: 2px 0;
+}
+
+.cheat-lines code,
+.notes code {
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-2);
+  padding: 0 4px;
+  border-radius: 4px;
+}

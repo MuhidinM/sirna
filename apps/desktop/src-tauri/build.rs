@@ -67,6 +67,8 @@ fn main() {
         "focus_setup_open",
         "focus_start",
         "focus_status",
+        "notes_undo",
+        "open_notes",
         "secret_set",
         "secret_status",
         "setup_info",

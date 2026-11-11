@@ -117,6 +117,8 @@ pub fn run() {
             commands::focus_setup_open,
             commands::focus_start,
             commands::focus_status,
+            commands::notes_undo,
+            commands::open_notes,
             commands::capture_ready,
             commands::capture_replace,
             commands::close_window,
