@@ -56,8 +56,10 @@ pub fn run() {
             }
             app.manage(hotkey::ActiveHotkey::default());
             app.manage(hotkey::CapturePressedAt::default());
-            let capture_key = hotkey::register(app.handle());
-            tray::create(app.handle(), capture_key)?;
+            let saved_key =
+                db::setting_string(&app.state::<db::Db>().write.lock(), "capture.hotkey");
+            let capture_key = hotkey::register(app.handle(), saved_key);
+            tray::create(app.handle(), capture_key.as_deref())?;
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }

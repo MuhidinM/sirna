@@ -111,6 +111,17 @@ pub fn insert_capture(conn: &Connection, body: &str, received_at_ms: i64) -> rus
     Ok(conn.last_insert_rowid())
 }
 
+/// A setting stored as a JSON string (`"Ctrl+Alt+K"`), if present.
+pub fn setting_string(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value_json FROM core_settings WHERE key = ?1",
+        [key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|json| serde_json::from_str::<String>(&json).ok())
+}
+
 /// Records that a parser turned a raw item into records.
 pub fn mark_parsed(
     conn: &Connection,

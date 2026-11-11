@@ -2,8 +2,8 @@
 //!
 //! Ctrl+Alt+Space is the first choice, but another app may already own it
 //! (on the development machine it is taken). Sirna then tries the next
-//! candidate and shows whichever one works in the tray tooltip. A setting to
-//! pick your own arrives with the capture window work (T-015).
+//! candidate and shows whichever one works in the tray tooltip. A key saved in
+//! the `capture.hotkey` setting (e.g. "Ctrl+Alt+K") is tried before them all.
 
 use std::time::Instant;
 
@@ -40,7 +40,7 @@ pub struct CapturePressedAt(pub Mutex<Option<Instant>>);
 
 /// The hotkey that was registered, if any.
 #[derive(Default)]
-pub struct ActiveHotkey(pub Mutex<Option<(Shortcut, &'static str)>>);
+pub struct ActiveHotkey(pub Mutex<Option<(Shortcut, String)>>);
 
 /// The plugin, with a handler that opens the capture box on key press.
 pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
@@ -63,18 +63,54 @@ pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-/// Registers the first free candidate and returns its label, or None if every
-/// candidate is taken.
-pub fn register(app: &AppHandle) -> Option<&'static str> {
+/// Reads a key like "Ctrl+Alt+K" or "ctrl+shift+space" into a shortcut.
+pub fn parse_key(text: &str) -> Option<Shortcut> {
+    let normalised = text.trim().replace(' ', "").to_lowercase();
+    if normalised.is_empty() {
+        return None;
+    }
+    normalised.parse::<Shortcut>().ok()
+}
+
+/// Registers the saved key if there is one, else the first free candidate.
+/// Returns the label of the key in use, or None if every candidate is taken.
+pub fn register(app: &AppHandle, saved: Option<String>) -> Option<String> {
+    let mut choices: Vec<(Shortcut, String)> = Vec::new();
+    if let Some(text) = saved {
+        match parse_key(&text) {
+            Some(shortcut) => choices.push((shortcut, text.trim().to_string())),
+            None => log::warn!("ignoring the saved capture hotkey {text:?}: not a key combination"),
+        }
+    }
     for (modifiers, code, label) in CANDIDATES {
-        let shortcut = Shortcut::new(Some(modifiers), code);
+        choices.push((Shortcut::new(Some(modifiers), code), label.to_string()));
+    }
+    for (shortcut, label) in choices {
         match app.global_shortcut().register(shortcut) {
             Ok(()) => {
-                *app.state::<ActiveHotkey>().0.lock() = Some((shortcut, label));
+                *app.state::<ActiveHotkey>().0.lock() = Some((shortcut, label.clone()));
                 return Some(label);
             }
             Err(error) => log::warn!("could not register {label}: {error}"),
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_saved_keys_in_any_case() {
+        let expected = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyK);
+        assert_eq!(parse_key("Ctrl+Alt+K"), Some(expected));
+        assert_eq!(parse_key(" ctrl + alt + k "), Some(expected));
+    }
+
+    #[test]
+    fn rejects_text_that_is_not_a_key() {
+        assert_eq!(parse_key(""), None);
+        assert_eq!(parse_key("banana"), None);
+    }
 }
