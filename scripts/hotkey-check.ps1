@@ -1,12 +1,11 @@
 # Presses the capture hotkey and measures "hotkey to ready to type" (plan §10).
-# Needs Sirna started with stderr sent to -Log, e.g.
-#   Start-Process sirna.exe -ArgumentList '--autostart' -RedirectStandardError $env:TEMP\sirna-err.txt
+# Reads the app's log file (tauri-plugin-log) for the "capture ready in N ms" line.
 # Usage: scripts/hotkey-check.ps1 [-Key Space|J] [-Text "lunch 120"] [-Tries 20] [-Log path]
 param(
   [string]$Key = "Space",
   [string]$Text = "",
   [int]$Tries = 1,
-  [string]$Log = "$env:TEMP\sirna-err.txt"
+  [string]$Log = "$env:LOCALAPPDATA\dev.sirna.app\logs\Sirna.log"
 )
 
 Add-Type -Name K -Namespace SirnaCheck -MemberDefinition @"
@@ -26,7 +25,7 @@ function Press-Hotkey {
   [SirnaCheck.K]::keybd_event(0x11, 0, $up, [UIntPtr]::Zero)
 }
 
-function Ready-Lines { @(Get-Content $Log -ErrorAction SilentlyContinue | Where-Object { $_ -match '^capture ready in (\d+) ms' }) }
+function Ready-Lines { @(Get-Content $Log -ErrorAction SilentlyContinue | Where-Object { $_ -match 'capture ready in (\d+) ms' }) }
 
 $times = @()
 for ($i = 0; $i -lt $Tries; $i++) {
