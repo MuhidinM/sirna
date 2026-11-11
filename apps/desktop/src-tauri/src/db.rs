@@ -6,33 +6,58 @@ use std::path::Path;
 use parking_lot::Mutex;
 use rusqlite::{Connection, params};
 
-/// The first schema file. T-012 replaces this with the migration runner.
-const CORE_RAW_ITEMS_SQL: &str =
-    include_str!("../../src/kernel/migrations/0001_core_raw_items.sql");
+use crate::{backup, migrate};
 
 pub struct Db {
     pub write: Mutex<Connection>,
 }
 
 impl Db {
-    pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let conn = Connection::open(path)?;
-        prepare(&conn)?;
+    /// Opens the database, backs it up if migrations are pending, and migrates it.
+    pub fn open(
+        path: &Path,
+        backup_dir: &Path,
+        now_ms: i64,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut conn = Connection::open(path)?;
+        configure(&conn)?;
+        let pending = migrate::pending(&conn, migrate::MIGRATIONS)?;
+        if !pending.is_empty() && has_user_tables(&conn)? {
+            let name = format!("pre-migration-{now_ms}.db");
+            let copy = backup::checked_copy(&conn, backup_dir, &name)?;
+            log::info!(
+                "backed up before {} migration(s): {}",
+                pending.len(),
+                copy.display()
+            );
+        }
+        let applied = migrate::run(&mut conn, migrate::MIGRATIONS, now_ms)?;
+        if !applied.is_empty() {
+            log::info!("applied migrations: {}", applied.join(", "));
+        }
         Ok(Self {
             write: Mutex::new(conn),
         })
     }
 }
 
-/// Pragmas from plan §5.1, then the schema.
-pub fn prepare(conn: &Connection) -> rusqlite::Result<()> {
+/// Pragmas from plan §5.1.
+pub fn configure(conn: &Connection) -> rusqlite::Result<()> {
     // auto_vacuum only takes effect before the first table exists.
     conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.pragma_update(None, "busy_timeout", 5000)?;
-    conn.execute_batch(CORE_RAW_ITEMS_SQL)
+    conn.pragma_update(None, "busy_timeout", 5000)
+}
+
+fn has_user_tables(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master
+                        WHERE type = 'table' AND name NOT IN ('core_migrations', 'sqlite_sequence'))",
+        [],
+        |row| row.get(0),
+    )
 }
 
 /// Stores a capture exactly as typed and returns its row id.
@@ -49,8 +74,9 @@ mod tests {
     use super::*;
 
     fn memory_db() -> Connection {
-        let conn = Connection::open_in_memory().expect("open in-memory db");
-        prepare(&conn).expect("prepare schema");
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        configure(&conn).expect("pragmas");
+        migrate::run(&mut conn, migrate::MIGRATIONS, 0).expect("migrate");
         conn
     }
 
@@ -86,5 +112,22 @@ mod tests {
             .pragma_query_value(None, "foreign_keys", |row| row.get(0))
             .expect("pragma");
         assert_eq!(on, 1);
+    }
+
+    #[test]
+    fn opening_backs_up_before_migrating_an_existing_file() {
+        let dir = std::env::temp_dir().join(format!("sirna-db-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("sirna.db");
+        // A database from before the migration runner: a table but no core_migrations.
+        Connection::open(&path)
+            .and_then(|conn| conn.execute_batch("CREATE TABLE legacy (x INTEGER);"))
+            .expect("legacy db");
+
+        let backups = dir.join("backups");
+        Db::open(&path, &backups, 42).expect("open");
+
+        assert!(backups.join("pre-migration-42.db").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
