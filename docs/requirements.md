@@ -86,8 +86,8 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-NOT-01 | Reminders fire within 60 s with no window open; missed ones become one summary | T-017 | | ☐ |
-| R-NOT-02 | App toasts capped; quiet hours from hard stop to wake time | T-017 | | ☐ |
+| R-NOT-01 | Reminders fire within 60 s with no window open; missed ones become one summary | T-017 | Minute tick on its own thread; a reminder captured for 11:43 fired at 11:43:00 with no window open and its Done button marked the task done; `plan_tick` tests: fresh → own toast, >15 min late → one summary, >3 at once → summary, >12 h → expired (#17) | ☑ |
+| R-NOT-02 | App toasts capped; quiet hours from hard stop to wake time | T-017 | Bursts of more than 3 collapse into one summary (#17). Your own reminders always fire (plan §8). The daily cap and quiet hours apply to app-initiated toasts, which start in T-021 | ◐ |
 | R-NOT-03 | Muted notifications and disabled autostart are detected and shown | T-017, T-025 | | ☐ |
 
 ## J. AI (§7)
