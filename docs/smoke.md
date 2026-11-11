@@ -52,3 +52,5 @@ Usage numbers: `pnpm usage` (last 7 days) or `pnpm usage 30`. Read-only, local o
 | Data    | `%APPDATA%\dev.sirna.app\sirna.db`                      |
 | Log     | `%LOCALAPPDATA%\dev.sirna.app\logs\Sirna.log`           |
 | Secrets | Windows Credential Manager, entries for `dev.sirna.app` |
+
+An app installed or started from inside a packaged app (the Claude desktop app is one) writes to that app's private copy of `%LOCALAPPDATA%` and the registry, so the Start menu and autostart never see it. `pnpm ship` avoids this by installing through the desktop shell. Check with Task Manager that the running `sirna.exe` is `%LOCALAPPDATA%\Sirna\sirna.exe`, not a path under `Packages\`.
