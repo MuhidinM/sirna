@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "capture",
-  "description": "The capture box: save and undo a capture, read, close itself. No db_tx, no secrets.",
+  "description": "The capture box: save and undo a capture (tasks, notes, money, ideas), read, close itself. No db_tx, no secrets.",
   "windows": ["capture"],
   "permissions": [
     "core:event:default",

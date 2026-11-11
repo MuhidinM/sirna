@@ -34,6 +34,8 @@ import {
   weekLoad,
 } from "../features/projects/capacity";
 import { savePlan, type Timing, timingOf } from "../features/projects/timing";
+import { type IdeaAction, ideaActionValues } from "../features/projects/idea";
+import { AT_RISK_SQL, type Risk, type RiskRow, risks } from "../features/projects/risk";
 import { weekStart } from "../features/plan/dayplan";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -381,15 +383,79 @@ function List({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
+const ESTIMATE_CHIPS = [5, 10, 20, 40];
+
+/**
+ * An idea's card (plan §3.8): the numbers, then what to do with it. Every
+ * choice is one undoable write under `project:<id>`.
+ */
+function IdeaCard({ project, plan }: { project: ProjectRow; plan: WeekState | null }) {
+  const [error, setError] = useState<string | null>(null);
+  if (!plan) return null;
+  const act = (action: IdeaAction) => {
+    const values = ideaActionValues(project, action, plan);
+    if (!values) {
+      setError("That doesn't fit right now.");
+      return;
+    }
+    setError(null);
+    transact(
+      "user",
+      [{ op: "update", table: "project_items", id: project.id, values }],
+      `project:${project.id}`,
+    ).catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+  };
+  const timing = timingOf(draftOf(project), project.id, plan.week, plan.projects, plan.today);
+  return (
+    <section className="card idea-card" aria-label="Timing check">
+      <h3>Idea</h3>
+      {timing ? (
+        <TimingCard timing={timing} />
+      ) : (
+        <p className="meta">How big is it? Pick an estimate to see where it fits.</p>
+      )}
+      <div className="row">
+        {!project.estimate_min &&
+          ESTIMATE_CHIPS.map((hours) => (
+            <Button key={hours} onClick={() => act({ kind: "estimate", minutes: hours * 60 })}>
+              {hours} h
+            </Button>
+          ))}
+        {project.estimate_min && !project.deadline && (
+          <Button primary onClick={() => act({ kind: "place" })}>
+            Place it in my weeks
+          </Button>
+        )}
+        {project.estimate_min && project.deadline && (
+          <>
+            <Button primary onClick={() => act({ kind: "keep" })}>
+              Keep {project.deadline}
+            </Button>
+            <Button onClick={() => act({ kind: "suggested" })}>Use suggested dates</Button>
+          </>
+        )}
+        <Button onClick={() => act({ kind: "drop" })}>Drop</Button>
+      </div>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function ProjectView({
   project,
   areas,
   plan,
+  risk,
   onNote,
 }: {
   project: ProjectRow;
   areas: Area[];
   plan: WeekState | null;
+  risk: Risk | undefined;
   onNote: (note: string | null) => void;
 }) {
   const tasks = useLiveQuery<ProjectTask & Record<string, string | number | null>>(
@@ -422,9 +488,15 @@ function ProjectView({
         </Chip>
         <span className="meta">{weeklyLabel(project.weekly_min)}</span>
         {project.deadline && <span className="meta">by {project.deadline}</span>}
+        {risk && (
+          <span className="at-risk" role="status">
+            At risk · {hoursLabel(risk.shortMin)} {risk.overdue ? "left, past the date" : "short"}
+          </span>
+        )}
         <Button onClick={() => setEditing(true)}>Edit</Button>
       </header>
       {project.goal && <p className="meta">{project.goal}</p>}
+      {project.status === "idea" && <IdeaCard project={project} plan={plan} />}
       <p>
         {openStep(project) ? (
           <>
@@ -476,6 +548,10 @@ export function Projects() {
   const [creating, setCreating] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const plan = useWeek();
+  const risky = useLiveQuery<RiskRow & Record<string, string | number | null>>(AT_RISK_SQL);
+  const riskById = new Map(
+    plan ? risks(risky.rows, plan.today).map((risk) => [risk.id, risk]) : [],
+  );
   const current = projects.rows.find((p) => p.id === selected) ?? projects.rows[0] ?? null;
   const load = plan ? weekLoad(plan.week, plan.projects, weekStart(plan.today)) : null;
 
@@ -535,6 +611,7 @@ export function Projects() {
                   <span>{project.title}</span>
                   <span className="meta">
                     {statusLabel(project.status)} · {project.open_count} open
+                    {riskById.has(project.id) ? " · at risk" : ""}
                   </span>
                 </button>
               </li>
@@ -546,6 +623,7 @@ export function Projects() {
               project={current}
               areas={areas.rows}
               plan={plan}
+              risk={riskById.get(current.id)}
               onNote={setNote}
             />
           )}

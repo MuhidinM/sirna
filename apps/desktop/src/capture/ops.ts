@@ -2,12 +2,15 @@
 import { type Op } from "../kernel/db";
 import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
+import { placeIdea, type Placement } from "../features/projects/idea";
 import { type Parsed } from "./parse";
 import { weekdayName } from "./when";
 
 export interface OpsContext {
   nowMs: number;
   newId: () => string;
+  /** Where an idea lands (features/projects/idea.ts); without it, an unplaced idea. */
+  idea?: Placement;
 }
 
 const CATEGORY_NAMES: Record<string, string> = {
@@ -25,7 +28,17 @@ const CATEGORY_NAMES: Record<string, string> = {
   cat_income: "Other income",
 };
 
-export function toOps(parsed: Parsed, { nowMs, newId }: OpsContext): Op[] {
+/** The project an idea capture becomes, before its week is known. */
+export function ideaInput(parsed: Extract<Parsed, { kind: "idea" }>) {
+  return {
+    title: parsed.title ?? parsed.body,
+    ...(parsed.area ? { area: parsed.area } : {}),
+    ...(parsed.estimateMin ? { estimateMin: parsed.estimateMin } : {}),
+    ...(parsed.deadline ? { deadline: parsed.deadline } : {}),
+  };
+}
+
+export function toOps(parsed: Parsed, { nowMs, newId, idea }: OpsContext): Op[] {
   switch (parsed.kind) {
     case "task":
       return [
@@ -68,8 +81,16 @@ export function toOps(parsed: Parsed, { nowMs, newId }: OpsContext): Op[] {
           },
         },
       ];
-    case "note":
     case "idea":
+      return [
+        {
+          op: "insert",
+          table: "project_items",
+          id: newId(),
+          values: (idea ?? placeIdea(ideaInput(parsed), null)).values,
+        },
+      ];
+    case "note":
     case "feedback":
     case "inbox":
     case "cheat":
@@ -124,7 +145,7 @@ function timeLabel(epochMs: number): string {
 }
 
 /** The short confirmation shown in the capture box. */
-export function echo(parsed: Parsed, nowMs: number): string {
+export function echo(parsed: Parsed, nowMs: number, idea?: Placement): string {
   const area = "area" in parsed && parsed.area ? ` · #${parsed.area}` : "";
   switch (parsed.kind) {
     case "task": {
@@ -144,7 +165,7 @@ export function echo(parsed: Parsed, nowMs: number): string {
     case "note":
       return `Note${area}`;
     case "idea":
-      return `Idea${area}`;
+      return idea ? `${idea.echo}${area}` : `Idea${area}`;
     case "cheat":
       return `Pinned to cheat sheet${area}`;
     case "feedback":

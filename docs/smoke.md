@@ -28,6 +28,8 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Settings:** the sidebar reaches every page. In Settings, save a Gemini key: it shows "Saved in Windows Credential Manager" and the box stays empty; Replace and Remove work, and Credential Manager → Windows Credentials lists `gemini_api_key` under `dev.sirna.app`. Set the capture key to `Ctrl+Alt+K`: it works at once and the tray tooltip names it. In My week, set email checks to `11:00`: tomorrow's plan has one check at 11:00.
 - **Projects:** New project with a next step: it shows on the board under To do. Drag it to Doing: Today still lists it. Move it to Done: the project asks for the next step. The List tab shows every card with its column (T-033).
 - **Timing check:** Projects shows "This week: load …". In New project type an estimate of 18 h: the card shows a start and finish; add a deadline 3 weeks out: it shows a verdict with the hours a week and the load before → after. With two active projects, saving a third as Active puts it in Next up with a note (T-034).
+- **Ideas:** capture `idea: learn Go ~10h`: the echo says when it starts and how many hours a week; Projects lists it as Active or Next up. Ctrl+Z in the capture box removes it. Capture `idea: CLI tool ~18h by 20 dec`: the echo gives Good / Tight / Too much; in Projects its card offers Keep the date, Use suggested dates and Drop (T-035).
+- **At risk:** a project with a deadline 2 weeks out, 10 h estimate and 2 h a week: the brief shows `AT RISK  … 6 h short before …` and Projects marks it (T-035).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

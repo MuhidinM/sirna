@@ -12,6 +12,7 @@ import {
   type BriefArea,
 } from "../features/brief/brief";
 import { CHANGED_SQL, type ChangedCounts } from "../features/brief/changed";
+import { AT_RISK_SQL, riskLine, type RiskRow, risks } from "../features/projects/risk";
 import { type BlockRow } from "../features/plan/now";
 import { logicalDayStart } from "../features/tasks/today";
 import { toMinutes } from "../features/plan/routine";
@@ -74,9 +75,15 @@ export function Brief({
     logicalDayStart(today) - DAY_MS,
     today,
   ]);
+  const risky = useLiveQuery<RiskRow & Record<string, string | number | null>>(AT_RISK_SQL);
   const checks = useChecks();
   const [reopened, setReopened] = useState(false);
-  const ready = !settings.loading && !week.loading && !changed.loading && checks !== undefined;
+  const ready =
+    !settings.loading &&
+    !week.loading &&
+    !changed.loading &&
+    !risky.loading &&
+    checks !== undefined;
 
   useEffect(() => {
     if (ready) void invoke("brief_ready").catch(() => undefined);
@@ -104,6 +111,7 @@ export function Brief({
     wakeMin: toMinutes(typeof wake === "string" ? wake : "06:00"),
     hardStopMin: toMinutes(typeof stop === "string" ? stop : "22:00"),
     changed: changed.rows[0],
+    atRisk: riskLine(risks(risky.rows, today)),
   });
 
   return (

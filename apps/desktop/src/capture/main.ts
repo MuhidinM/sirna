@@ -9,7 +9,10 @@ import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db"
 import { ulid } from "../kernel/ulid";
 import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
 import { readings } from "./alternatives";
-import { echo as echoLine, toOps } from "./ops";
+import { loadWeek, type Query } from "../features/projects/capacity";
+import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
+import { logicalDate } from "../kernel/dates";
+import { echo as echoLine, ideaInput, toOps } from "./ops";
 import { type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { type ClockStyle } from "./when";
 
@@ -118,14 +121,46 @@ form.addEventListener("submit", (event) => {
   }
   const nowMs = systemClock.now();
   const parsed = options[picked] ?? parseCapture(rawText, { nowMs, clockStyle });
-  const ops = toOps(parsed, { nowMs, newId: () => ulid() });
   const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
   input.disabled = true;
   busy = true;
+  // An idea is placed in the week before it is saved, so the project and its
+  // dates go in the capture's one transaction (plan §3.8).
+  const fixing = editing;
+  const placed: Promise<Placement | undefined> =
+    parsed.kind === "idea"
+      ? Promise.all([
+          loadWeek(query as Query),
+          query<{ id: string }>("SELECT id FROM area_items WHERE deleted_at IS NULL"),
+          // A fix replaces the old capture: its project mustn't count against the new one.
+          fixing
+            ? query<{ entity_id: string }>(REPLACED_PROJECTS_SQL, [`capture:${fixing.id}`])
+            : Promise.resolve([]),
+        ])
+          .then(([week, areas, replaced]) => {
+            const gone = new Set(replaced.map((row) => row.entity_id));
+            return placeIdea(ideaInput(parsed), {
+              week: week.week,
+              projects: week.projects.filter((project) => !gone.has(project.id)),
+              today: logicalDate(nowMs),
+              areaIds: areas.map((area) => area.id),
+            });
+          })
+          .catch(() => placeIdea(ideaInput(parsed), null))
+      : Promise.resolve(undefined);
+  let idea: Placement | undefined;
   // A fix undoes the old capture and saves the new one in one transaction.
-  const saved = editing
-    ? replaceCapture(editing.id, rawText, ops, parser)
-    : commitCapture(rawText, ops, parser);
+  const saved = placed.then((placement) => {
+    idea = placement;
+    const ops = toOps(parsed, {
+      nowMs,
+      newId: () => ulid(),
+      ...(placement ? { idea: placement } : {}),
+    });
+    return fixing
+      ? replaceCapture(fixing.id, rawText, ops, parser)
+      : commitCapture(rawText, ops, parser);
+  });
   const fixed = editing ? "Fixed · " : "";
   saved
     .then((rawId) => {
@@ -142,7 +177,7 @@ form.addEventListener("submit", (event) => {
           .catch(() => finish("Couldn't set away. Try again."));
         return;
       }
-      finish(fixed + echoLine(parsed, nowMs));
+      finish(fixed + echoLine(parsed, nowMs, idea));
     })
     .catch((error: unknown) => {
       busy = false;

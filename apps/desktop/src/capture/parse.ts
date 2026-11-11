@@ -26,7 +26,18 @@ export type Parsed =
       date: string;
       area?: string;
     }
-  | { kind: "note" | "idea" | "feedback" | "inbox"; body: string; area?: string }
+  | { kind: "note" | "feedback" | "inbox"; body: string; area?: string }
+  | {
+      kind: "idea";
+      body: string;
+      area?: string;
+      /** The name without the estimate and date words, when they were there. */
+      title?: string;
+      /** `by 20 dec` */
+      deadline?: string;
+      /** `~18h`, `18 hours` */
+      estimateMin?: number;
+    }
   | { kind: "cheat"; body: string; area?: string }
   | { kind: "search"; query: string }
   | { kind: "away"; until?: string }
@@ -174,6 +185,42 @@ function withArea<T extends object>(value: T, area: string | undefined): T & { a
   return area ? { ...value, area } : value;
 }
 
+/** `~18h`, `about 18 hours` anywhere; a bare `18h` only at the end or before `by`. */
+const MARKED_ESTIMATE = /(?:~|\babout\s+|\baround\s+)(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)\b/i;
+const BARE_ESTIMATE = /\s(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)(?=\s*$|\s+by\b)/i;
+
+/**
+ * An idea (plan §3.8): `idea: CLI budget tool ~18h by 20 dec` reads an
+ * estimate and a deadline; the name is what is left.
+ */
+export function readIdea(
+  body: string,
+  nowMs: number,
+  clockStyle: ClockStyle = "western",
+): Extract<Parsed, { kind: "idea" }> {
+  const idea: Extract<Parsed, { kind: "idea" }> = { kind: "idea", body };
+  let rest = body;
+  const estimate = MARKED_ESTIMATE.exec(rest) ?? BARE_ESTIMATE.exec(` ${rest}`);
+  if (estimate) {
+    const minutes = Math.round(Number(estimate[1]) * 60);
+    if (minutes > 0) {
+      idea.estimateMin = minutes;
+      rest = ` ${rest}`.replace(estimate[0], " ").trim();
+    }
+  }
+  const when = readWhen(rest, nowMs, clockStyle);
+  if (when.date) {
+    idea.deadline = when.date;
+    rest = when.rest;
+  }
+  const title = rest
+    .replace(/\s+/g, " ")
+    .replace(/\s*\bby\s*$/i, "")
+    .trim();
+  if (title && title !== body) idea.title = title;
+  return idea;
+}
+
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const { nowMs, clockStyle = "western" } = options;
   const text = raw.trim().replace(/\s+/g, " ");
@@ -195,7 +242,7 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
     case "n":
       return withArea({ kind: "note", body: untagged }, area);
     case "idea":
-      return withArea({ kind: "idea", body: untagged }, area);
+      return withArea(readIdea(untagged, nowMs, clockStyle), area);
     case "pin":
       return withArea({ kind: "cheat", body: untagged }, area);
     case "fb":
