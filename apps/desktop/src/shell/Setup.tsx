@@ -6,7 +6,12 @@ import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
-import { DEFAULT_ANSWERS, type JobAnswer, type Weekday } from "../features/plan/routine";
+import {
+  DEFAULT_ANSWERS,
+  type JobAnswer,
+  parseTimes,
+  type Weekday,
+} from "../features/plan/routine";
 import { setupOps, type SetupChoices } from "../features/plan/setup";
 import { Button } from "./ui";
 
@@ -71,6 +76,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   );
   const [gymDays, setGymDays] = useState<Weekday[]>(DEFAULT_ANSWERS.gymDays);
   const [gymTime, setGymTime] = useState(DEFAULT_ANSWERS.gymTime);
+  const [emailText, setEmailText] = useState(DEFAULT_ANSWERS.emailChecks.join(", "));
   const [restDay, setRestDay] = useState<Weekday>(DEFAULT_ANSWERS.restDay);
   const [clockStyle, setClockStyle] = useState<ClockStyle>("western");
   const [startWithWindows, setStartWithWindows] = useState(true);
@@ -112,6 +118,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       }
       if (answers.gymDays) setGymDays(answers.gymDays);
       if (answers.gymTime) setGymTime(answers.gymTime);
+      if (answers.emailChecks) setEmailText(answers.emailChecks.join(", "));
       if (answers.restDay) setRestDay(answers.restDay);
       setAreas(
         Object.fromEntries(
@@ -134,6 +141,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
     setJobs((current) => current.map((job, i) => (i === index ? { ...job, ...change } : job)));
 
   async function save() {
+    const emailChecks = parseTimes(emailText);
+    if (!emailChecks) {
+      setError('Email check times: use times like "10:00, 15:00", or leave it empty for none.');
+      return;
+    }
     setSaving(true);
     setError(undefined);
     try {
@@ -152,6 +164,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
         restDay,
         gymDays,
         gymTime,
+        emailChecks,
         clockStyle,
         targetsHours: Object.fromEntries(
           Object.entries(areas).map(([id, area]) => [id, area.hours]),
@@ -300,6 +313,18 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <label>
             at <input type="time" value={gymTime} onChange={(e) => setGymTime(e.target.value)} />
           </label>
+        </div>
+        <div className="row">
+          <label>
+            Check email at{" "}
+            <input
+              value={emailText}
+              aria-label="Email check times"
+              placeholder="10:00, 15:00"
+              onChange={(e) => setEmailText(e.target.value)}
+            />
+          </label>
+          <span className="meta">10-minute reminders on workdays; leave empty for none</span>
         </div>
         <div className="row">
           <label>

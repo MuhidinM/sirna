@@ -25,6 +25,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Cheat sheets:** capture `pin: undo = git reset --soft HEAD~1 #coding`; type `? reset` in the capture box: the chip shows that line, Enter opens Cheat sheets on it. Start focus on a Coding block: the sheet shows the card. Edit the card, Save, Undo (T-031).
 - **Away:** capture `away till mon`: the echo says "Away until …", Today shows the banner, and no brief, review or block toast comes until then; a timed reminder still fires. "I'm back" ends it (T-032).
 - **Daily backup:** after the first minute of a new day, `D:\Sirna\backups` has `sirna-<today>.db` and the log says `daily backup:` (T-032).
+- **Settings:** the sidebar reaches every page. In Settings, save a Gemini key: it shows "Saved in Windows Credential Manager" and the box stays empty; Replace and Remove work, and Credential Manager → Windows Credentials lists `gemini_api_key` under `dev.sirna.app`. Set the capture key to `Ctrl+Alt+K`: it works at once and the tray tooltip names it. In My week, set email checks to `11:00`: tomorrow's plan has one check at 11:00.
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

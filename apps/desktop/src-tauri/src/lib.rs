@@ -126,6 +126,8 @@ pub fn run() {
             commands::capture_replace,
             commands::close_window,
             commands::secret_set,
+            commands::hotkey_current,
+            commands::hotkey_set,
             commands::secret_status,
             commands::set_away,
             commands::setup_info,

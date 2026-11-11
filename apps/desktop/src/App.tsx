@@ -5,12 +5,15 @@ import { useEffect, useState } from "react";
 import { query } from "./kernel/db";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { Kits } from "./shell/Kits";
+import { Nav, type Page } from "./shell/Nav";
 import { Notes } from "./shell/Notes";
 import { Review } from "./shell/Review";
+import { Settings } from "./shell/Settings";
 import { Setup } from "./shell/Setup";
 import { Today } from "./shell/Today";
 
-type Screen = "loading" | "setup" | "today" | "review" | "kits" | "notes";
+/** "setup" is the first run (no sidebar); "week" is the same form later. */
+type Screen = "loading" | "setup" | Page;
 
 /**
  * A screen Rust asked for (tray, toast, capture box): "review", or
@@ -56,21 +59,29 @@ export function App() {
   }, []);
 
   const home = () => setScreen("today");
+  const go = (page: Page) => {
+    // Opening Cheat sheets from the sidebar starts with an empty search.
+    if (page === "notes") setNotes((old) => ({ query: "", visit: old.visit + 1 }));
+    setScreen(page);
+  };
   if (screen === "loading") return null;
   if (screen === "setup") return <Setup onDone={home} />;
-  if (screen === "review") return <Review onClose={home} />;
-  if (screen === "kits") return <Kits onClose={home} />;
-  if (screen === "notes")
-    return <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
+
+  let page;
+  if (screen === "week") page = <Setup onDone={home} />;
+  else if (screen === "review") page = <Review onClose={home} />;
+  else if (screen === "kits") page = <Kits onClose={home} />;
+  else if (screen === "settings") page = <Settings />;
+  else if (screen === "notes")
+    page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
+  else page = <Today />;
   return (
-    <Today
-      onChangeWeek={() => setScreen("setup")}
-      onReview={() => setScreen("review")}
-      onKits={() => setScreen("kits")}
-      onNotes={() => {
-        setNotes((old) => ({ query: "", visit: old.visit + 1 }));
-        setScreen("notes");
-      }}
-    />
+    <div className="app-shell">
+      <Nav current={screen} onGo={go} />
+      {/* Keyed by page, so each page opens at the top. */}
+      <div className="app-page" key={screen}>
+        {page}
+      </div>
+    </div>
   );
 }

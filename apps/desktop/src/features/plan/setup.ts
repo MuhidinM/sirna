@@ -37,6 +37,7 @@ export function setupOps(
     restDay: choices.restDay,
     gymDays: choices.gymDays,
     gymTime: choices.gymTime,
+    emailChecks: choices.emailChecks,
   });
 
   const active = new Set(choices.activeAreas);

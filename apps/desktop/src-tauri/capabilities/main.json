@@ -22,6 +22,8 @@
     "allow-take-screen",
     "allow-focus-setup-open",
     "allow-notes-undo",
-    "allow-clear-away"
+    "allow-clear-away",
+    "allow-hotkey-current",
+    "allow-hotkey-set"
   ]
 }

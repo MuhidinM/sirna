@@ -108,17 +108,7 @@ function useMinute(): number {
   return minute;
 }
 
-export function Today({
-  onChangeWeek,
-  onReview,
-  onKits,
-  onNotes,
-}: {
-  onChangeWeek?: () => void;
-  onReview?: () => void;
-  onKits?: () => void;
-  onNotes?: () => void;
-}) {
+export function Today() {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
 
@@ -159,26 +149,6 @@ export function Today({
       <header>
         <h1>{longDate.format(nowMs)}</h1>
         <p className="meta">Capture anything with your capture key; it shows up here.</p>
-        {onChangeWeek && (
-          <Button onClick={onChangeWeek} className="change-week">
-            Change my week
-          </Button>
-        )}
-        {onReview && (
-          <Button onClick={onReview} className="change-week">
-            Night review
-          </Button>
-        )}
-        {onKits && (
-          <Button onClick={onKits} className="change-week">
-            Focus kits
-          </Button>
-        )}
-        {onNotes && (
-          <Button onClick={onNotes} className="change-week">
-            Cheat sheets
-          </Button>
-        )}
       </header>
 
       {backOn && (

@@ -22,6 +22,8 @@ export interface SetupAnswers {
   restDay: Weekday;
   gymDays: Weekday[];
   gymTime: string; // "17:30"
+  /** 10-minute "Check email" reminders on workdays; empty for none. */
+  emailChecks: string[]; // ["10:00", "15:00"]
 }
 
 export interface BlockDraft {
@@ -45,6 +47,7 @@ export const DEFAULT_ANSWERS: SetupAnswers = {
   restDay: 7,
   gymDays: [1, 3, 5],
   gymTime: "17:30",
+  emailChecks: ["10:00", "15:00"],
 };
 
 export function toMinutes(hhmm: string): number {
@@ -57,6 +60,26 @@ export function toMinutes(hhmm: string): number {
 
 export function toHhmm(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Reads "10:00, 15:30" into sorted unique times; "" is no times. Null when
+ * any part is not a time.
+ */
+export function parseTimes(text: string): string[] | null {
+  const parts = text
+    .split(/[,\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const minutes: number[] = [];
+  for (const part of parts) {
+    try {
+      minutes.push(toMinutes(part));
+    } catch {
+      return null;
+    }
+  }
+  return [...new Set(minutes)].sort((a, b) => a - b).map(toHhmm);
 }
 
 const ALL_DAYS: Weekday[] = [1, 2, 3, 4, 5, 6, 7];
@@ -80,9 +103,9 @@ function gaps(blocks: BlockDraft[], from: number, to: number): [number, number][
 /**
  * The starting routine: jobs as fixed blocks, Quran after waking, gym on its
  * days, two email checks on workdays, the night review, a rest day, and
- * "area" blocks for the generator to fill. Nothing overlaps except the
- * 10-minute email checks, which sit inside work hours; the day ends at the
- * hard stop.
+ * "area" blocks for the generator to fill. Nothing overlaps except
+ * 10-minute email checks set inside another block (work hours by default);
+ * the day ends at the hard stop.
  */
 export function defaultRoutine(answers: SetupAnswers): BlockDraft[] {
   const wake = toMinutes(answers.wake);
@@ -115,20 +138,15 @@ export function defaultRoutine(answers: SetupAnswers): BlockDraft[] {
     }
 
     if (isWorkday && active.has("admin")) {
-      add({
-        startMin: 10 * 60,
-        durationMin: 10,
-        kind: "routine",
-        areaId: "admin",
-        title: "Check email",
-      });
-      add({
-        startMin: 15 * 60,
-        durationMin: 10,
-        kind: "routine",
-        areaId: "admin",
-        title: "Check email",
-      });
+      // Older saved answers have no list: they keep the two default checks.
+      for (const time of answers.emailChecks ?? DEFAULT_ANSWERS.emailChecks)
+        add({
+          startMin: toMinutes(time),
+          durationMin: 10,
+          kind: "routine",
+          areaId: "admin",
+          title: "Check email",
+        });
     }
 
     if (active.has("gym") && answers.gymDays.includes(day) && !isRestDay) {
@@ -164,8 +182,17 @@ export function defaultRoutine(answers: SetupAnswers): BlockDraft[] {
       const limit = Math.min(review, stop);
       const maxBlocks = isWorkday ? 2 : 3;
       let placed = 0;
-      // Short routines (email checks) sit inside work hours; they don't split gaps.
-      const anchors = today.filter((block) => block.durationMin > 15);
+      // A short routine (an email check) inside a longer block doesn't split
+      // gaps; one at a free time does, so no focus block lands on it.
+      const inside = (block: BlockDraft) =>
+        today.some(
+          (other) =>
+            other !== block &&
+            other.durationMin > block.durationMin &&
+            other.startMin <= block.startMin &&
+            block.startMin + block.durationMin <= other.startMin + other.durationMin,
+        );
+      const anchors = today.filter((block) => block.durationMin > 15 || !inside(block));
       for (const [start, end] of gaps(anchors, from, limit)) {
         let cursor = start === from ? start : start + 15;
         const lastEnd = end === limit ? end : end - 15;

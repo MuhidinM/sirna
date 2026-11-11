@@ -373,3 +373,92 @@ input[type="number"] {
   padding: 0 4px;
   border-radius: 4px;
 }
+
+/* Sidebar on every page after setup (plan §3.14). */
+.app-shell {
+  display: flex;
+  height: 100vh;
+}
+
+/* Only the page scrolls; the sidebar stays put. */
+.app-page {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.sidebar {
+  flex: 0 0 168px;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-2);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-name {
+  margin: 0 var(--space-2) var(--space-4);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.sidebar-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-item:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.sidebar-item[aria-current="page"] {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.sidebar-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Settings. */
+.settings .card {
+  margin-bottom: var(--space-4);
+}
+
+.setting {
+  padding: var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.setting:last-of-type {
+  border-bottom: 0;
+}
+
+.check input {
+  flex: 0 0 auto;
+}
+
+.check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin: var(--space-2) 0;
+}
+
+.settings select {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-2);
+}
