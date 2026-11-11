@@ -17,6 +17,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 ## After milestones that touch time
 
 - **Sleep:** with a reminder due in 5 minutes, sleep the laptop for 10. On wake, one summary toast (T-017).
+- **Block start:** with Do not disturb off, a focus block on Today toasts at its start with "First step" and Start focus / Skip. Start focus begins a session tied to that block. Ignore one for 10 minutes: one "Just one session on …?" nudge (T-021).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)
