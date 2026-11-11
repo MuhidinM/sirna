@@ -72,14 +72,20 @@ pub fn run() {
             let saved_key =
                 db::setting_string(&app.state::<db::Db>().write.lock(), "capture.hotkey");
             let capture_key = hotkey::register(app.handle(), saved_key);
+            // The timer's state first: the tray menu shows it.
+            let focus_state = focus::restore_state(app.handle());
+            app.manage(focus_state.clone());
             tray::create(app.handle(), capture_key.as_deref())?;
             // Any write (capture, Today screen, tray) refreshes the tray menu.
             let handle = app.handle().clone();
             app.listen_any("data-changed", move |_| tray::rebuild(&handle));
             reminders::start(app.handle().clone());
-            let focus_state = focus::restore_state(app.handle());
-            app.manage(focus_state.clone());
             focus::run(app.handle(), focus_state);
+            // The tray follows the timer: menu on each change, tooltip each minute.
+            let on_change = app.handle().clone();
+            app.listen_any("focus-changed", move |_| tray::rebuild(&on_change));
+            let on_tick = app.handle().clone();
+            app.listen_any("focus-tick", move |_| tray::refresh_tooltip(&on_tick));
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }
