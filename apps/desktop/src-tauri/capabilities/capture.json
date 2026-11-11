@@ -10,6 +10,7 @@
     "allow-capture-ready",
     "allow-close-window",
     "allow-db-query",
-    "allow-capture-replace"
+    "allow-capture-replace",
+    "allow-open-notes"
   ]
 }

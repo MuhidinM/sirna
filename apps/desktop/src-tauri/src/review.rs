@@ -183,8 +183,13 @@ fn show_toast(app: &AppHandle, date: String) {
 
 /// Opens the main window on the review.
 pub fn open(app: &AppHandle) {
-    *app.state::<PendingScreen>().0.lock() = Some("review".into());
-    let _ = app.emit("show-screen", "review");
+    open_screen(app, "review");
+}
+
+/// Opens the main window on a screen: "review", or "notes:<query>".
+pub fn open_screen(app: &AppHandle, screen: &str) {
+    *app.state::<PendingScreen>().0.lock() = Some(screen.to_string());
+    let _ = app.emit("show-screen", screen);
     windows::spawn_open_main(app.clone());
 }
 

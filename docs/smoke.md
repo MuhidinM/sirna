@@ -22,6 +22,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Night review:** at review time a toast offers Start / In 30 min / Skip tonight, and the tray shows "Night review" until 03:00. Run it with Wi-Fi off: type `lunch 120, taxi 40`, pick an energy, accept tomorrow. Today shows the two expenses (T-026).
 - **Focus set-up:** in Focus kits, give Coding `notepad` under Open and `Telegram.exe` under Minimize. Tray → Start focus during a coding block: the sheet shows the checklist and "Opens notepad · Minimizes Telegram". Type an intent, press Enter once: the timer starts, Telegram is minimized (not closed), Notepad opens, and the tray tooltip shows the intent. At the break toast, "Done with: …?" Yes writes `intent_done = yes` (T-028).
 - **Do not disturb:** with it off, start focus: the sheet says "Do not disturb on", and Win+N shows the bell on. Stop the session: it is off again. Turn it on yourself first: Sirna leaves it on after the session (T-029, ADR-0007).
+- **Cheat sheets:** capture `pin: undo = git reset --soft HEAD~1 #coding`; type `? reset` in the capture box: the chip shows that line, Enter opens Cheat sheets on it. Start focus on a Coding block: the sheet shows the card. Edit the card, Save, Undo (T-031).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

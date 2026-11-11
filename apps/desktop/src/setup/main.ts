@@ -13,6 +13,7 @@ const minutes = document.querySelector<HTMLElement>("#setup-minutes");
 const intent = document.querySelector<HTMLInputElement>("#setup-intent");
 const checklist = document.querySelector<HTMLUListElement>("#setup-checklist");
 const actions = document.querySelector<HTMLElement>("#setup-actions");
+const notes = document.querySelector<HTMLUListElement>("#setup-notes");
 const message = document.querySelector<HTMLElement>("#setup-message");
 
 const close = () => invoke("close_window");
@@ -32,6 +33,16 @@ function render(info: SetupInfo) {
         box.id = `tick-${index}`;
         label.append(box, ` ${text}`);
         item.append(label);
+        return item;
+      }),
+    );
+  }
+  if (notes) {
+    // Plain text on purpose: the sheet stays small (the Notes page renders Markdown).
+    notes.replaceChildren(
+      ...info.notes.map((line) => {
+        const item = document.createElement("li");
+        item.textContent = line;
         return item;
       }),
     );

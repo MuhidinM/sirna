@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { systemClock } from "../kernel/clock";
 import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
+import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
 import { readings } from "./alternatives";
 import { echo as echoLine, toOps } from "./ops";
 import { type Parsed, parseCapture, PARSER_ID } from "./parse";
@@ -68,10 +69,33 @@ function refresh() {
   showChip();
 }
 
+/** Cheat lines, loaded once per capture box, for `? query` (plan §3.15). */
+let cheatCards: Promise<Card[]> | undefined;
+
+function showSearch(text: string) {
+  cheatCards ??= query<CheatRow & Record<string, string | null>>(CHEAT_SQL)
+    .then(groupCards)
+    .catch(() => []);
+  void cheatCards.then((cards) => {
+    // Typed on meanwhile: a newer refresh owns the chip.
+    if (input.value.trim().slice(1).trim() !== text) return;
+    const hits = search(cards, text);
+    const first = hits[0];
+    output.textContent = first
+      ? `${first.line.body} · ${first.card.title}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
+      : "No cheat line matches  ·  Enter: open Notes";
+  });
+}
+
 function showChip() {
   const current = options[picked];
   if (!current) {
     output.textContent = editing ? "Fixing your last capture" : "";
+    return;
+  }
+  // While fixing, Enter replaces the capture, so the chip keeps saying "Fix →".
+  if (current.kind === "search" && current.query !== "" && !editing) {
+    showSearch(current.query);
     return;
   }
   const hint = options.length > 1 ? "  ·  Tab: change" : "";
@@ -103,7 +127,14 @@ form.addEventListener("submit", (event) => {
     ? replaceCapture(editing.id, rawText, ops, parser)
     : commitCapture(rawText, ops, parser);
   saved
-    .then(() => finish((editing ? "Fixed · " : "") + echoLine(parsed, nowMs)))
+    .then(() => {
+      // `? query`: the search is stored like any capture, then Notes opens on it.
+      if (parsed.kind === "search" && !editing) {
+        void invoke("open_notes", { query: parsed.query }).finally(() => void close());
+        return;
+      }
+      finish((editing ? "Fixed · " : "") + echoLine(parsed, nowMs));
+    })
     .catch((error: unknown) => {
       busy = false;
       input.disabled = false;

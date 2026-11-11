@@ -110,10 +110,12 @@ export function Today({
   onChangeWeek,
   onReview,
   onKits,
+  onNotes,
 }: {
   onChangeWeek?: () => void;
   onReview?: () => void;
   onKits?: () => void;
+  onNotes?: () => void;
 }) {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
@@ -166,6 +168,11 @@ export function Today({
         {onKits && (
           <Button onClick={onKits} className="change-week">
             Focus kits
+          </Button>
+        )}
+        {onNotes && (
+          <Button onClick={onNotes} className="change-week">
+            Cheat sheets
           </Button>
         )}
       </header>

@@ -12,6 +12,8 @@ export interface SetupInfo {
   kit: Kit;
   /** Do not disturb is switched on automatically (T-029). */
   dnd: boolean;
+  /** The area's cheat sheet lines (T-031). */
+  notes: string[];
 }
 
 /** "Opens VS Code folder · Minimizes Telegram" — what Enter will do. */

@@ -67,9 +67,9 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-NOTE-01 | Short pinned cards per area, added with `pin:` from the capture box | T-031 | | ☐ |
-| R-NOTE-02 | The current area's card shows in the focus set-up sheet | T-031 | | ☐ |
-| R-NOTE-03 | Cards are searchable with `?` and edits can be undone | T-031 | | ☐ |
+| R-NOTE-01 | Short pinned cards per area, added with `pin:` from the capture box | T-031 | `pin: … #coding` adds a line to the Coding card, unknown tags get their own card, no tag goes to General; long cards suggest a split (cheat.test.ts, #31) | ☑ |
+| R-NOTE-02 | The current area's card shows in the focus set-up sheet | T-031 | Up to 12 lines in card order (commands.rs test, #31) | ☑ |
+| R-NOTE-03 | Cards are searchable with `?` and edits can be undone | T-031 | `? reset` shows the best match live and opens Cheat sheets on Enter; each save has Undo, including one that empties a card (#31) | ☑ |
 
 ## H. Progress and dashboard (§3.13–3.14, §3.16)
 

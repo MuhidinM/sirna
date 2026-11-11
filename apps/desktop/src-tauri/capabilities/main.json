@@ -20,6 +20,7 @@
     "allow-brief-checks",
     "allow-brief-ready",
     "allow-take-screen",
-    "allow-focus-setup-open"
+    "allow-focus-setup-open",
+    "allow-notes-undo"
   ]
 }
