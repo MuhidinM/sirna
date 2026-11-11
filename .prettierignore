@@ -1,0 +1,14 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Lockfile
+pnpm-lock.yaml
+
+# Tracking tables and the plan: kept as written so ticking one row changes one line
+docs/requirements.md
+docs/backlog.md
+docs/plan.md

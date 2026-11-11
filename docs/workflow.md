@@ -73,10 +73,10 @@ Claude Code helps with planning, scaffolding, tests and review. Every line is re
 
 Rust lives on D: because C: and D: are both short on space ([plan §10](plan.md#10-resource-budget)). User environment variables:
 
-| Variable | Value |
-| --- | --- |
-| `RUSTUP_HOME` | `D:\dev\rustup` |
-| `CARGO_HOME` | `D:\dev\cargo` (its `bin` is on the user `PATH`) |
-| `CARGO_TARGET_DIR` | `D:\dev\target` |
+| Variable           | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| `RUSTUP_HOME`      | `D:\dev\rustup`                                  |
+| `CARGO_HOME`       | `D:\dev\cargo` (its `bin` is on the user `PATH`) |
+| `CARGO_TARGET_DIR` | `D:\dev\target`                                  |
 
 Installed with `rustup-init -y --profile minimal -c clippy -c rustfmt --no-modify-path` (checksum checked against static.rust-lang.org). Visual Studio Build Tools 2022 (MSVC) and WebView2 were already present. Run `cargo clean` when `D:\dev\target` passes 5 GB.
