@@ -342,3 +342,12 @@ input[type="number"] {
   gap: var(--space-2);
   margin-top: var(--space-6);
 }
+
+/* Focus kits editor. */
+.kit {
+  margin-bottom: var(--space-6);
+}
+
+.kit h2 {
+  margin-top: 0;
+}

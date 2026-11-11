@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 
 import { query } from "./kernel/db";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
+import { Kits } from "./shell/Kits";
 import { Review } from "./shell/Review";
 import { Setup } from "./shell/Setup";
 import { Today } from "./shell/Today";
 
-type Screen = "loading" | "setup" | "today" | "review";
+type Screen = "loading" | "setup" | "today" | "review" | "kits";
 
 export function App() {
   const [screen, setScreen] = useState<Screen>("loading");
@@ -39,5 +40,12 @@ export function App() {
   if (screen === "loading") return null;
   if (screen === "setup") return <Setup onDone={() => setScreen("today")} />;
   if (screen === "review") return <Review onClose={() => setScreen("today")} />;
-  return <Today onChangeWeek={() => setScreen("setup")} onReview={() => setScreen("review")} />;
+  if (screen === "kits") return <Kits onClose={() => setScreen("today")} />;
+  return (
+    <Today
+      onChangeWeek={() => setScreen("setup")}
+      onReview={() => setScreen("review")}
+      onKits={() => setScreen("kits")}
+    />
+  );
 }

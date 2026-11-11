@@ -312,8 +312,8 @@ fn on_menu(app: &AppHandle, id: &str) {
                 let conn = db.write.lock();
                 current_focus_block(&conn, clock::now_ms())
             };
-            // From the tray there is no dialog, so starting during a long break is the second tap.
-            focus::start_with_block(app, block, true);
+            // The sheet asks again past the hard stop or during a long break.
+            windows::spawn_open_setup(app.clone(), block);
         }
         FOCUS_PAUSE_ID => {
             focus::dispatch(app, focus::Event::Pause);

@@ -20,6 +20,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Block start:** with Do not disturb off, a focus block on Today toasts at its start with "First step" and Start focus / Skip. Start focus begins a session tied to that block. Ignore one for 10 minutes: one "Just one session on …?" nudge (T-021).
 - **Morning brief:** lock the PC after wake time and before 13:00, then unlock: Sirna opens with the brief on top once that day; "Start my day" folds it. The log shows `brief ready in N ms` (under 1000). Turn Sirna's notifications off in Settings: the brief shows a CHECK line (T-025).
 - **Night review:** at review time a toast offers Start / In 30 min / Skip tonight, and the tray shows "Night review" until 03:00. Run it with Wi-Fi off: type `lunch 120, taxi 40`, pick an energy, accept tomorrow. Today shows the two expenses (T-026).
+- **Focus set-up:** in Focus kits, give Coding `notepad` under Open and `Telegram.exe` under Minimize. Tray → Start focus during a coding block: the sheet shows the checklist and "Opens notepad · Minimizes Telegram". Type an intent, press Enter once: the timer starts, Telegram is minimized (not closed), Notepad opens, and the tray tooltip shows the intent. At the break toast, "Done with: …?" Yes writes `intent_done = yes` (T-028).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

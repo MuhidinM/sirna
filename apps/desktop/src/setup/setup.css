@@ -1,0 +1,90 @@
+:root {
+  font-family: var(--font-sans);
+  background: var(--surface-0);
+  color: var(--text-primary);
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 300px;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--accent-strong);
+  border-radius: 12px;
+}
+
+.setup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.setup-head h1 {
+  margin: 0;
+  font-size: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.setup-intent {
+  font: inherit;
+  font-size: 16px;
+  color: inherit;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  outline: none;
+}
+
+.setup-intent:focus {
+  border-color: var(--accent-strong);
+}
+
+/* A long checklist scrolls inside the fixed sheet so the message and hint
+   below it always stay visible. */
+.setup-checklist {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.setup-checklist input {
+  accent-color: var(--accent-strong);
+}
+
+.setup-meta {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.setup-message {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--warning);
+  min-height: 1em;
+}
