@@ -12,6 +12,8 @@ import {
   type SettingsValues,
 } from "../features/settings/settings";
 import { applyTheme } from "../theme/theme";
+import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
+import { systemClock } from "../kernel/clock";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -236,6 +238,143 @@ function Autostart() {
   );
 }
 
+interface AiUsage {
+  has_key: boolean;
+  model: string | null;
+  used: number;
+  cap: number;
+  quota_day: string;
+}
+
+const setting = (key: string, value: unknown) => ({
+  op: "upsert" as const,
+  table: "core_settings" as const,
+  id: key,
+  values: { value_json: JSON.stringify(value) },
+});
+
+/**
+ * The model (picked from what the key can use, never built in) and the
+ * daily cap (plan §7.1, §7.5).
+ */
+function AiSetup() {
+  const [usage, setUsage] = useState<AiUsage | null>(null);
+  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
+  const [capText, setCapText] = useState("");
+  const [note, setNote] = useState("");
+  const refresh = useCallback(
+    () =>
+      invoke<AiUsage>("ai_usage")
+        .then((now) => {
+          setUsage(now);
+          setCapText(String(now.cap));
+        })
+        .catch(() => setUsage(null)),
+    [],
+  );
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  if (!usage) return null;
+  const save = (ops: ReturnType<typeof setting>[], done: string) =>
+    transact("user", ops, "settings")
+      .then(() => {
+        setNote(done);
+        return refresh();
+      })
+      .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
+  return (
+    <div className="setting">
+      <p className="meta" role="status">
+        Today: {usage.used} of {usage.cap} requests · the count resets at midnight Pacific (11:00
+        here, 10:00 in US summer).
+        {usage.model ? ` Model: ${usage.model}.` : " No model picked yet."}
+      </p>
+      <div className="row">
+        <Button
+          disabled={!usage.has_key}
+          onClick={() => {
+            setNote("Asking Google for your models…");
+            invoke<{ id: string; label: string }[]>("ai_models")
+              .then((list) => {
+                setModels(list);
+                setNote(list.length ? "" : "No models that can write text for this key.");
+              })
+              .catch((error: unknown) => setNote(`Couldn't list models: ${message(error)}`));
+          }}
+        >
+          {usage.model ? "Change model" : "Pick a model"}
+        </Button>
+        {models.length > 0 && (
+          <select
+            aria-label="Model"
+            value={usage.model ?? ""}
+            onChange={(event) =>
+              void save([setting("ai.model", event.target.value)], "Model saved")
+            }
+          >
+            <option value="" disabled>
+              Pick one (a Flash-Lite model fits the free tier)
+            </option>
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label} ({model.id})
+              </option>
+            ))}
+          </select>
+        )}
+        {!usage.has_key && <span className="meta">Save a Gemini key above first.</span>}
+      </div>
+      <form
+        className="row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const checked = checkDailyCap(capText);
+          if ("error" in checked) setNote(checked.error);
+          else void save([setting("ai.daily_cap", checked.cap)], "Daily limit saved");
+        }}
+      >
+        <label className="field">
+          <span>Requests a day at most (AI Studio shows your free-tier numbers)</span>
+          <input inputMode="numeric" value={capText} onChange={(e) => setCapText(e.target.value)} />
+        </label>
+        <Button type="submit">Save limit</Button>
+      </form>
+      <span className="meta" role="status">
+        {note}
+      </span>
+    </div>
+  );
+}
+
+/** Every request sent to the AI in the last 30 days, exactly as sent (R-AI-02). */
+function WhatWasSent() {
+  const calls = useLiveQuery<AiCall & Record<string, string | number | null>>(AI_LOG_SQL);
+  if (calls.loading) return null;
+  if (calls.rows.length === 0) return <p className="meta">Nothing has been sent.</p>;
+  const now = systemClock.now();
+  return (
+    <ul className="ai-log">
+      {calls.rows.map((call) => (
+        <li key={call.id}>
+          <details>
+            <summary>{callSummary(call, now)}</summary>
+            {call.error && <p className="error">{call.error}</p>}
+            <p className="meta">Sent</p>
+            <pre>{pretty(call.request_redacted)}</pre>
+            {call.response_text && (
+              <>
+                <p className="meta">Reply</p>
+                <pre>{pretty(call.response_text)}</pre>
+              </>
+            )}
+          </details>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Keys, links and preferences, all changeable here (nothing is built in). */
 export function Settings() {
   const settings = useLiveQuery<{ key: string; value_json: string | null }>(SETTINGS_SQL);
@@ -258,6 +397,17 @@ export function Settings() {
           Email: Sirna doesn&apos;t sign in to email, so there is no email password to store. The
           &ldquo;Check email&rdquo; blocks only remind you; change their times in My week.
         </p>
+      </section>
+
+      <section className="card">
+        <h2>AI</h2>
+        <p className="meta">
+          Gemini only phrases and suggests; the numbers and verdicts are Sirna&apos;s own. Without a
+          key, offline or over the limit, everything still works with plain text.
+        </p>
+        <AiSetup />
+        <h3>What was sent</h3>
+        <WhatWasSent />
       </section>
 
       <section className="card">

@@ -543,6 +543,62 @@ fn write_away(app: &AppHandle, db: &Db, date: &str, context: &str, now: i64) -> 
     Ok(())
 }
 
+/// The task names the AI gate accepts (plan §7.3); each is logged by name.
+const AI_TASKS: [&str; 6] = ["timing", "estimate", "brief", "week", "review", "capture"];
+
+/// Sends one model request through the gate (ai.rs). The webview builds the
+/// body; the key stays in Rust. Errors are stable codes ("no-key",
+/// "budget:15", "rate-limited:34", …) so every caller can fall back to its
+/// template text.
+#[tauri::command(async)]
+pub fn ai_send(
+    task: String,
+    prompt_version: Option<String>,
+    body: Value,
+    db: State<'_, Db>,
+) -> Result<crate::ai::Reply, String> {
+    if !AI_TASKS.contains(&task.as_str()) {
+        return Err(format!("unknown-task:{task}"));
+    }
+    let model = db::setting_string(&db.write.lock(), crate::ai::MODEL_KEY).unwrap_or_default();
+    let request = crate::ai::Request {
+        task: &task,
+        model: &model,
+        prompt_version: prompt_version.as_deref(),
+        body: &body,
+    };
+    crate::ai::send_now(&db, &request).map_err(|refusal| refusal.code())
+}
+
+/// The models the saved key can use, for picking one in Settings.
+#[tauri::command(async)]
+pub fn ai_models(db: State<'_, Db>) -> Result<Vec<crate::ai::Model>, String> {
+    crate::ai::list_models(&db).map_err(|refusal| refusal.code())
+}
+
+#[derive(serde::Serialize)]
+pub struct AiUsage {
+    pub has_key: bool,
+    pub model: Option<String>,
+    pub used: i64,
+    pub cap: i64,
+    pub quota_day: String,
+}
+
+/// Requests used today (by the Pacific date the free tier counts by).
+#[tauri::command]
+pub fn ai_usage(db: State<'_, Db>) -> AiUsage {
+    let conn = db.write.lock();
+    let quota_day = crate::ai::pacific_date(clock::now_ms());
+    AiUsage {
+        has_key: secrets::exists(crate::ai::KEY_NAME).unwrap_or(false),
+        model: db::setting_string(&conn, crate::ai::MODEL_KEY).filter(|m| !m.is_empty()),
+        used: crate::ai::used_on(&conn, &quota_day),
+        cap: crate::ai::daily_cap(&conn),
+        quota_day,
+    }
+}
+
 /// The capture key in use, for Settings.
 #[tauri::command]
 pub fn hotkey_current(app: AppHandle) -> Option<String> {

@@ -627,3 +627,24 @@ input[type="number"] {
   color: var(--danger);
   font-weight: 600;
 }
+
+/* What was sent (plan §7.4). */
+.ai-log details {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-log summary {
+  cursor: pointer;
+}
+
+.ai-log pre {
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}

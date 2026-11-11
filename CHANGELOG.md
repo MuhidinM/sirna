@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **Timing check (numbers only):** Projects shows this week's load; a project with an estimate gets Good / Tight / Too much against its deadline, or the first weeks that keep load at or under 85%. A third active project waits in Next up.
 - **Ideas become projects:** `idea: learn Go ~10h` is placed in your weeks by itself (Ctrl+Z undoes); `idea: CLI tool ~18h by 20 dec` gets a verdict and a card with Keep the date / Use suggested dates / Drop; an idea without hours asks for one (5 / 10 / 20 / 40 h).
 - **At risk:** the morning brief and Projects flag a deadline the planned hours won't reach.
+- **AI gate:** Settings → AI picks the Gemini model your key can use and sets a daily limit; What was sent shows every request and reply for 30 days. The key stays in Credential Manager and travels only in a request header.
 - **My week:** choose the "Check email" reminder times (or none) instead of the fixed 10:00 and 15:00.
 
 ## [0.1.0] - 2026-11-11
