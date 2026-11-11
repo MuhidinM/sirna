@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sirna capture</title>
+  </head>
+
+  <body>
+    <form id="capture" class="capture" autocomplete="off">
+      <label for="capture-input" class="visually-hidden">Capture</label>
+      <input
+        id="capture-input"
+        class="capture-input"
+        type="text"
+        placeholder="lunch 120 · call bank tomorrow 10am · idea: …"
+        spellcheck="false"
+      />
+      <output id="capture-echo" class="capture-echo" aria-live="polite"></output>
+    </form>
+    <script type="module" src="/src/capture/main.ts"></script>
+  </body>
+</html>

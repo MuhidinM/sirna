@@ -1,32 +1,32 @@
-import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+
 import react from "@vitejs/plugin-react";
-// @ts-expect-error type error without @types/node package
-import process from "node:process";
+import { defineConfig } from "vite";
+
 const host = process.env.TAURI_DEV_HOST;
+const page = (name: string) => fileURLToPath(new URL(`./${name}.html`, import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react()],
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
+  // Two pages: the main window (React) and the capture box (plain TypeScript, kept small).
+  build: {
+    rollupOptions: {
+      input: { main: page("index"), capture: page("capture") },
+    },
+  },
+
+  // Vite options for Tauri, only applied in `tauri dev` or `tauri build`:
+  // 1. don't hide Rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // 2. Tauri expects a fixed port; fail if it isn't available
   server: {
     port: 1420,
     strictPort: true,
     host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
-    },
+    hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+    // 3. don't watch src-tauri
+    watch: { ignored: ["**/src-tauri/**"] },
   },
 }));
