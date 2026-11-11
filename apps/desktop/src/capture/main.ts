@@ -12,7 +12,12 @@ import { echo as echoLine, toOps } from "./ops";
 import { type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { type ClockStyle } from "./when";
 
+import { applyTheme, cachedTheme } from "../theme/theme";
+
+import "../theme/tokens.css";
 import "./capture.css";
+
+applyTheme(cachedTheme());
 
 const ECHO_MS = 1500;
 const LAST_CAPTURE_SQL =

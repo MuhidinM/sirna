@@ -1,8 +1,7 @@
 :root {
-  color-scheme: dark;
-  font-family: system-ui, "Segoe UI", sans-serif;
-  background: #121212;
-  color: #ecebe6;
+  font-family: var(--font-sans);
+  background: var(--surface-0);
+  color: var(--text-primary);
 }
 
 body {
@@ -17,7 +16,7 @@ body {
   height: 72px;
   padding: 0 20px;
   box-sizing: border-box;
-  border: 1px solid #97c459;
+  border: 1px solid var(--accent-strong);
   border-radius: 12px;
 }
 
@@ -33,12 +32,12 @@ body {
 }
 
 .capture-input::placeholder {
-  color: #8a8984;
+  color: var(--text-muted);
 }
 
 .capture-echo {
   font-size: 13px;
-  color: #c0dd97;
+  color: var(--accent);
 }
 
 .visually-hidden {
