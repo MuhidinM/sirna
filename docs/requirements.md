@@ -104,7 +104,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-PLT-01 | Idle in the tray ≤ 30 MB private bytes with no webview | T-010 | | ☐ |
+| R-PLT-01 | Idle in the tray ≤ 30 MB private bytes with no webview | T-010 | Release build, installed: 2.7 MB idle with 0 WebView2 processes; 5.0 MB 60 s after closing the main window; 7.5 MB after 20 capture opens (ADR-0006, docs/measurements.md, #10) | ☑ |
 | R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | NSIS installer 2.8 MB, installed 11.4 MB (#9, docs/measurements.md) | ☑ |
 | R-PLT-03 | One SQLite file; forward-only migrations with checksums; daily checked backups and a written restore | T-012, T-032 | Migrations embedded by build.rs, one transaction each, checksums, newer-DB refusal, checked `VACUUM INTO` backup before migrating; 8 + 4 Rust tests; on the real DB a pre-migration copy landed in `D:\Sirna\backups` (#12). Daily backups and restore: T-032 | ◐ |
 | R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | `secrets.rs` on keyring-core + the Windows native store; round-trip test passes against Credential Manager; no command returns a secret value (#8). Gemini key use: T-036 | ◐ |
