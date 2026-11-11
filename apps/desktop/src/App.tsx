@@ -20,5 +20,5 @@ export function App() {
 
   if (screen === "loading") return null;
   if (screen === "setup") return <Setup onDone={() => setScreen("today")} />;
-  return <Today />;
+  return <Today onChangeWeek={() => setScreen("setup")} />;
 }

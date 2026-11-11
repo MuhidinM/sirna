@@ -13,6 +13,9 @@ import {
   todayTopSql,
   WAITING_SQL,
 } from "../features/tasks/today";
+import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { NowCards, Timeline } from "./Timeline";
+import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 interface TaskRow extends Record<string, string | number | null> {
@@ -91,7 +94,17 @@ function useNow(): number {
   return nowMs;
 }
 
-export function Today() {
+/** The current time, updated each minute, for the Now card and countdown. */
+function useMinute(): number {
+  const [minute, setMinute] = useState(() => systemClock.now());
+  useEffect(() => {
+    const timer = setInterval(() => setMinute(systemClock.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return minute;
+}
+
+export function Today({ onChangeWeek }: { onChangeWeek?: () => void }) {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
 
@@ -114,16 +127,26 @@ export function Today() {
   }>(WAITING_SQL);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_SQL);
   const spent = useLiveQuery<{ spent: number }>(SPENT_TODAY_SQL, [today]);
+  const blocks = useLiveQuery<BlockRow & Record<string, string | number | null>>(TODAY_BLOCKS_SQL, [
+    today,
+  ]);
+  const minuteNow = useMinute();
 
   const topIds = new Set(top.rows.map((task) => task.id));
   const moreDue = due.rows.filter((task) => !topIds.has(task.id));
-  const error = top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error;
+  const error =
+    top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error ?? blocks.error;
 
   return (
     <main className="today">
       <header>
         <h1>{longDate.format(nowMs)}</h1>
         <p className="meta">Capture anything with your capture key; it shows up here.</p>
+        {onChangeWeek && (
+          <Button onClick={onChangeWeek} className="change-week">
+            Change my week
+          </Button>
+        )}
       </header>
 
       {error && (
@@ -131,6 +154,8 @@ export function Today() {
           Couldn&apos;t load today: {error}
         </p>
       )}
+
+      <NowCards blocks={blocks.rows} nowMs={minuteNow} />
 
       <section aria-labelledby="top3">
         <h2 id="top3">Top 3</h2>
@@ -171,6 +196,11 @@ export function Today() {
           </ul>
         </section>
       )}
+
+      <section aria-labelledby="plan">
+        <h2 id="plan">Today&apos;s plan</h2>
+        <Timeline blocks={blocks.rows} nowMs={minuteNow} />
+      </section>
 
       <section aria-labelledby="money">
         <h2 id="money">Spent today</h2>
