@@ -16,10 +16,11 @@
     "rust:fmt": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml",
     "rust:fmt:check": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check",
     "rust:lint": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test": "pnpm --filter @sirna/desktop test"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.39.5",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-jsx-a11y": "^6.10.2",
