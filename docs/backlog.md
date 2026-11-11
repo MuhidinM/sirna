@@ -16,7 +16,7 @@ Repo, tooling, CI, and the risky Tauri parts measured: tray-only app, hotkey, ca
 | T-005 | [#5](https://github.com/MuhidinM/sirna/issues/5) | Set up Vitest with a fake clock and node:sqlite | R-CQ-02 | S | done |
 | T-006 | [#6](https://github.com/MuhidinM/sirna/issues/6) | Add CI on GitHub Actions (Windows runner) | R-CQ-02 | M | done |
 | T-007 | [#7](https://github.com/MuhidinM/sirna/issues/7) | Run as a tray-only app with no window at startup | R-PLT-05 | M | done |
-| T-008 | [#8](https://github.com/MuhidinM/sirna/issues/8) | Open a capture box with a global hotkey and save one row to SQLite | R-CAP-01, R-PLT-04 | L | todo |
+| T-008 | [#8](https://github.com/MuhidinM/sirna/issues/8) | Open a capture box with a global hotkey and save one row to SQLite | R-CAP-01, R-PLT-04 | L | done |
 | T-009 | [#9](https://github.com/MuhidinM/sirna/issues/9) | Show a two-button toast from the installed build (pnpm ship) | R-PLT-02 | M | todo |
 | T-010 | [#10](https://github.com/MuhidinM/sirna/issues/10) | Measure memory and capture speed, then pick the window modes | R-PLT-01 | M | todo |
 

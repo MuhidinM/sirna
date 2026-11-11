@@ -9,3 +9,4 @@ The planning-stage decisions (D1–D49) are logged in [plan §15](../plan.md#15-
 | [0001](0001-tauri-v2.md)                   | Tauri v2 with a Rust tray core       | accepted |
 | [0002](0002-local-sqlite-owned-by-rust.md) | One local SQLite file, owned by Rust | accepted |
 | [0003](0003-app-calculates-ai-explains.md) | The app calculates, the AI explains  | accepted |
+| [0004](0004-capture-hotkey-fallback.md)    | Capture hotkey with fallbacks        | accepted |

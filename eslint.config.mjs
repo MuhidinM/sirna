@@ -50,5 +50,7 @@ export default defineConfig([
     files: ["**/*.config.{ts,mts,mjs}", "scripts/**"],
     languageOptions: { globals: { ...globals.node } },
   },
+  // Dev scripts print their results.
+  { files: ["scripts/**"], rules: { "no-console": "off" } },
   prettier,
 ]);
