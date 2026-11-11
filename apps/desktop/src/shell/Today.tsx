@@ -14,6 +14,7 @@ import {
   WAITING_SQL,
 } from "../features/tasks/today";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { Brief } from "./Brief";
 import { FocusPanel, useFocus } from "./Focus";
 import { NowCards, Timeline } from "./Timeline";
 import { Button } from "./ui";
@@ -157,6 +158,9 @@ export function Today({ onChangeWeek }: { onChangeWeek?: () => void }) {
         </p>
       )}
 
+      {!top.loading && !blocks.loading && (
+        <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={top.rows} />
+      )}
       {focus && focus.kind !== null && <FocusPanel status={focus} />}
       <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
 

@@ -54,6 +54,8 @@ fn main() {
     let commands = tauri_build::AppManifest::new().commands(&[
         "autostart_set",
         "autostart_status",
+        "brief_checks",
+        "brief_ready",
         "capture_commit",
         "capture_undo",
         "capture_ready",
