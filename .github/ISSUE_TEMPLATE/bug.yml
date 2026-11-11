@@ -1,0 +1,36 @@
+name: Bug
+description: Something works incorrectly
+title: "<What goes wrong, in plain words>"
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Sirna version, Windows build and theme
+      placeholder: 0.1.0, Windows 11 26300, dark
+  - type: textarea
+    id: notes
+    attributes:
+      label: Screenshots or notes

@@ -1,0 +1,42 @@
+name: Task
+description: A piece of planned work from the backlog
+title: "<What changes, in plain words>"
+body:
+  - type: input
+    id: backlog-id
+    attributes:
+      label: Backlog ID
+      description: The T-xxx ID from docs/backlog.md
+      placeholder: T-042
+  - type: input
+    id: requirements
+    attributes:
+      label: Requirements covered
+      description: R-xxx / X-xxx IDs from docs/requirements.md
+      placeholder: R-FLOW-06, R-FLOW-07
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem or requirement behind this task
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: What to do
+      description: A checklist of the changes
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: How we know it works
+      value: |
+        - [ ]
+        - [ ] Meets the Definition of Done (docs/workflow.md)
+    validations:
+      required: true
