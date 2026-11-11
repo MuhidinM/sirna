@@ -589,3 +589,28 @@ input[type="number"] {
   overflow-x: auto;
   padding-bottom: var(--space-2);
 }
+
+/* The timing check on a project (plan §3.8). */
+.timing {
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.timing ul {
+  margin: var(--space-2) 0 0;
+}
+
+.timing-good {
+  border-left-color: var(--accent);
+}
+
+.timing-tight {
+  border-left-color: var(--warning);
+}
+
+.timing-too_much {
+  border-left-color: var(--danger);
+}

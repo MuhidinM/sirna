@@ -41,7 +41,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-BRN-02 | Hard stop (default 22:30) | T-027 | One toast at the hard stop; until 03:00 the tray shows "Stopped for today" and Start focus asks "It's past your hard stop. Start anyway?" (live check on the debug build, guard.rs tests, #27) | ☑ |
 | R-BRN-03 | Long break after 4 sessions; starting early needs a second tap | T-022, T-027 | Every 4th session in a row gets a 20-min long break; starting focus in its first 10 minutes returns "confirm" and needs a second tap (tested) (#22) | ☑ |
 | R-BRN-04 | Two low-energy nights make the next day light; one rest day a week | T-026, T-027 | Energy 1–3 is recorded each night (#26); two 1s in a row plan the next day light, and the rest day from setup has no area blocks (dayplan.test.ts, #27) | ☑ |
-| R-BRN-05 | At most 2 active personal projects; Experiments capped at its target | T-027, T-034 | Capped areas stop at their target when the day is planned (generate.test.ts); the 2-project limit comes with projects in T-034 | ◐ |
+| R-BRN-05 | At most 2 active personal projects; Experiments capped at its target | T-027, T-034 | Capped areas stop at their target when the day is planned (generate.test.ts); a third active project is saved as Next up and the slot finder waits for one to finish (timing.test.ts, capacity.test.ts) | ☑ |
 
 ## E. Check-ins (§3.4, §3.9, §3.10)
 
@@ -57,8 +57,8 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-PRJ-01 | An idea with a date gets a Good / Tight / Too much verdict from the numbers, with reasons and alternatives | T-034, T-035, T-038 | | ☐ |
-| R-PRJ-02 | An idea without a date is placed in the first slot that keeps load ≤ 85%, automatically, with undo | T-034, T-035 | | ☐ |
+| R-PRJ-01 | An idea with a date gets a Good / Tight / Too much verdict from the numbers, with reasons and alternatives | T-034, T-035, T-038 | T-034: verdict, weekly need, load before → after and the slot-finder alternative from the numbers, 10 hand-checked dated fixtures (capacity.test.ts); shown live in the project form. AI reasons come in T-038 | ◐ |
+| R-PRJ-02 | An idea without a date is placed in the first slot that keeps load ≤ 85%, automatically, with undo | T-034, T-035 | T-034: the slot finder never passes 85%, waits for one of 2 active projects to finish, 12 hand-checked fixtures (capacity.test.ts); saving a project stores its start and forecast finish. Placing `idea:` captures by itself comes in T-035 | ◐ |
 | R-PRJ-03 | Project board: To do / Doing / Waiting / Done, plus a list view | T-033 | Moving a card writes the task status (To do and Doing are `todo` without or with `started_at`, Waiting `waiting`, Done `done` with `completed_at`), checked against the real schema through every column (projects.test.ts); a changed next step becomes a To do card | ☑ |
 | R-PRJ-04 | Waiting-on items with a follow-up reminder | T-030 | `wait: recruiter reply mon` fires at 09:00 on its date (reminders.rs test); the toast offers "Got a reply" or "Still waiting · 3 days", which only moves the date the toast was shown for (tasks.rs test, #30) | ☑ |
 | R-PRJ-05 | At-risk deadlines flagged in the brief | T-035 | | ☐ |
