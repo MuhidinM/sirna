@@ -2,7 +2,7 @@
 //! set in `capabilities/*.json` (the capture box gets capture and read only).
 
 use serde_json::{Map, Value};
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use crate::clock;
 use crate::db::{self, Db};
@@ -327,6 +327,81 @@ pub fn take_screen(pending: State<'_, crate::review::PendingScreen>) -> Option<S
     pending.0.lock().take()
 }
 
+/// Opens the focus set-up sheet for a block (Today's Start focus).
+#[tauri::command]
+pub fn focus_setup_open(block_id: Option<String>, app: AppHandle) {
+    crate::windows::spawn_open_setup(app, block_id);
+}
+
+/// What the set-up sheet shows: the block, the session length and the kit.
+#[derive(serde::Serialize)]
+pub struct SetupInfo {
+    pub title: String,
+    pub minutes: i64,
+    pub kit: crate::kit::Kit,
+}
+
+#[tauri::command]
+pub fn setup_info(
+    db: State<'_, Db>,
+    pending: State<'_, crate::kit::PendingSetup>,
+) -> Result<SetupInfo, String> {
+    let block = pending.0.lock().clone().flatten();
+    let conn = db.write.lock();
+    let context =
+        crate::focus::context_for(&conn, block.as_deref()).map_err(|error| error.to_string())?;
+    Ok(SetupInfo {
+        kit: crate::kit::load(&conn, context.area_id.as_deref()),
+        title: context.title,
+        minutes: context.focus_min,
+    })
+}
+
+/// Enter on the sheet: starts the session, then (off the UI thread) records
+/// the intent and applies the kit. Same answers as focus_start.
+#[tauri::command]
+pub fn setup_start(
+    intent: Option<String>,
+    force: Option<bool>,
+    app: AppHandle,
+    window: WebviewWindow,
+) -> String {
+    let block = app
+        .state::<crate::kit::PendingSetup>()
+        .0
+        .lock()
+        .clone()
+        .flatten();
+    let effects = crate::focus::start_with_block(&app, block.clone(), force.unwrap_or(false));
+    let result = start_result(&effects);
+    if result != "started" {
+        return result;
+    }
+    app.state::<crate::kit::PendingSetup>().0.lock().take();
+    let _ = window.close();
+    let intent = intent
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty());
+    std::thread::spawn(move || {
+        if let Some(intent) = intent {
+            crate::focus::set_intent(&app, &intent);
+        }
+        let kit = {
+            let db = app.state::<Db>();
+            let conn = db.write.lock();
+            crate::focus::context_for(&conn, block.as_deref())
+                .map(|context| crate::kit::load(&conn, context.area_id.as_deref()))
+                .unwrap_or_default()
+        };
+        let minimized = crate::kit::apply(&kit);
+        log::info!(
+            "focus kit: opened {}, minimized {minimized} window(s)",
+            kit.open.len()
+        );
+    });
+    result
+}
+
 /// Closes the calling window (the capture box).
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {
@@ -361,6 +436,10 @@ pub fn autostart_status(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 pub fn focus_start(block_id: Option<String>, force: Option<bool>, app: AppHandle) -> String {
     let effects = crate::focus::start_with_block(&app, block_id, force.unwrap_or(false));
+    start_result(&effects)
+}
+
+fn start_result(effects: &[crate::focus::Effect]) -> String {
     if effects.contains(&crate::focus::Effect::PastHardStop) {
         "confirm-stop".into()
     } else if effects.contains(&crate::focus::Effect::NeedConfirm) {

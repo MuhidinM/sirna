@@ -64,10 +64,13 @@ fn main() {
         "db_query",
         "db_tx",
         "focus_control",
+        "focus_setup_open",
         "focus_start",
         "focus_status",
         "secret_set",
         "secret_status",
+        "setup_info",
+        "setup_start",
         "take_screen",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands))

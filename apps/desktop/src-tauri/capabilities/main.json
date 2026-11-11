@@ -19,6 +19,7 @@
     "allow-focus-status",
     "allow-brief-checks",
     "allow-brief-ready",
-    "allow-take-screen"
+    "allow-take-screen",
+    "allow-focus-setup-open"
   ]
 }

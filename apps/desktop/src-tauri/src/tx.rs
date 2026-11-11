@@ -153,6 +153,14 @@ pub const TABLES: &[TableSpec] = &[
         has_user_edited_at: false,
     },
     TableSpec {
+        name: "focus_kits",
+        id_column: "area_id",
+        columns: &["open_json", "minimize_json", "checklist_json"],
+        has_created_at: true,
+        soft_delete: false,
+        has_user_edited_at: false,
+    },
+    TableSpec {
         name: "day_reviews",
         id_column: "logical_date",
         columns: &["status", "energy", "spent_none", "mind"],

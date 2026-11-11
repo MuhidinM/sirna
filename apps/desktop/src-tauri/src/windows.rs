@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 pub const MAIN_LABEL: &str = "main";
 pub const CAPTURE_LABEL: &str = "capture";
+pub const SETUP_LABEL: &str = "setup";
 
 /// The theme's background, so a new window never flashes white.
 const BACKGROUND: Color = Color(0x12, 0x12, 0x12, 0xff);
@@ -27,6 +28,44 @@ pub fn spawn_open_capture(app: AppHandle) {
             log::error!("could not open the capture box: {error}");
         }
     });
+}
+
+/// The focus set-up sheet for a block (plan §3.6a). A second request while it
+/// is open retargets it to the newer block.
+pub fn spawn_open_setup(app: AppHandle, block_id: Option<String>) {
+    *app.state::<crate::kit::PendingSetup>().0.lock() = Some(block_id);
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = open_setup(&app) {
+            log::error!("could not open the focus set-up: {error}");
+        }
+    });
+}
+
+fn open_setup(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(SETUP_LABEL) {
+        // Already open: reload so it shows the newer block.
+        window.eval("location.reload()")?;
+        window.show()?;
+        return window.set_focus();
+    }
+    let window = WebviewWindowBuilder::new(app, SETUP_LABEL, WebviewUrl::App("setup.html".into()))
+        .title("Sirna focus")
+        .inner_size(480.0, 300.0)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .center()
+        .focused(true)
+        .background_color(BACKGROUND)
+        .build()?;
+    let closing = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::Focused(false) = event {
+            let _ = closing.close();
+        }
+    });
+    Ok(())
 }
 
 fn open_main(app: &AppHandle) -> tauri::Result<()> {

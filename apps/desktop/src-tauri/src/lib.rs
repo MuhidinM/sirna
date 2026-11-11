@@ -7,6 +7,7 @@ mod db;
 mod focus;
 mod guard;
 mod hotkey;
+mod kit;
 mod migrate;
 mod notify;
 mod reminders;
@@ -79,6 +80,7 @@ pub fn run() {
             let focus_state = focus::restore_state(app.handle());
             app.manage(focus_state.clone());
             review::manage(app.handle());
+            app.manage(kit::PendingSetup::default());
             tray::create(app.handle(), capture_key.as_deref())?;
             // Any write (capture, Today screen, tray) refreshes the tray menu.
             let handle = app.handle().clone();
@@ -108,6 +110,7 @@ pub fn run() {
             commands::db_query,
             commands::db_tx,
             commands::focus_control,
+            commands::focus_setup_open,
             commands::focus_start,
             commands::focus_status,
             commands::capture_ready,
@@ -115,6 +118,8 @@ pub fn run() {
             commands::close_window,
             commands::secret_set,
             commands::secret_status,
+            commands::setup_info,
+            commands::setup_start,
             commands::take_screen
         ])
         .build(tauri::generate_context!())

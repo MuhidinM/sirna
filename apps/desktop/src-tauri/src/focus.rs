@@ -504,10 +504,13 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
     let open = conn
         .query_row(
             "SELECT s.id, s.kind, s.started_at, s.planned_min, s.paused_at, s.paused_ms, s.block_id,
-                    s.area_id, s.task_id, s.extended, COALESCE(b.title, 'Focus'), COALESCE(a.break_min, 5)
+                    s.area_id, s.task_id, s.extended,
+                    COALESCE(f.intent_text, b.title, 'Focus'), COALESCE(a.break_min, 5)
              FROM focus_sessions AS s
              LEFT JOIN day_blocks AS b ON b.id = s.block_id
              LEFT JOIN area_items AS a ON a.id = s.area_id
+             -- A break carries its session's intent as its title (break id = session id + '-break').
+             LEFT JOIN focus_sessions AS f ON f.id = replace(s.id, '-break', '') AND f.kind = 'focus'
              WHERE s.ended_at IS NULL ORDER BY s.started_at DESC LIMIT 1",
             [],
             |row| {
@@ -620,15 +623,45 @@ fn show_toast(app: &AppHandle, effect: &Effect) {
             } else {
                 "Stand up, drink water, look away from the screen."
             };
-            let extend = [Button {
-                label: "+5 min work, once",
-                action: "extend",
-            }];
-            let buttons: &[Button] = if *can_extend { &extend } else { &[] };
-            notify::show(app, &title, body, buttons, move |action| {
-                if action.as_deref() == Some("extend") {
-                    let id = new_id(clock::now_ms());
-                    dispatch(&handle, Event::Extend { id });
+            let intent = open_intent(&app.state::<Db>().write.lock());
+            let mut buttons: Vec<Button> = Vec::new();
+            if intent.is_some() {
+                buttons.push(Button {
+                    label: "Yes",
+                    action: "done:yes",
+                });
+                buttons.push(Button {
+                    label: "Partly",
+                    action: "done:partly",
+                });
+                buttons.push(Button {
+                    label: "No",
+                    action: "done:no",
+                });
+            }
+            if *can_extend {
+                buttons.push(Button {
+                    label: "+5 min work, once",
+                    action: "extend",
+                });
+            }
+            let body = match &intent {
+                Some((_, text)) => format!("Done with: {text}? {body}"),
+                None => body.to_string(),
+            };
+            let intent_id = intent.map(|(id, _)| id);
+            notify::show(app, &title, &body, &buttons, move |action| {
+                match action.as_deref() {
+                    Some("extend") => {
+                        let id = new_id(clock::now_ms());
+                        dispatch(&handle, Event::Extend { id });
+                    }
+                    Some(answer) => {
+                        if let (Some(id), Some(done)) = (&intent_id, answer.strip_prefix("done:")) {
+                            answer_intent(&handle, id, done);
+                        }
+                    }
+                    None => {}
                 }
             })
         }
@@ -660,6 +693,57 @@ fn show_toast(app: &AppHandle, effect: &Effect) {
     if let Err(error) = result {
         log::warn!("could not show a focus toast: {error}");
     }
+}
+
+/// "This session I will…": shown as the session's title and stored on its row.
+pub fn set_intent(app: &AppHandle, intent: &str) {
+    let focus = app.state::<FocusState>();
+    let id = {
+        let mut machine = focus.machine.lock();
+        match machine.current.as_mut() {
+            Some(session) if session.kind == Kind::Focus => {
+                session.title = intent.to_string();
+                Some(session.id.clone())
+            }
+            _ => None,
+        }
+    };
+    let Some(id) = id else { return };
+    let db = app.state::<Db>();
+    if let Err(error) = db.write.lock().execute(
+        "UPDATE focus_sessions SET intent_text = ?1 WHERE id = ?2",
+        rusqlite::params![intent, id],
+    ) {
+        log::warn!("could not save the session intent: {error}");
+    }
+    let _ = app.emit("focus-changed", ());
+}
+
+/// The intent of the focus session that just ended, if it has one and it is
+/// still unanswered. Only that one session: an older unanswered intent is
+/// never asked about later (it would be judged on the wrong work).
+pub fn open_intent(conn: &Connection) -> Option<(String, String)> {
+    conn.query_row(
+        "SELECT id, intent_text FROM (
+           SELECT id, intent_text, intent_done FROM focus_sessions
+           WHERE kind = 'focus' AND ended_at IS NOT NULL
+           ORDER BY ended_at DESC LIMIT 1
+         ) WHERE intent_text IS NOT NULL AND intent_done IS NULL",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .ok()
+}
+
+fn answer_intent(app: &AppHandle, id: &str, answer: &str) {
+    let db = app.state::<Db>();
+    if let Err(error) = db.write.lock().execute(
+        "UPDATE focus_sessions SET intent_done = ?1 WHERE id = ?2 AND intent_done IS NULL",
+        rusqlite::params![answer, id],
+    ) {
+        log::warn!("could not save the intent answer: {error}");
+    }
+    let _ = app.emit("data-changed", ["focus_sessions"]);
 }
 
 fn last_block(app: &AppHandle) -> Option<String> {
@@ -1033,5 +1117,55 @@ mod tests {
             (50, 10, "Coding skills")
         );
         assert_eq!(context_for(&conn, None).expect("plain").focus_min, 25);
+    }
+
+    fn ended(conn: &Connection, id: &str, ended_at: i64, intent: Option<&str>) {
+        conn.execute(
+            "INSERT INTO focus_sessions (id, kind, started_at, planned_min, ended_at, outcome, intent_text)
+             VALUES (?1, 'focus', ?2, 25, ?3, 'completed', ?4)",
+            params![id, ended_at - minutes(25), ended_at, intent],
+        )
+        .expect("session");
+    }
+
+    #[test]
+    fn asks_only_about_the_session_that_just_ended() {
+        let conn = conn();
+        ended(&conn, "a", T0, Some("finish the login form"));
+        assert_eq!(
+            open_intent(&conn),
+            Some(("a".into(), "finish the login form".into()))
+        );
+        // A later session without an intent: the old, unanswered one is not asked again.
+        ended(&conn, "b", T0 + minutes(40), None);
+        assert_eq!(open_intent(&conn), None);
+    }
+
+    #[test]
+    fn an_answered_intent_is_not_asked_again() {
+        let conn = conn();
+        ended(&conn, "a", T0, Some("write tests"));
+        conn.execute(
+            "UPDATE focus_sessions SET intent_done = 'yes' WHERE id = 'a'",
+            [],
+        )
+        .expect("answer");
+        assert_eq!(open_intent(&conn), None);
+    }
+
+    #[test]
+    fn the_intent_survives_a_restart_as_the_title() {
+        let conn = conn();
+        conn.execute(
+            "INSERT INTO focus_sessions (id, kind, started_at, planned_min, intent_text)
+             VALUES ('s1', 'focus', ?1, 25, 'outline the post')",
+            [T0],
+        )
+        .expect("session");
+        let restored = restore(&conn, T0 + minutes(5)).expect("restore");
+        assert_eq!(
+            restored.current.map(|s| s.title),
+            Some("outline the post".into())
+        );
     }
 }

@@ -48,16 +48,12 @@ export function clock(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/** Starts focus on a block; asks again during a long break or past the hard stop. */
+/**
+ * Starts focus on a block through the set-up sheet (plan §3.6a), which applies
+ * the area's kit and asks again during a long break or past the hard stop.
+ */
 export async function startFocus(blockId: string | null): Promise<void> {
-  const result = await invoke<string>("focus_start", { blockId, force: false });
-  const ask =
-    result === "confirm"
-      ? "You're on a long break. Start focus anyway?"
-      : result === "confirm-stop"
-        ? "It's past your hard stop. Start anyway?"
-        : undefined;
-  if (ask && window.confirm(ask)) await invoke("focus_start", { blockId, force: true });
+  await invoke("focus_setup_open", { blockId });
 }
 
 const control = (action: "pause" | "resume" | "stop" | "distracted") =>

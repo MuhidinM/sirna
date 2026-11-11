@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup",
+  "description": "The focus set-up sheet: read its kit, start the session, focus itself, close itself. No db_tx, no secrets.",
+  "windows": ["setup"],
+  "permissions": [
+    "core:event:default",
+    "allow-setup-info",
+    "allow-setup-start",
+    "allow-capture-ready",
+    "allow-close-window"
+  ]
+}

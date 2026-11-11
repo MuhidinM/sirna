@@ -272,7 +272,7 @@ fn show_block(app: &AppHandle, item: Due) {
     let result = notify::show(app, &title, &body, &buttons, move |action| {
         match action.as_deref() {
             Some("start") => {
-                crate::focus::start_with_block(&handle, Some(block_id.clone()), false);
+                crate::windows::spawn_open_setup(handle.clone(), Some(block_id.clone()));
                 record_outcome(&handle, &key, "clicked");
             }
             Some("done") => {

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sirna focus</title>
+  </head>
+
+  <body>
+    <form id="setup" class="setup" autocomplete="off">
+      <header class="setup-head">
+        <h1 id="setup-title">Focus</h1>
+        <span id="setup-minutes" class="setup-meta"></span>
+      </header>
+      <label for="setup-intent" class="setup-label">This session I will…</label>
+      <input id="setup-intent" class="setup-intent" type="text" spellcheck="false" />
+      <ul id="setup-checklist" class="setup-checklist"></ul>
+      <p id="setup-actions" class="setup-meta"></p>
+      <p id="setup-message" class="setup-message" role="alert"></p>
+      <p class="setup-meta">Enter to start · Esc to cancel</p>
+    </form>
+    <script type="module" src="/src/setup/main.ts"></script>
+  </body>
+</html>
