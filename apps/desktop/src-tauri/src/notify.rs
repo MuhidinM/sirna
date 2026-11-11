@@ -18,7 +18,7 @@ pub struct Button {
 /// The app id Windows uses to brand and route toasts. The installed build's
 /// Start-menu shortcut carries the bundle identifier; a dev build has no
 /// shortcut, so it borrows PowerShell's id (toasts then show "Windows PowerShell").
-fn app_id(app: &AppHandle) -> String {
+pub fn app_id(app: &AppHandle) -> String {
     if cfg!(debug_assertions) {
         Toast::POWERSHELL_APP_ID.to_string()
     } else {

@@ -16,6 +16,8 @@
     "allow-capture-replace",
     "allow-focus-start",
     "allow-focus-control",
-    "allow-focus-status"
+    "allow-focus-status",
+    "allow-brief-checks",
+    "allow-brief-ready"
   ]
 }

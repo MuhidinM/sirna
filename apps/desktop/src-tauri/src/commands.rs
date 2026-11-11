@@ -306,6 +306,21 @@ pub fn capture_ready(
     Ok(())
 }
 
+/// What the morning brief warns about: muted toasts, no autostart (R-NOT-03).
+#[tauri::command]
+pub fn brief_checks(app: AppHandle) -> crate::session::Checks {
+    crate::session::checks(&app)
+}
+
+/// The brief calls this once its numbers are on screen; logs the time from
+/// the unlock that opened it (T-025: under 1 s).
+#[tauri::command]
+pub fn brief_ready(requested_at: State<'_, crate::session::BriefRequestedAt>) {
+    if let Some(requested) = requested_at.0.lock().take() {
+        log::info!("brief ready in {} ms", requested.elapsed().as_millis());
+    }
+}
+
 /// Closes the calling window (the capture box).
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {

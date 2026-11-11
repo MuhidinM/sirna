@@ -30,6 +30,9 @@ tauri-winrt-notification = "0.8.1"
 tauri-plugin-log = "2"
 log = "0.4.35"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_System_StationsAndDesktops", "Win32_UI_Shell"] }
+
 # Plan §10: keep the build cache small on a disk with little free space.
 [profile.dev]
 debug = "line-tables-only"

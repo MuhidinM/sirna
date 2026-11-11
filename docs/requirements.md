@@ -47,7 +47,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-CHK-01 | Morning brief opens at first unlock after wake time (toast otherwise), ≤ 12 lines, no questions | T-025 | | ☐ |
+| R-CHK-01 | Morning brief opens at first unlock after wake time (toast otherwise), ≤ 12 lines, no questions | T-025 | Opens at logon or unlock after wake and before 13:00, toast at 07:30 or when full screen (session.rs tests); golden brief test; ready in 722 ms on a debug build (#25) | ☑ |
 | R-CHK-02 | Night review in 4 steps, ≤ 7 taps, works offline, "Skip tonight" counts against nothing | T-026 | | ☐ |
 | R-CHK-03 | Review asks what you spent today, with one-tap chips for repeated expenses | T-026 | | ☐ |
 | R-CHK-04 | Sunday week card: time per area vs target, next week's load, projects, spending pace, one suggested change | T-039 | | ☐ |
@@ -88,7 +88,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 |---|---|---|---|---|
 | R-NOT-01 | Reminders fire within 60 s with no window open; missed ones become one summary | T-017 | Minute tick on its own thread; a reminder captured for 11:43 fired at 11:43:00 with no window open and its Done button marked the task done; `plan_tick` tests: fresh → own toast, >15 min late → one summary, >3 at once → summary, >12 h → expired (#17) | ☑ |
 | R-NOT-02 | App toasts capped; quiet hours from hard stop to wake time | T-017 | Bursts of more than 3 collapse into one summary (#17). Your own reminders always fire (plan §8). Start nudges are capped at 8 a day (#21); quiet hours come with the hard stop in T-027 | ◐ |
-| R-NOT-03 | Muted notifications and disabled autostart are detected and shown | T-017, T-025 | | ☐ |
+| R-NOT-03 | Muted notifications and disabled autostart are detected and shown | T-017, T-025 | CHECK lines in the brief: toasts off in Settings (all or Sirna), autostart missing or turned off in Task Manager (#25). Do not disturb is T-029 | ◐ |
 
 ## J. AI (§7)
 

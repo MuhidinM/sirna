@@ -10,6 +10,7 @@ mod migrate;
 mod notify;
 mod reminders;
 mod secrets;
+mod session;
 mod startup;
 mod tasks;
 mod tray;
@@ -86,6 +87,9 @@ pub fn run() {
             app.listen_any("focus-changed", move |_| tray::rebuild(&on_change));
             let on_tick = app.handle().clone();
             app.listen_any("focus-tick", move |_| tray::refresh_tooltip(&on_tick));
+            // The morning brief: opens at the first unlock after wake time.
+            let logon = std::env::args().any(|arg| arg == AUTOSTART_ARG);
+            session::start(app.handle().clone(), logon);
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }
@@ -94,6 +98,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::autostart_set,
             commands::autostart_status,
+            commands::brief_checks,
+            commands::brief_ready,
             commands::capture_commit,
             commands::capture_undo,
             commands::db_query,

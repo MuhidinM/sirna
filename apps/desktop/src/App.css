@@ -230,3 +230,40 @@ input[type="number"] {
 .now-card .btn-primary {
   margin-top: var(--space-3);
 }
+
+/* Morning brief (plan §3.4): label column, then the line. */
+.brief {
+  margin-bottom: var(--space-6);
+}
+
+.brief dl {
+  margin: 0 0 var(--space-4);
+}
+
+.brief-line {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.brief-line dt {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  letter-spacing: 0.04em;
+}
+
+.brief-line dd {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.brief-line.warn dd {
+  color: var(--warning);
+}
+
+.brief-reopen {
+  margin-bottom: var(--space-4);
+}
