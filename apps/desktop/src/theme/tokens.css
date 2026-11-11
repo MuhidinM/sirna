@@ -1,0 +1,86 @@
+/*
+ * Sirna's design tokens (plan §3.14). Dark is the default; light follows the
+ * same names. Components use only these variables, never raw colours.
+ *
+ * Accent (lime) is reserved for "now" and the one primary action per screen.
+ * Area colours mark blocks, chips and bars.
+ */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces: 0 is the page, higher is raised. */
+  --surface-0: #121212;
+  --surface-1: #1b1b1a;
+  --surface-2: #232321;
+  --surface-3: #2c2c2a;
+
+  --text-primary: #ecebe6;
+  --text-secondary: #a8a7a1;
+  --text-muted: #7d7c77;
+  --border: #2f2f2d;
+  --border-strong: #444441;
+
+  --accent: #c0dd97;
+  --accent-strong: #97c459;
+  --on-accent: #173404;
+  --danger: #f09595;
+  --warning: #fac775;
+  --success: #97c459;
+
+  --focus-ring: 0 0 0 2px #121212, 0 0 0 4px #97c459;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --surface-0: #f6f4ef;
+  --surface-1: #fbfaf7;
+  --surface-2: #ffffff;
+  --surface-3: #efece5;
+
+  --text-primary: #23221f;
+  --text-secondary: #5f5e5a;
+  --text-muted: #85847e;
+  --border: #e3e0d8;
+  --border-strong: #cfcbc1;
+
+  --accent: #3b6d11;
+  --accent-strong: #27500a;
+  --on-accent: #ffffff;
+  --danger: #a32d2d;
+  --warning: #854f0b;
+  --success: #3b6d11;
+
+  --focus-ring: 0 0 0 2px #f6f4ef, 0 0 0 4px #3b6d11;
+}
+
+:root {
+  /* Area colours (same in both themes; text on them uses --area-ink). */
+  --area-work: #85b7eb;
+  --area-jobhunt: #f0997b;
+  --area-coding: #97c459;
+  --area-experiments: #afa9ec;
+  --area-gym: #ed93b1;
+  --area-quran: #5dcaa5;
+  --area-admin: #b4b2a9;
+  --area-rest: #3a3a38;
+  --area-ink: #121212;
+
+  /* Sizing */
+  --radius: 8px;
+  --radius-card: 12px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --font-sans: system-ui, "Segoe UI", sans-serif;
+  --text-sm: 0.85rem;
+  --text-md: 1rem;
+  --text-lg: 1.4rem;
+  --text-xl: 1.6rem;
+}
