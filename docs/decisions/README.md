@@ -13,3 +13,4 @@ The planning-stage decisions (D1–D49) are logged in [plan §15](../plan.md#15-
 | [0005](0005-own-date-reader.md)            | A small date reader instead of chrono-node               | accepted |
 | [0006](0006-window-lifecycle.md)           | Windows are destroyed on close; nothing is kept warm     | accepted |
 | [0007](0007-do-not-disturb.md)             | Do not disturb through the QuietHoursSettings COM server | accepted |
+| [0008](0008-ai-gate.md)                    | The AI gate: one Rust command, ureq, key in a header     | accepted |

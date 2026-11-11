@@ -95,10 +95,10 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
 | R-AI-01 | Every flow works with no key, offline or rate-limited | T-037 | | ☐ |
-| R-AI-02 | Only titles, area names, minutes, dates and energy are sent; a viewer shows every payload | T-036, T-038 | | ☐ |
+| R-AI-02 | Only titles, area names, minutes, dates and energy are sent; a viewer shows every payload | T-036, T-038 | T-036: every request body and reply is logged in `core_ai_calls` for 30 days and shown in Settings → AI → What was sent (ai.rs, log.test.ts). What the bodies hold comes in T-038 | ◐ |
 | R-AI-03 | Provider is swappable; model chosen at key entry, not in code | T-037 | | ☐ |
 | R-AI-04 | Every number in AI output appears in its input; verdicts never come from the model | T-037 | | ☐ |
-| R-AI-05 | Free-tier pacing, daily budget and 429 handling | T-036 | | ☐ |
+| R-AI-05 | Free-tier pacing, daily budget and 429 handling | T-036 | One request per 7 s; a daily cap counted by the Pacific date (US summer time tested at both switches); 429 honours RetryInfo, else 2 retries with backoff; no retry on other 4xx; 3 failures → plain mode for 10 min (ai.rs tests, ADR-0008) | ☑ |
 
 ## K. Platform and quality (§4, §5, §9, §10)
 
@@ -107,7 +107,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-PLT-01 | Idle in the tray ≤ 30 MB private bytes with no webview | T-010 | Release build, installed: 2.7 MB idle with 0 WebView2 processes; 5.0 MB 60 s after closing the main window; 7.5 MB after 20 capture opens (ADR-0006, docs/measurements.md, #10) | ☑ |
 | R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | NSIS installer 2.8 MB, installed 11.4 MB (#9, docs/measurements.md) | ☑ |
 | R-PLT-03 | One SQLite file; forward-only migrations with checksums; daily checked backups and a written restore | T-012, T-032 | Migrations embedded by build.rs, one transaction each, checksums, newer-DB refusal, checked `VACUUM INTO` backup before migrating; 8 + 4 Rust tests; on the real DB a pre-migration copy landed in `D:\Sirna\backups` (#12). A checked copy once a day, 14 daily and 5 pre-migration copies kept (backup.rs tests); restore written in docs/smoke.md and tested at file level (#32) | ☑ |
-| R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | `secrets.rs` on keyring-core + the Windows native store; round-trip test passes against Credential Manager; no command returns a secret value (#8). Gemini key use: T-036 | ◐ |
+| R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | `secrets.rs` on keyring-core + the Windows native store; round-trip test passes against Credential Manager; no command returns a secret value (#8). The Gemini key is read only in ai.rs and sent only in a request header; tests check it never reaches the URL, the call log, error codes or the reply (T-036) | ☑ |
 | R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007, T-018 | single-instance first; `--autostart` stays in the tray with 0 webviews (#7); setup's "Start Sirna with Windows" registers the Run entry with `--autostart` via `autostart_set` (checked, then removed after the test run) (#18) | ☑ |
 | R-CQ-01 | TypeScript strict, ESLint, Prettier, clippy, rustfmt; pre-commit hooks | T-003, T-004 | | ☐ |
 | R-CQ-02 | Unit tests for every parser, planner and the timer; CI runs them on every pull request | T-005, T-006 | | ☐ |

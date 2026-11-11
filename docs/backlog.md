@@ -73,7 +73,7 @@ Projects board, capacity and slot finder, timing card, Gemini gate and touchpoin
 | T-033 | [#34](https://github.com/MuhidinM/sirna/issues/34) | Add projects with a board and list view | R-PRJ-03 | M | done |
 | T-034 | [#35](https://github.com/MuhidinM/sirna/issues/35) | Calculate capacity and load, and find a slot for new work | R-PRJ-01, R-PRJ-02, R-BRN-05 | L | done |
 | T-035 | [#36](https://github.com/MuhidinM/sirna/issues/36) | Show the timing card, auto-place undated ideas, flag at-risk work | R-PRJ-01, R-PRJ-02, R-PRJ-05 | M | done |
-| T-036 | [#37](https://github.com/MuhidinM/sirna/issues/37) | Add the Rust AI gate: key, allowlist, pacing, budget, log | R-AI-02, R-AI-05, R-PLT-04 | M | todo |
+| T-036 | [#37](https://github.com/MuhidinM/sirna/issues/37) | Add the Rust AI gate: key, allowlist, pacing, budget, log | R-AI-02, R-AI-05, R-PLT-04 | M | done |
 | T-037 | [#38](https://github.com/MuhidinM/sirna/issues/38) | Add Gemini and mock providers with schemas and grounding | R-AI-01, R-AI-03, R-AI-04 | L | todo |
 | T-038 | [#39](https://github.com/MuhidinM/sirna/issues/39) | Wire the AI touchpoints and the eval set | R-PRJ-01, R-AI-02 | L | todo |
 

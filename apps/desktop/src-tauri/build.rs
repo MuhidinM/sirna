@@ -52,6 +52,9 @@ fn main() {
     // Declaring the commands makes each one a permission (allow-db-tx, …),
     // so capabilities/*.json decide which window may call which (plan §4.5).
     let commands = tauri_build::AppManifest::new().commands(&[
+        "ai_models",
+        "ai_send",
+        "ai_usage",
         "autostart_set",
         "autostart_status",
         "brief_checks",

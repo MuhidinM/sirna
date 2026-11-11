@@ -24,6 +24,9 @@
     "allow-notes-undo",
     "allow-clear-away",
     "allow-hotkey-current",
-    "allow-hotkey-set"
+    "allow-hotkey-set",
+    "allow-ai-send",
+    "allow-ai-models",
+    "allow-ai-usage"
   ]
 }

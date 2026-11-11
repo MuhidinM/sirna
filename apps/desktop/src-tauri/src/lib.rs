@@ -1,5 +1,6 @@
 //! Sirna's Rust core: lives in the tray with no window open (plan §4.1).
 
+mod ai;
 mod away;
 mod backup;
 mod clock;
@@ -126,6 +127,9 @@ pub fn run() {
             commands::capture_replace,
             commands::close_window,
             commands::secret_set,
+            commands::ai_send,
+            commands::ai_models,
+            commands::ai_usage,
             commands::hotkey_current,
             commands::hotkey_set,
             commands::secret_status,

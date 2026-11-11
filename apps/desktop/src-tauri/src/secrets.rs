@@ -16,8 +16,7 @@ pub fn set(name: &str, value: &str) -> Result<(), Error> {
     Entry::new(SERVICE, name)?.set_password(value)
 }
 
-/// Rust-side read, for network calls only.
-#[allow(dead_code)] // used from M4 (Gemini key)
+/// Rust-side read, for network calls only (ai.rs). Never returned to the webview.
 pub fn get(name: &str) -> Result<String, Error> {
     Entry::new(SERVICE, name)?.get_password()
 }
