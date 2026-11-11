@@ -31,6 +31,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Ideas:** capture `idea: learn Go ~10h`: the echo says when it starts and how many hours a week; Projects lists it as Active or Next up. Ctrl+Z in the capture box removes it. Capture `idea: CLI tool ~18h by 20 dec`: the echo gives Good / Tight / Too much; in Projects its card offers Keep the date, Use suggested dates and Drop (T-035).
 - **At risk:** a project with a deadline 2 weeks out, 10 h estimate and 2 h a week: the brief shows `AT RISK  … 6 h short before …` and Projects marks it (T-035).
 - **AI gate:** with a Gemini key saved, Settings → AI → Pick a model lists models; pick a Flash-Lite one. "Today: 0 of 15 requests" shows. What was sent lists the models request. Remove the key: Pick a model is greyed out (T-036, ADR-0008).
+- **AI touchpoints:** with a key and model set, open an idea with an estimate and a date: the reasons from the AI appear in italics under the numbers, and What was sent lists the request. In the night review write something under "Anything on your mind?": a short reply shows before it closes (or "Noted. Sleep well." after 4 s). With loose ends, "Suggest with AI" offers one button per note. Turn on Strict mode: the next request in What was sent has area names, not titles. Remove the key: everything still works with plain text (T-038).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

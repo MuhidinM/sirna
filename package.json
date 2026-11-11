@@ -19,7 +19,8 @@
     "prepare": "husky",
     "test": "pnpm --filter @sirna/desktop test",
     "ship": "node scripts/ship.mjs",
-    "usage": "node scripts/usage.mjs"
+    "usage": "node scripts/usage.mjs",
+    "eval:ai": "pnpm --filter @sirna/desktop eval:ai"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

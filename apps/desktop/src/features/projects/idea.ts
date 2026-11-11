@@ -139,7 +139,7 @@ export type IdeaAction =
   | { kind: "suggested" } // dated: move the date to the slot finder's finish
   | { kind: "keep" } // dated: start now and finish by the date
   | { kind: "drop" }
-  | { kind: "estimate"; minutes: number };
+  | { kind: "estimate"; minutes: number; by?: "user" | "ai" };
 
 export interface IdeaRow {
   id: string;
@@ -156,7 +156,9 @@ export function ideaActionValues(
   const others = { ...plan, projects: plan.projects.filter((p) => p.id !== project.id) };
   if (action.kind === "drop") return { status: "dropped" };
   if (action.kind === "estimate")
-    return action.minutes > 0 ? { estimate_min: action.minutes, estimate_by: "user" } : null;
+    return action.minutes > 0
+      ? { estimate_min: action.minutes, estimate_by: action.by ?? "user" }
+      : null;
   const estimate = project.estimate_min;
   if (!estimate) return null;
 

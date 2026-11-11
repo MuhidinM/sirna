@@ -24,6 +24,11 @@ import {
   SPENT_LIST_SQL,
 } from "../features/review/review";
 import { logicalDayStart, todayParams, todayTopSql } from "../features/tasks/today";
+import { ask } from "../features/ai/ask";
+import { aiUnavailable } from "../features/ai/codes";
+import { acceptGuessOps } from "../features/ai/facts";
+import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
+import { CAPTURE, type CaptureGuess, REVIEW } from "../features/ai/touchpoints";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -66,10 +71,22 @@ export function Review({ onClose }: { onClose: () => void }) {
     });
   }, [today]);
 
+  const [reply, setReply] = useState<{ mind: string; energy: number | null } | null>(null);
+  const [energy, setEnergy] = useState<number | null>(null);
+  // Unknown counts as strict: nothing is sent until the setting has loaded.
+  const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL)) ?? true;
   const finish = async (status: "done" | "skipped", values: Row = {}) => {
     await save(today, { ...values, status });
-    onClose();
+    // Something on your mind gets a short reply before the review closes (§7.3).
+    // Strict mode sends no free text.
+    if (status === "done" && typeof values.mind === "string" && values.mind && !strict)
+      setReply({ mind: values.mind, energy });
+    else onClose();
   };
+  if (reply)
+    return (
+      <ReplyStep mind={reply.mind} energy={reply.energy} dayStart={dayStart} onClose={onClose} />
+    );
 
   return (
     <main className="review">
@@ -118,6 +135,7 @@ export function Review({ onClose }: { onClose: () => void }) {
                 key={value}
                 onClick={() => {
                   void save(today, { energy: Number(value) });
+                  setEnergy(Number(value));
                   setStep(4);
                 }}
               >
@@ -154,6 +172,37 @@ function TodayStep({
     [today],
   );
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_TWO_SQL);
+  const areas = useLiveQuery<{ id: string; name: string }>(
+    "SELECT id, name FROM area_items WHERE deleted_at IS NULL AND active = 1",
+  );
+  const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL)) ?? true;
+  // Guesses belong to the notes they were asked for; new loose ends can ask again.
+  const shown = inbox.rows.map((note) => note.id).join(",");
+  const [asked, setAsked] = useState<{
+    for: string;
+    guesses: Map<string, CaptureGuess> | "asking";
+  } | null>(null);
+  const guesses = asked && asked.for === shown ? asked.guesses : null;
+  const [guessNote, setGuessNote] = useState("");
+  const suggest = () => {
+    const forNotes = shown;
+    setAsked({ for: forNotes, guesses: "asking" });
+    void ask(CAPTURE, {
+      notes: inbox.rows.map((note) => ({ ref: note.id, body: note.body })),
+      areas: areas.rows,
+    }).then((result) => {
+      if (result.ok) {
+        setAsked({
+          for: forNotes,
+          guesses: new Map(result.value.items.map((item) => [item.ref, item])),
+        });
+        setGuessNote(result.value.items.length ? "" : "No suggestions.");
+      } else {
+        setAsked(null);
+        setGuessNote(aiUnavailable(result.code));
+      }
+    });
+  };
   const focus = useLiveQuery<{ n: number }>(FOCUS_DONE_SQL, [dayStart]);
   const [shrinking, setShrinking] = useState<string>();
   const [smaller, setSmaller] = useState("");
@@ -256,11 +305,21 @@ function TodayStep({
       {inbox.rows.length > 0 && (
         <>
           <h3>Loose ends</h3>
+          {!strict && guesses === null && <Button onClick={suggest}>Suggest with AI</Button>}
+          {guesses === "asking" && <span className="meta">Asking…</span>}
+          {guessNote && <span className="meta">{guessNote}</span>}
           <ul>
             {inbox.rows.map((note) => (
               <li key={note.id} className="task">
                 <span>{note.body}</span>
                 <span className="row">
+                  {guesses instanceof Map && guesses.get(note.id) && (
+                    <GuessButton
+                      note={note}
+                      guess={guesses.get(note.id) as CaptureGuess}
+                      areaIds={areas.rows.map((area) => area.id)}
+                    />
+                  )}
                   {(["task", "note", "drop"] as const).map((choice) => (
                     <Button
                       key={choice}
@@ -463,5 +522,92 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
         </Button>
       </div>
     </section>
+  );
+}
+
+const KIND_LABEL = { task: "Task", note: "Note", idea: "Idea" } as const;
+
+/** One AI guess for a loose end: shown, used only when you press it. */
+function GuessButton({
+  note,
+  guess,
+  areaIds,
+}: {
+  note: { id: string; body: string };
+  guess: CaptureGuess;
+  areaIds: string[];
+}) {
+  const area = guess.area && areaIds.includes(guess.area) ? ` · #${guess.area}` : "";
+  const when = guess.when_text ? ` · ${guess.when_text}` : "";
+  return (
+    <Button
+      primary
+      title={`AI, ${guess.confidence} confidence`}
+      onClick={() =>
+        void transact(
+          "user",
+          acceptGuessOps(note, guess, areaIds, systemClock.now(), () => ulid()),
+          `review:ai:${note.id}`,
+        )
+      }
+    >
+      {KIND_LABEL[guess.kind]}: {guess.title}
+      {area}
+      {when}
+    </Button>
+  );
+}
+
+const DONE_TODAY_SQL =
+  "SELECT count(*) AS n FROM task_items WHERE deleted_at IS NULL AND status = 'done' AND completed_at >= ?";
+
+/** A short reply to what is on your mind; the review closes after it. */
+function ReplyStep({
+  mind,
+  energy,
+  dayStart,
+  onClose,
+}: {
+  mind: string;
+  energy: number | null;
+  dayStart: number;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    let live = true;
+    // Plan §7.1: if the AI isn't back within 4 s, the plain text shows.
+    const timer = setTimeout(() => setWaited(true), 4000);
+    void query<{ n: number }>(DONE_TODAY_SQL, [dayStart])
+      .then(([row]) => ask(REVIEW, { mind, energy, doneToday: row?.n ?? 0 }))
+      .then((result) => {
+        if (live && result.ok) setText(result.value.reply);
+        else if (live) setWaited(true);
+      });
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [mind, energy, dayStart]);
+  return (
+    <main className="review">
+      <section aria-labelledby="saved">
+        <h2 id="saved">Saved for tomorrow</h2>
+        <p className="meta">{mind}</p>
+        {text ? (
+          <p className="ai-text">{text}</p>
+        ) : waited ? (
+          <p>Noted. Sleep well.</p>
+        ) : (
+          <p className="meta">…</p>
+        )}
+        <div className="row actions">
+          <Button primary onClick={onClose}>
+            Good night
+          </Button>
+        </div>
+      </section>
+    </main>
   );
 }
