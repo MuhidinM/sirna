@@ -10,12 +10,19 @@ export type Row = Record<string, SqlValue>;
 
 /** The tables `transact` may write, mirroring `TABLES` in tx.rs. */
 export type WritableTable =
-  "task_items" | "note_items" | "money_txns" | "money_templates" | "core_settings";
+  | "task_items"
+  | "note_items"
+  | "money_txns"
+  | "money_templates"
+  | "area_items"
+  | "routine_blocks"
+  | "core_settings";
 
 export type Op =
   | { op: "insert"; table: WritableTable; id: string; values: Record<string, SqlValue> }
   | { op: "update"; table: WritableTable; id: string; values: Record<string, SqlValue> }
-  | { op: "delete"; table: WritableTable; id: string };
+  | { op: "delete"; table: WritableTable; id: string }
+  | { op: "upsert"; table: WritableTable; id: string; values: Record<string, SqlValue> };
 
 /** Who made a change: the user, a parser (`parser:capture@1`), a rule, the AI… */
 export type Actor = "user" | "system" | `parser:${string}` | `rule:${string}` | `ai:${string}`;

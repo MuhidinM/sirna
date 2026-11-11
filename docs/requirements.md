@@ -17,8 +17,8 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-PLAN-01 | Life areas with weekly targets, kind, priority, protected and capped flags | T-018 | | ☐ |
-| R-PLAN-02 | A weekly routine of fixed, routine, area and rest blocks | T-018 | | ☐ |
+| R-PLAN-01 | Life areas with weekly targets, kind, priority, protected and capped flags | T-018 | `area_items` seeded with 8 areas (slug ids, so `#coding` is the area); setup sets which are on and their weekly hours (#18) | ☑ |
+| R-PLAN-02 | A weekly routine of fixed, routine, area and rest blocks | T-018 | `defaultRoutine` builds the week from setup answers (8 tests: jobs as fixed blocks, Quran, gym days, email checks, review, rest day, lunch kept free, ≤ 2 focus blocks on workdays, no overlaps); setup in a test folder wrote 51 blocks (#18) | ☑ |
 | R-PLAN-03 | Each day's plan is generated from the routine, filling area blocks by weekly deficit and priority, with 20% buffer | T-019 | | ☐ |
 | R-PLAN-04 | Today shows one "Now" item, a timeline and at most 3 priorities | T-020 | | ☐ |
 | R-PLAN-05 | Missed area time drops; it never piles up as debt | T-019 | | ☐ |
@@ -108,7 +108,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-PLT-02 | Installer ≤ 8 MB, installed ≤ 25 MB | T-009 | NSIS installer 2.8 MB, installed 11.4 MB (#9, docs/measurements.md) | ☑ |
 | R-PLT-03 | One SQLite file; forward-only migrations with checksums; daily checked backups and a written restore | T-012, T-032 | Migrations embedded by build.rs, one transaction each, checksums, newer-DB refusal, checked `VACUUM INTO` backup before migrating; 8 + 4 Rust tests; on the real DB a pre-migration copy landed in `D:\Sirna\backups` (#12). Daily backups and restore: T-032 | ◐ |
 | R-PLT-04 | Secrets only in Windows Credential Manager | T-008, T-036 | `secrets.rs` on keyring-core + the Windows native store; round-trip test passes against Credential Manager; no command returns a secret value (#8). Gemini key use: T-036 | ◐ |
-| R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007 | single-instance plugin first; `--autostart` stays in the tray with 0 webviews; a second launch opens `main` in the first process; closing `main` keeps the tray (measured, #7). Autostart registration is switched on in setup (T-018) | ◐ |
+| R-PLT-05 | Single instance, starts with Windows, tray-only at startup | T-007, T-018 | single-instance first; `--autostart` stays in the tray with 0 webviews (#7); setup's "Start Sirna with Windows" registers the Run entry with `--autostart` via `autostart_set` (checked, then removed after the test run) (#18) | ☑ |
 | R-CQ-01 | TypeScript strict, ESLint, Prettier, clippy, rustfmt; pre-commit hooks | T-003, T-004 | | ☐ |
 | R-CQ-02 | Unit tests for every parser, planner and the timer; CI runs them on every pull request | T-005, T-006 | | ☐ |
 | R-CQ-03 | Issue → branch → PR → merge-commit flow with templates and a project board | T-001 | Templates in `.github/`; labels, milestones M0–M7, issues and board created from backlog.md | ☑ |
