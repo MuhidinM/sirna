@@ -14,7 +14,7 @@ What is tested, how, and how to run it. Sized for one developer: fast unit tests
 | Measurements    | `scripts/measure.ps1` (private bytes over the process tree)                                    | [measurements.md](measurements.md) | after each milestone, by hand             |
 | Smoke test      | 5-minute checklist in the installed build: hotkey, toast buttons, tray, sleep, reboot, restore | [smoke.md](smoke.md)               | after each `pnpm ship`                    |
 
-Dev scripts: `scripts/hotkey-check.ps1` presses the capture key and reads the app's "capture ready in N ms" log line; `scripts/read-captures.mjs` prints the newest captures from the local database; `scripts/toast-check.ps1` shows the check toast (`sirna.exe --test-toast`) and clicks a button through UI Automation; `scripts/measure.ps1` sums private bytes. UI checks need an unlocked screen.
+Dev scripts: `scripts/hotkey-check.ps1` presses the capture key and reads the app's "capture ready in N ms" log line; `scripts/read-captures.mjs` prints the newest captures from the local database; `scripts/toast-check.ps1` shows the check toast (`sirna.exe --test-toast`) and clicks a button through UI Automation; `scripts/measure.ps1` sums private bytes; `scripts/window-shot.ps1` saves a PNG of a Sirna window even when it is behind others. UI checks need an unlocked screen.
 
 No end-to-end browser framework: the risky parts (tray, toasts, hotkey, sleep) only behave correctly in the installed Windows build, so the smoke test and measurements cover them.
 
