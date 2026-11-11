@@ -1,8 +1,11 @@
 //! Sirna's Rust core: lives in the tray with no window open (plan §4.1).
 
+mod backup;
+mod clock;
 mod commands;
 mod db;
 mod hotkey;
+mod migrate;
 mod notify;
 mod secrets;
 mod startup;
@@ -41,7 +44,12 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            app.manage(db::Db::open(&data_dir.join("sirna.db"))?);
+            let backups = backup::default_dir(&data_dir);
+            app.manage(db::Db::open(
+                &data_dir.join("sirna.db"),
+                &backups,
+                clock::now_ms(),
+            )?);
             if let Err(error) = secrets::init() {
                 log::error!("could not open Windows Credential Manager: {error}");
             }

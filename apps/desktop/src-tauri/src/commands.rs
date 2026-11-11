@@ -1,20 +1,12 @@
 //! Commands the webview may call (plan §4.5). Per-window scoping arrives with
 //! the IPC work in T-013.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use tauri::{State, WebviewWindow};
 
+use crate::clock;
 use crate::db::{self, Db};
 use crate::hotkey::CapturePressedAt;
 use crate::secrets;
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 
 /// Saves a capture exactly as typed. Parsing comes later (T-014); saving never
 /// waits on it.
@@ -24,7 +16,7 @@ pub fn capture_commit(raw_text: String, db: State<'_, Db>) -> Result<i64, String
         return Err("Nothing to save".into());
     }
     let conn = db.write.lock();
-    db::insert_capture(&conn, &raw_text, now_ms()).map_err(|error| error.to_string())
+    db::insert_capture(&conn, &raw_text, clock::now_ms()).map_err(|error| error.to_string())
 }
 
 /// The only secret names the webview may touch (plan §4.5).
