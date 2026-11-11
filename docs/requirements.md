@@ -96,8 +96,8 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 |---|---|---|---|---|
 | R-AI-01 | Every flow works with no key, offline or rate-limited | T-037 | | ☐ |
 | R-AI-02 | Only titles, area names, minutes, dates and energy are sent; a viewer shows every payload | T-036, T-038 | T-036: every request body and reply is logged in `core_ai_calls` for 30 days and shown in Settings → AI → What was sent (ai.rs, log.test.ts). What the bodies hold comes in T-038 | ◐ |
-| R-AI-03 | Provider is swappable; model chosen at key entry, not in code | T-037 | | ☐ |
-| R-AI-04 | Every number in AI output appears in its input; verdicts never come from the model | T-037 | | ☐ |
+| R-AI-03 | Provider is swappable; model chosen at key entry, not in code | T-037 | Features call `runTask(task, input, provider)`; `gemini` and `mock` adapters share the `LlmProvider` interface (providers.test.ts, task.test.ts). The model is picked in Settings from the key's own list and stored in `ai.model` (T-036) | ☑ |
+| R-AI-04 | Every number in AI output appears in its input; verdicts never come from the model | T-037 | Replies are parsed, schema-checked and grounded before use: a number not in the fact sheet or an unknown id throws the reply away (ground.test.ts, task.test.ts); three bad replies in a row turn AI off for 10 minutes. Verdicts come from capacity.ts (T-034) and are never in a reply schema | ☑ |
 | R-AI-05 | Free-tier pacing, daily budget and 429 handling | T-036 | One request per 7 s; a daily cap counted by the Pacific date (US summer time tested at both switches); 429 honours RetryInfo, else 2 retries with backoff; no retry on other 4xx; 3 failures → plain mode for 10 min (ai.rs tests, ADR-0008) | ☑ |
 
 ## K. Platform and quality (§4, §5, §9, §10)
