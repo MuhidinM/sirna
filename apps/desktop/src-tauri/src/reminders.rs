@@ -302,18 +302,41 @@ fn show_one(app: &AppHandle, item: Due) {
     let handle = app.clone();
     let key = item.key.clone();
     let task_id = item.entity_id.clone();
-    let title = format!("{} · {}", item.title, local_time(item.fire_at));
-    let buttons = [
-        Button {
-            label: "Done",
-            action: "done",
-        },
-        Button {
-            label: "Snooze 10 min",
-            action: "snooze",
-        },
-    ];
-    let result = notify::show(app, &title, "Sirna reminder", &buttons, move |action| {
+    // Waiting on someone (plan §3.14): a reply ends it; no reply moves the
+    // follow-up a few days on, which is more useful than a 10-minute snooze.
+    let follow_up = item.kind == "follow_up";
+    let (title, body, buttons) = if follow_up {
+        (
+            item.title.clone(),
+            "Any reply yet?",
+            [
+                Button {
+                    label: "Got a reply",
+                    action: "done",
+                },
+                Button {
+                    label: "Still waiting · 3 days",
+                    action: "later",
+                },
+            ],
+        )
+    } else {
+        (
+            format!("{} · {}", item.title, local_time(item.fire_at)),
+            "Sirna reminder",
+            [
+                Button {
+                    label: "Done",
+                    action: "done",
+                },
+                Button {
+                    label: "Snooze 10 min",
+                    action: "snooze",
+                },
+            ],
+        )
+    };
+    let result = notify::show(app, &title, body, &buttons, move |action| {
         let db = handle.state::<Db>();
         let mut conn = db.write.lock();
         let now = clock::now_ms();
@@ -325,6 +348,22 @@ fn show_one(app: &AppHandle, item: Due) {
                 set_outcome(&conn, &key, "done", now, None)
             }
             Some("snooze") => set_outcome(&conn, &key, "snoozed", now, Some(now + SNOOZE_MS)),
+            Some("later") => {
+                // The key is follow_up:<id>:<date>; only that date may move.
+                let toast_date = key.rsplit(':').next().unwrap_or_default();
+                match tasks::follow_up_later(
+                    &mut conn,
+                    &task_id,
+                    toast_date,
+                    now,
+                    tasks::FOLLOW_UP_AGAIN_DAYS,
+                ) {
+                    Ok(Some(date)) => log::info!("follow-up moved to {date}"),
+                    Ok(None) => {}
+                    Err(error) => log::warn!("could not move the follow-up: {error}"),
+                }
+                set_outcome(&conn, &key, "clicked", now, None)
+            }
             _ => {
                 windows::spawn_open_main(handle.clone());
                 set_outcome(&conn, &key, "clicked", now, None)

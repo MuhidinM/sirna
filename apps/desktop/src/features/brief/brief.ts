@@ -5,6 +5,7 @@
 import { logicalDate } from "../../kernel/dates";
 import { logicalDayStart } from "../tasks/today";
 import { type BlockRow, formatMinutes, nowAndNext } from "../plan/now";
+import { type ChangedCounts, changedText } from "./changed";
 
 export const MAX_LINES = 12;
 
@@ -35,6 +36,8 @@ export interface BriefInput {
   /** Minutes after midnight, from setup. */
   wakeMin: number;
   hardStopMin: number;
+  /** What changed since yesterday (T-030); the line is hidden when nothing did. */
+  changed?: ChangedCounts | undefined;
 }
 
 export interface BriefLine {
@@ -155,6 +158,9 @@ export function buildBrief(input: BriefInput): BriefLine[] {
         .map((area) => `${area.name} ${progress(area.done_min, area.target_min)}`)
         .join(" · "),
     });
+
+  const changed = changedText(input.changed);
+  if (changed) lines.push({ label: "CHANGED", text: changed });
 
   return lines.slice(0, MAX_LINES);
 }

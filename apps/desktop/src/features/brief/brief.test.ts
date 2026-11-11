@@ -99,6 +99,21 @@ describe("buildBrief", () => {
     expect(lines[1]?.label).toBe("NEXT");
   });
 
+  it("ends with what changed since yesterday and stays within 12 lines when full", () => {
+    const lines = buildBrief({
+      ...input,
+      checks: { notificationsMuted: true, autostartOff: true },
+      changed: { captured: 3, done: 2, moved: 1, follow_ups: 1 },
+    });
+    // Every section filled is 11 lines, so CHANGED is never cut by the cap.
+    expect(lines).toHaveLength(11);
+    expect(lines.length).toBeLessThanOrEqual(MAX_LINES);
+    expect(lines.at(-1)).toEqual({
+      label: "CHANGED",
+      text: "3 captured · 2 done · 1 moved · 1 follow-up due",
+    });
+  });
+
   it("is just the date on an empty day", () => {
     expect(buildBrief({ ...input, blocks: [], top: [], week: [] })).toHaveLength(1);
   });

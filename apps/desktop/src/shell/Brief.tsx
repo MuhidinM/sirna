@@ -11,7 +11,9 @@ import {
   weekStart,
   type BriefArea,
 } from "../features/brief/brief";
+import { CHANGED_SQL, type ChangedCounts } from "../features/brief/changed";
 import { type BlockRow } from "../features/plan/now";
+import { logicalDayStart } from "../features/tasks/today";
 import { toMinutes } from "../features/plan/routine";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -19,6 +21,8 @@ import { useLiveQuery } from "./useLiveQuery";
 const SETTINGS_SQL = `
   SELECT key, value_json FROM core_settings
   WHERE key IN ('day.wake', 'day.hard_stop', '${BRIEF_DISMISSED_KEY}')`;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function useChecks(): BriefChecks | undefined {
   const [checks, setChecks] = useState<BriefChecks>();
@@ -66,9 +70,13 @@ export function Brief({
     weekStart(nowMs),
     nowMs,
   ]);
+  const changed = useLiveQuery<ChangedCounts & Record<string, number>>(CHANGED_SQL, [
+    logicalDayStart(today) - DAY_MS,
+    today,
+  ]);
   const checks = useChecks();
   const [reopened, setReopened] = useState(false);
-  const ready = !settings.loading && !week.loading && checks !== undefined;
+  const ready = !settings.loading && !week.loading && !changed.loading && checks !== undefined;
 
   useEffect(() => {
     if (ready) void invoke("brief_ready").catch(() => undefined);
@@ -95,6 +103,7 @@ export function Brief({
     checks,
     wakeMin: toMinutes(typeof wake === "string" ? wake : "06:00"),
     hardStopMin: toMinutes(typeof stop === "string" ? stop : "22:00"),
+    changed: changed.rows[0],
   });
 
   return (
