@@ -36,6 +36,11 @@ import {
 import { savePlan, type Timing, timingOf } from "../features/projects/timing";
 import { type IdeaAction, ideaActionValues } from "../features/projects/idea";
 import { AT_RISK_SQL, type Risk, type RiskRow, risks } from "../features/projects/risk";
+import { ask, useAsk } from "../features/ai/ask";
+import { aiUnavailable } from "../features/ai/codes";
+import { estimateFacts, timingFacts } from "../features/ai/facts";
+import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
+import { ESTIMATE, type EstimateReply, TIMING } from "../features/ai/touchpoints";
 import { weekStart } from "../features/plan/dayplan";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -88,9 +93,10 @@ const pct = (ratio: number) => (Number.isFinite(ratio) ? `${Math.round(ratio * 1
 const VERDICT: Record<string, string> = { good: "Good", tight: "Tight", too_much: "Too much" };
 
 /** The numbers for a draft (plan §3.8); the AI's reasons come in T-038. */
-function TimingCard({ timing }: { timing: Timing }) {
+function TimingCard({ timing, reasons }: { timing: Timing; reasons?: string[] | null }) {
   if (timing.kind === "date") {
     const { check } = timing;
+    // The numbers always show; the AI's wording, once it arrives, sits under them.
     return (
       <div className={`timing timing-${check.verdict}`} role="status">
         <strong>{VERDICT[check.verdict]}</strong>
@@ -99,6 +105,13 @@ function TimingCard({ timing }: { timing: Timing }) {
             <li key={reason}>{reason}</li>
           ))}
         </ul>
+        {reasons && reasons.length > 0 && (
+          <ul className="ai-text" aria-label="Why, from the AI">
+            {reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        )}
         {check.verdict !== "good" && check.suggestion && (
           <p className="meta">
             Fits without overload: start {day(check.suggestion.start)}, finish ~
@@ -389,8 +402,42 @@ const ESTIMATE_CHIPS = [5, 10, 20, 40];
  * An idea's card (plan §3.8): the numbers, then what to do with it. Every
  * choice is one undoable write under `project:<id>`.
  */
-function IdeaCard({ project, plan }: { project: ProjectRow; plan: WeekState | null }) {
+function IdeaCard({
+  project,
+  plan,
+  others,
+  strict,
+  areaNames,
+}: {
+  project: ProjectRow;
+  plan: WeekState | null;
+  others: ProjectRow[];
+  strict: boolean | null;
+  areaNames: Map<string, string>;
+}) {
   const [error, setError] = useState<string | null>(null);
+  const [guess, setGuess] = useState<EstimateReply | "asking" | null>(null);
+  const timing = plan
+    ? timingOf(draftOf(project), project.id, plan.week, plan.projects, plan.today)
+    : null;
+  // Area names, not ids, are what the AI may see (plan §7.4).
+  const named = (p: ProjectRow) => ({
+    title: p.title,
+    area: p.area_id ? (areaNames.get(p.area_id) ?? null) : null,
+  });
+  const reasons = useAsk(
+    TIMING,
+    strict !== null && timing?.kind === "date" && project.estimate_min && project.deadline
+      ? timingFacts(
+          named(project),
+          project.estimate_min,
+          project.deadline,
+          timing.check,
+          others.filter((p) => p.status === "active" && p.id !== project.id).map(named),
+          strict,
+        )
+      : null,
+  );
   if (!plan) return null;
   const act = (action: IdeaAction) => {
     const values = ideaActionValues(project, action, plan);
@@ -405,12 +452,31 @@ function IdeaCard({ project, plan }: { project: ProjectRow; plan: WeekState | nu
       `project:${project.id}`,
     ).catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
   };
-  const timing = timingOf(draftOf(project), project.id, plan.week, plan.projects, plan.today);
+  const askEstimate = () => {
+    if (strict === null) return;
+    setGuess("asking");
+    void ask(
+      ESTIMATE,
+      estimateFacts(
+        named(project),
+        others
+          .filter((p) => p.id !== project.id)
+          .map((p) => ({ ...named(p), estimate_min: p.estimate_min })),
+        strict,
+      ),
+    ).then((result) => {
+      if (result.ok) setGuess(result.value);
+      else {
+        setGuess(null);
+        setError(aiUnavailable(result.code));
+      }
+    });
+  };
   return (
     <section className="card idea-card" aria-label="Timing check">
       <h3>Idea</h3>
       {timing ? (
-        <TimingCard timing={timing} />
+        <TimingCard timing={timing} reasons={reasons?.reasons ?? null} />
       ) : (
         <p className="meta">How big is it? Pick an estimate to see where it fits.</p>
       )}
@@ -421,6 +487,19 @@ function IdeaCard({ project, plan }: { project: ProjectRow; plan: WeekState | nu
               {hours} h
             </Button>
           ))}
+        {!project.estimate_min && guess === null && <Button onClick={askEstimate}>Ask AI</Button>}
+        {!project.estimate_min && guess === "asking" && <span className="meta">Asking…</span>}
+        {!project.estimate_min && guess && guess !== "asking" && (
+          <Button
+            primary
+            title={guess.assumptions.join(" · ")}
+            onClick={() =>
+              act({ kind: "estimate", minutes: Math.round(guess.estimate_h * 60), by: "ai" })
+            }
+          >
+            Use ~{guess.estimate_h} h ({guess.confidence})
+          </Button>
+        )}
         {project.estimate_min && !project.deadline && (
           <Button primary onClick={() => act({ kind: "place" })}>
             Place it in my weeks
@@ -450,12 +529,18 @@ function ProjectView({
   areas,
   plan,
   risk,
+  others,
+  strict,
+  areaNames,
   onNote,
 }: {
   project: ProjectRow;
   areas: Area[];
   plan: WeekState | null;
   risk: Risk | undefined;
+  others: ProjectRow[];
+  strict: boolean | null;
+  areaNames: Map<string, string>;
   onNote: (note: string | null) => void;
 }) {
   const tasks = useLiveQuery<ProjectTask & Record<string, string | number | null>>(
@@ -496,7 +581,15 @@ function ProjectView({
         <Button onClick={() => setEditing(true)}>Edit</Button>
       </header>
       {project.goal && <p className="meta">{project.goal}</p>}
-      {project.status === "idea" && <IdeaCard project={project} plan={plan} />}
+      {project.status === "idea" && (
+        <IdeaCard
+          project={project}
+          plan={plan}
+          others={others}
+          strict={strict}
+          areaNames={areaNames}
+        />
+      )}
       <p>
         {openStep(project) ? (
           <>
@@ -548,6 +641,8 @@ export function Projects() {
   const [creating, setCreating] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const plan = useWeek();
+  const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL));
+  const areaNames = new Map(areas.rows.map((area) => [area.id, area.name]));
   const risky = useLiveQuery<RiskRow & Record<string, string | number | null>>(AT_RISK_SQL);
   const riskById = new Map(
     plan ? risks(risky.rows, plan.today).map((risk) => [risk.id, risk]) : [],
@@ -624,6 +719,9 @@ export function Projects() {
               areas={areas.rows}
               plan={plan}
               risk={riskById.get(current.id)}
+              others={projects.rows}
+              strict={strict}
+              areaNames={areaNames}
               onNote={setNote}
             />
           )}

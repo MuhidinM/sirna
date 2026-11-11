@@ -406,6 +406,7 @@ export function Settings() {
           key, offline or over the limit, everything still works with plain text.
         </p>
         <AiSetup />
+        <StrictMode />
         <h3>What was sent</h3>
         <WhatWasSent />
       </section>
@@ -430,5 +431,27 @@ export function Settings() {
         <Autostart />
       </section>
     </main>
+  );
+}
+
+/** Strict mode (plan §7.4): area names instead of titles; no free text sent. */
+function StrictMode() {
+  const rows = useLiveQuery<{ value_json: string | null }>(
+    "SELECT value_json FROM core_settings WHERE key = 'ai.strict'",
+  );
+  const on = rows.rows[0]?.value_json === "true";
+  return (
+    <label className="check">
+      <input
+        type="checkbox"
+        checked={on}
+        disabled={rows.loading}
+        onChange={(event) =>
+          void transact("user", [setting("ai.strict", event.target.checked)], "settings")
+        }
+      />
+      Strict mode: send area names instead of task and project titles, and never send what you write
+      in the night review
+    </label>
   );
 }

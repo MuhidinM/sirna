@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { transact } from "../kernel/db";
 import {
@@ -16,6 +16,10 @@ import { AT_RISK_SQL, riskLine, type RiskRow, risks } from "../features/projects
 import { type BlockRow } from "../features/plan/now";
 import { logicalDayStart } from "../features/tasks/today";
 import { toMinutes } from "../features/plan/routine";
+import { ask } from "../features/ai/ask";
+import { briefFacts } from "../features/ai/facts";
+import { isStrict, STRICT_SQL } from "../features/ai/strict";
+import { BRIEF } from "../features/ai/touchpoints";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -127,6 +131,7 @@ export function Brief({
           </div>
         ))}
       </dl>
+      <AiLine today={today} blocks={blocks} top={top} week={week.rows} />
       {!dismissed && (
         <Button primary onClick={() => dismiss(today)}>
           Start my day
@@ -135,4 +140,79 @@ export function Brief({
       {dismissed && <Button onClick={() => setReopened(false)}>Hide</Button>}
     </section>
   );
+}
+
+const AI_LINE_KEY = "ai.brief_line";
+const AI_LINE_SQL = "SELECT value_json FROM core_settings WHERE key = 'ai.brief_line'";
+
+/** Codes that mean "set up the AI first": worth trying again the same day. */
+const notSetUp = (code: string) => code === "no-key" || code === "bad-model";
+
+/**
+ * One line from the AI, asked at most once a day and kept in settings
+ * (plan §7.3: 1 request a day). Nothing shows when there is none.
+ */
+function AiLine({
+  today,
+  blocks,
+  top,
+  week,
+}: {
+  today: string;
+  blocks: BlockRow[];
+  top: BriefTask[];
+  week: BriefArea[];
+}) {
+  const saved = useLiveQuery<{ value_json: string | null }>(AI_LINE_SQL);
+  const strictRows = useLiveQuery<{ value_json: string | null }>(STRICT_SQL);
+  // Asked once per mount; the saved line covers the rest of the day.
+  const asked = useRef(false);
+  let stored: { date?: string; line?: string | null } = {};
+  try {
+    stored = JSON.parse(saved.rows[0]?.value_json ?? "{}") as typeof stored;
+  } catch {
+    stored = {};
+  }
+  const fresh = stored.date === today;
+  useEffect(() => {
+    // Wait for today's plan: a line written before the blocks exist would stay all day.
+    if (saved.loading || strictRows.loading || fresh || asked.current || blocks.length === 0)
+      return;
+    asked.current = true;
+    const names = new Map(week.map((area) => [area.id, area.name]));
+    const facts = briefFacts(
+      {
+        blocks: blocks.map((block) => ({
+          kind: block.kind,
+          area: block.area_id ? (names.get(block.area_id) ?? null) : null,
+          minutes: Math.round((block.end_at - block.start_at) / 60_000),
+        })),
+        top: top.map((task) => ({ title: task.title, area: null })),
+        week,
+      },
+      isStrict(strictRows.rows),
+    );
+    void ask(BRIEF, facts).then((result) => {
+      if (!result.ok && notSetUp(result.code)) return;
+      void transact(
+        "system",
+        [
+          {
+            op: "upsert",
+            table: "core_settings",
+            id: AI_LINE_KEY,
+            values: {
+              value_json: JSON.stringify({
+                date: today,
+                line: result.ok ? result.value.line : null,
+              }),
+            },
+          },
+        ],
+        "ai:brief",
+      );
+    });
+  }, [saved.loading, strictRows.loading, fresh, blocks, top, week, today, strictRows.rows]);
+  if (!fresh || !stored.line) return null;
+  return <p className="ai-text brief-ai">{stored.line}</p>;
 }

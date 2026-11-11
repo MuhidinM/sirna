@@ -648,3 +648,13 @@ input[type="number"] {
   word-break: break-word;
   font-size: 0.85rem;
 }
+
+/* Text written by the AI sits under the numbers, set apart (plan §7.1). */
+.ai-text {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.brief-ai {
+  margin: var(--space-2) 0 var(--space-4);
+}
