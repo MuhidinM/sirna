@@ -27,6 +27,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Daily backup:** after the first minute of a new day, `D:\Sirna\backups` has `sirna-<today>.db` and the log says `daily backup:` (T-032).
 - **Settings:** the sidebar reaches every page. In Settings, save a Gemini key: it shows "Saved in Windows Credential Manager" and the box stays empty; Replace and Remove work, and Credential Manager → Windows Credentials lists `gemini_api_key` under `dev.sirna.app`. Set the capture key to `Ctrl+Alt+K`: it works at once and the tray tooltip names it. In My week, set email checks to `11:00`: tomorrow's plan has one check at 11:00.
 - **Projects:** New project with a next step: it shows on the board under To do. Drag it to Doing: Today still lists it. Move it to Done: the project asks for the next step. The List tab shows every card with its column (T-033).
+- **Timing check:** Projects shows "This week: load …". In New project type an estimate of 18 h: the card shows a start and finish; add a deadline 3 weeks out: it shows a verdict with the hours a week and the load before → after. With two active projects, saving a third as Active puts it in Next up with a note (T-034).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

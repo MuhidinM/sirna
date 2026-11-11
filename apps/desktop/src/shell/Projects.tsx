@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
-import { transact } from "../kernel/db";
+import { logicalDate } from "../kernel/dates";
+import { query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import {
   addTaskOp,
@@ -23,6 +25,16 @@ import {
   type ProjectTask,
   weeklyLabel,
 } from "../features/projects/projects";
+import {
+  hoursLabel,
+  loadWeek,
+  type PlannedProject,
+  type Query,
+  type WeekModel,
+  weekLoad,
+} from "../features/projects/capacity";
+import { savePlan, type Timing, timingOf } from "../features/projects/timing";
+import { weekStart } from "../features/plan/dayplan";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -38,17 +50,90 @@ const columnLabel = (column: Column | null) =>
   COLUMNS.find((entry) => entry.column === column)?.label ?? "";
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+interface WeekState {
+  week: WeekModel;
+  projects: PlannedProject[];
+  today: string;
+}
+
+/** The template week and planned projects, reloaded after every write. */
+function useWeek(): WeekState | null {
+  const [state, setState] = useState<WeekState | null>(null);
+  useEffect(() => {
+    const load = () => {
+      loadWeek(query as Query)
+        .then((loaded) => setState({ ...loaded, today: logicalDate(systemClock.now()) }))
+        .catch(() => setState(null));
+    };
+    load();
+    const unlisten = listen("data-changed", load);
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  }, []);
+  return state;
+}
+
+const dayLabel = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+const day = (date: string) => dayLabel.format(new Date(`${date}T00:00:00Z`));
+const pct = (ratio: number) => (Number.isFinite(ratio) ? `${Math.round(ratio * 100)}%` : "—");
+
+const VERDICT: Record<string, string> = { good: "Good", tight: "Tight", too_much: "Too much" };
+
+/** The numbers for a draft (plan §3.8); the AI's reasons come in T-038. */
+function TimingCard({ timing }: { timing: Timing }) {
+  if (timing.kind === "date") {
+    const { check } = timing;
+    return (
+      <div className={`timing timing-${check.verdict}`} role="status">
+        <strong>{VERDICT[check.verdict]}</strong>
+        <ul>
+          {check.reasons.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+        {check.verdict !== "good" && check.suggestion && (
+          <p className="meta">
+            Fits without overload: start {day(check.suggestion.start)}, finish ~
+            {day(check.suggestion.finish)}.
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (!timing.slot)
+    return (
+      <div className="timing timing-too_much" role="status">
+        No room in the next year at 85% load. Pause a project or lower a target.
+      </div>
+    );
+  return (
+    <div className="timing timing-good" role="status">
+      Starts {day(timing.slot.start)} · up to {hoursLabel(timing.slot.weeklyMin)}/week · finishes ~
+      {day(timing.slot.finish)} ({timing.slot.weeks.length} week
+      {timing.slot.weeks.length === 1 ? "" : "s"})
+    </div>
+  );
+}
+
 function ProjectForm({
   project,
   areas,
   openTasks = [],
+  plan,
   onSaved,
   onCancel,
 }: {
   project: ProjectRow | null;
   openTasks?: ProjectTask[];
   areas: Area[];
-  onSaved: (id: string) => void;
+  plan: WeekState | null;
+  onSaved: (id: string, note?: string) => void;
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<ProjectDraft>(project ? draftOf(project) : EMPTY_DRAFT);
@@ -57,6 +142,10 @@ function ProjectForm({
     setError(null);
     setDraft({ ...draft, ...change });
   };
+  const timing =
+    plan && !checkDraft(draft)
+      ? timingOf(draft, project?.id ?? null, plan.week, plan.projects, plan.today)
+      : null;
   return (
     <form
       className="card project-form"
@@ -67,9 +156,29 @@ function ProjectForm({
           setError(problem);
           return;
         }
-        const { ops, projectId } = projectOps(draft, project, () => ulid(), openTasks);
+        const selfId = project?.id ?? null;
+        const saving = plan
+          ? savePlan(
+              draft,
+              project ? { draft: draftOf(project), start_date: project.start_date } : null,
+              selfId,
+              timingOf(draft, selfId, plan.week, plan.projects, plan.today),
+              plan.projects,
+              plan.today,
+            )
+          : { values: {}, held: false };
+        const { ops, projectId } = projectOps(
+          draft,
+          project,
+          () => ulid(),
+          openTasks,
+          saving.values,
+        );
+        const note = saving.held
+          ? "Two projects are already active, so this one waits in Next up."
+          : undefined;
         transact("user", ops, `project:${projectId}`)
-          .then(() => onSaved(projectId))
+          .then(() => onSaved(projectId, note))
           .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
       }}
     >
@@ -111,6 +220,15 @@ function ProjectForm({
           />
         </label>
         <label className="field">
+          <span>Estimate (hours)</span>
+          <input
+            inputMode="decimal"
+            value={draft.estimateHours}
+            placeholder="e.g. 18"
+            onChange={(e) => set({ estimateHours: e.target.value })}
+          />
+        </label>
+        <label className="field">
           <span>Deadline (optional)</span>
           <input
             type="date"
@@ -136,6 +254,7 @@ function ProjectForm({
         <span>Goal (optional)</span>
         <textarea rows={2} value={draft.goal} onChange={(e) => set({ goal: e.target.value })} />
       </label>
+      {timing && <TimingCard timing={timing} />}
       {error && (
         <p role="alert" className="error">
           {error}
@@ -262,7 +381,17 @@ function List({ tasks }: { tasks: ProjectTask[] }) {
   );
 }
 
-function ProjectView({ project, areas }: { project: ProjectRow; areas: Area[] }) {
+function ProjectView({
+  project,
+  areas,
+  plan,
+  onNote,
+}: {
+  project: ProjectRow;
+  areas: Area[];
+  plan: WeekState | null;
+  onNote: (note: string | null) => void;
+}) {
   const tasks = useLiveQuery<ProjectTask & Record<string, string | number | null>>(
     PROJECT_TASKS_SQL,
     [project.id],
@@ -275,7 +404,11 @@ function ProjectView({ project, areas }: { project: ProjectRow; areas: Area[] })
         project={project}
         areas={areas}
         openTasks={tasks.rows.filter((task) => task.status !== "done")}
-        onSaved={() => setEditing(false)}
+        plan={plan}
+        onSaved={(_id, note) => {
+          setEditing(false);
+          onNote(note ?? null);
+        }}
         onCancel={() => setEditing(false)}
       />
     );
@@ -341,7 +474,10 @@ export function Projects() {
   const areas = useLiveQuery<Area>(AREAS_SQL);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const plan = useWeek();
   const current = projects.rows.find((p) => p.id === selected) ?? projects.rows[0] ?? null;
+  const load = plan ? weekLoad(plan.week, plan.projects, weekStart(plan.today)) : null;
 
   return (
     <main className="projects">
@@ -350,7 +486,20 @@ export function Projects() {
         <Button primary onClick={() => setCreating(true)}>
           New project
         </Button>
+        {load && (
+          <p className="meta" aria-label="This week's load">
+            This week: load {pct(load.ratio)} · {hoursLabel(load.committed)} planned of{" "}
+            {hoursLabel(load.capacity)} free · {load.activeProjects} active project
+            {load.activeProjects === 1 ? "" : "s"}
+          </p>
+        )}
       </header>
+      {note && (
+        <p role="status" className="row meta">
+          {note}
+          <Button onClick={() => setNote(null)}>OK</Button>
+        </p>
+      )}
       {projects.error && (
         <p role="alert" className="error">
           Couldn&apos;t load projects: {projects.error}
@@ -360,9 +509,11 @@ export function Projects() {
         <ProjectForm
           project={null}
           areas={areas.rows}
-          onSaved={(id) => {
+          plan={plan}
+          onSaved={(id, saved) => {
             setCreating(false);
             setSelected(id);
+            setNote(saved ?? null);
           }}
           onCancel={() => setCreating(false)}
         />
@@ -389,7 +540,15 @@ export function Projects() {
               </li>
             ))}
           </ul>
-          {current && <ProjectView key={current.id} project={current} areas={areas.rows} />}
+          {current && (
+            <ProjectView
+              key={current.id}
+              project={current}
+              areas={areas.rows}
+              plan={plan}
+              onNote={setNote}
+            />
+          )}
         </div>
       )}
     </main>

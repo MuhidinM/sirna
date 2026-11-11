@@ -33,6 +33,9 @@ export interface ProjectRow {
   goal: string | null;
   deadline: string | null;
   weekly_min: number | null;
+  estimate_min: number | null;
+  start_date: string | null;
+  forecast_finish: string | null;
   status: ProjectStatus;
   next_step_task_id: string | null;
   next_step_title: string | null;
@@ -43,7 +46,8 @@ export interface ProjectRow {
 
 /** Active first, then the order of PROJECT_STATUSES, then the deadline. */
 export const PROJECTS_SQL = `
-SELECT p.id, p.title, p.area_id, a.color AS area_color, p.goal, p.deadline, p.weekly_min, p.status,
+SELECT p.id, p.title, p.area_id, a.color AS area_color, p.goal, p.deadline, p.weekly_min,
+       p.estimate_min, p.start_date, p.forecast_finish, p.status,
        p.next_step_task_id, n.title AS next_step_title, n.status AS next_step_status,
        (SELECT count(*) FROM task_items t WHERE t.project_id = p.id AND t.deleted_at IS NULL
           AND t.status IN ('todo', 'waiting')) AS open_count,
@@ -111,6 +115,7 @@ export interface ProjectDraft {
   areaId: string;
   goal: string;
   weeklyHours: string;
+  estimateHours: string;
   deadline: string;
   status: ProjectStatus;
   nextStep: string;
@@ -121,6 +126,7 @@ export const EMPTY_DRAFT: ProjectDraft = {
   areaId: "",
   goal: "",
   weeklyHours: "",
+  estimateHours: "",
   deadline: "",
   status: "active",
   nextStep: "",
@@ -142,6 +148,10 @@ export function draftOf(project: ProjectRow): ProjectDraft {
     goal: project.goal ?? "",
     weeklyHours:
       project.weekly_min == null ? "" : String(Math.round((project.weekly_min / 60) * 100) / 100),
+    estimateHours:
+      project.estimate_min == null
+        ? ""
+        : String(Math.round((project.estimate_min / 60) * 100) / 100),
     deadline: project.deadline ?? "",
     status: project.status,
     nextStep: openStep(project),
@@ -149,6 +159,15 @@ export function draftOf(project: ProjectRow): ProjectDraft {
 }
 
 export const MAX_WEEKLY_HOURS = 40;
+export const MAX_ESTIMATE_HOURS = 2000;
+
+/** Hours typed in a field as minutes, or null when empty or not a number. */
+export function hoursToMin(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 ? Math.round(value * 60) : null;
+}
 
 /** YYYY-MM-DD naming a day that exists (no 2026-02-30). */
 export function realDate(text: string): boolean {
@@ -166,8 +185,14 @@ export function checkDraft(draft: ProjectDraft): string | null {
   const hours = draft.weeklyHours.trim();
   if (hours) {
     const value = Number(hours);
-    if (!Number.isFinite(value) || value < 0 || value > MAX_WEEKLY_HOURS)
-      return `Weekly hours: a number from 0 to ${MAX_WEEKLY_HOURS}.`;
+    if (!Number.isFinite(value) || value < 0.5 || value > MAX_WEEKLY_HOURS)
+      return `Weekly hours: from 0.5 to ${MAX_WEEKLY_HOURS}, or leave it empty.`;
+  }
+  const estimate = draft.estimateHours.trim();
+  if (estimate) {
+    const value = Number(estimate);
+    if (!Number.isFinite(value) || value <= 0 || value > MAX_ESTIMATE_HOURS)
+      return `Estimate: hours from 0 to ${MAX_ESTIMATE_HOURS}.`;
   }
   const deadline = draft.deadline.trim();
   if (deadline && !realDate(deadline)) return "Deadline: a date like 2026-12-20.";
@@ -186,6 +211,10 @@ export function projectOps(
   newId: () => string,
   /** The project's open cards; they follow an area change. */
   openTasks: { id: string; area_id: string | null }[] = [],
+  /** Dates and status from the timing check (capacity.ts), when there is one. */
+  plan: Partial<
+    Record<"start_date" | "forecast_finish" | "weekly_min" | "status", string | number | null>
+  > = {},
 ): { ops: Op[]; projectId: string } {
   const projectId = existing?.id ?? newId();
   const ops: Op[] = [];
@@ -223,9 +252,12 @@ export function projectOps(
     area_id: areaId,
     goal: orNull(draft.goal),
     weekly_min: hours ? Math.round(Number(hours) * 60) : null,
+    estimate_min: hoursToMin(draft.estimateHours),
+    estimate_by: hoursToMin(draft.estimateHours) == null ? null : "user",
     deadline: orNull(draft.deadline),
     status: draft.status,
     next_step_task_id: nextStepId,
+    ...plan,
   };
   // The project row goes last: its next step must exist first.
   ops.push(
