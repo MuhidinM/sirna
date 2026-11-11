@@ -40,7 +40,7 @@ Areas, weekly routine, day-plan generator, timeline, block toasts, Rust focus ti
 
 | ID | Issue | Task | Reqs | Size | Status |
 |---|---|---|---|---|---|
-| T-018 | [#18](https://github.com/MuhidinM/sirna/issues/18) | Add life areas, the weekly routine and the setup steps | R-PLAN-01, R-PLAN-02 | M | todo |
+| T-018 | [#18](https://github.com/MuhidinM/sirna/issues/18) | Add life areas, the weekly routine and the setup steps | R-PLAN-01, R-PLAN-02 | M | done |
 | T-019 | [#19](https://github.com/MuhidinM/sirna/issues/19) | Generate each day's plan from the routine (pure TypeScript) | R-PLAN-03, R-PLAN-05 | L | todo |
 | T-020 | [#20](https://github.com/MuhidinM/sirna/issues/20) | Show Today as a timeline with Now, a countdown and area colours | R-PLAN-04 | M | todo |
 | T-021 | [#21](https://github.com/MuhidinM/sirna/issues/21) | Toast block starts, one start nudge, and email-check blocks | R-FOC-03 | M | todo |
