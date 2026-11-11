@@ -61,10 +61,9 @@ describe("today's top 3", () => {
     const db = openTestDb();
     task(db, "due", { due_date: "2026-11-11" });
     task(db, "chosen", { status: "todo" });
-    db.prepare("INSERT INTO task_daily_top (logical_date, position, task_id) VALUES (?, 1, ?)").run(
-      "2026-11-11",
-      "chosen",
-    );
+    db.prepare(
+      "INSERT INTO task_daily_top (id, logical_date, position, task_id, created_at, updated_at) VALUES (?, ?, 1, ?, 0, 0)",
+    ).run("2026-11-11:1", "2026-11-11", "chosen");
     expect(top(db)[0]).toBe("chosen");
   });
 
