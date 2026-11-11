@@ -10,6 +10,8 @@
     "allow-db-query",
     "allow-db-tx",
     "allow-secret-set",
-    "allow-secret-status"
+    "allow-secret-status",
+    "allow-autostart-set",
+    "allow-autostart-status"
   ]
 }

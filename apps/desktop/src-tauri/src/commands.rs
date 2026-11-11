@@ -21,9 +21,10 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
     let mut tables: Vec<String> = ops
         .iter()
         .map(|op| match op {
-            Op::Insert { table, .. } | Op::Update { table, .. } | Op::Delete { table, .. } => {
-                table.clone()
-            }
+            Op::Insert { table, .. }
+            | Op::Update { table, .. }
+            | Op::Delete { table, .. }
+            | Op::Upsert { table, .. } => table.clone(),
         })
         .collect();
     tables.sort();
@@ -220,4 +221,26 @@ pub fn capture_ready(
 #[tauri::command]
 pub fn close_window(window: WebviewWindow) -> Result<(), String> {
     window.close().map_err(|error| error.to_string())
+}
+
+/// Starts Sirna with Windows (tray only), or stops it (plan §3.1 step 5).
+#[tauri::command]
+pub fn autostart_set(enabled: bool, app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher.disable()
+    };
+    result.map_err(|error| error.to_string())?;
+    launcher.is_enabled().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn autostart_status(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| error.to_string())
 }

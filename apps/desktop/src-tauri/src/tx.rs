@@ -90,6 +90,41 @@ pub const TABLES: &[TableSpec] = &[
         has_user_edited_at: false,
     },
     TableSpec {
+        name: "area_items",
+        id_column: "id",
+        columns: &[
+            "name",
+            "kind",
+            "color",
+            "weekly_target_min",
+            "capped",
+            "protected",
+            "priority_rank",
+            "focus_min",
+            "break_min",
+            "active",
+        ],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
+    },
+    TableSpec {
+        name: "routine_blocks",
+        id_column: "id",
+        columns: &[
+            "weekday",
+            "start_min",
+            "duration_min",
+            "kind",
+            "area_id",
+            "title",
+            "active",
+        ],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
+    },
+    TableSpec {
         name: "core_settings",
         id_column: "key",
         columns: &["value_json"],
@@ -115,6 +150,12 @@ pub enum Op {
     Delete {
         table: String,
         id: String,
+    },
+    /// Insert, or update the existing row with the same id (settings by key).
+    Upsert {
+        table: String,
+        id: String,
+        values: Map<String, Value>,
     },
 }
 
@@ -263,6 +304,26 @@ pub fn apply_ops(
 ) -> Result<Vec<String>, TxError> {
     let mut ids = Vec::with_capacity(ops.len());
     for op in ops {
+        let resolved;
+        let op = if let Op::Upsert { table, id, values } = op {
+            let exists = row_json(conn, spec(table)?, id)?.is_some();
+            resolved = if exists {
+                Op::Update {
+                    table: table.clone(),
+                    id: id.clone(),
+                    values: values.clone(),
+                }
+            } else {
+                Op::Insert {
+                    table: table.clone(),
+                    id: id.clone(),
+                    values: values.clone(),
+                }
+            };
+            &resolved
+        } else {
+            op
+        };
         match op {
             Op::Insert { table, id, values } => {
                 let spec = spec(table)?;
@@ -351,6 +412,7 @@ pub fn apply_ops(
                 )?;
                 ids.push(id.clone());
             }
+            Op::Upsert { .. } => unreachable!("upserts are resolved above"),
             Op::Delete { table, id } => {
                 let spec = spec(table)?;
                 let before = row_json(conn, spec, id)?.ok_or_else(|| TxError::NotFound {
@@ -689,5 +751,54 @@ mod tests {
             )
             .expect("read");
         assert_eq!(value, "\"15:00\"");
+    }
+
+    #[test]
+    fn upsert_inserts_then_updates() {
+        let conn = conn();
+        let set = |value: &str| Op::Upsert {
+            table: "core_settings".into(),
+            id: "ui.theme".into(),
+            values: values(json!({ "value_json": value })),
+        };
+        apply_ops(&conn, "user", None, &[set("\"dark\"")], 1).expect("insert");
+        apply_ops(&conn, "user", None, &[set("\"light\"")], 2).expect("update");
+        let (value, count): (String, i64) = conn
+            .query_row(
+                "SELECT value_json, (SELECT count(*) FROM core_settings) FROM core_settings WHERE key = 'ui.theme'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("read");
+        assert_eq!(value, "\"light\"");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn areas_and_routine_blocks_are_writable() {
+        let conn = conn();
+        let ops = [
+            Op::Update {
+                table: "area_items".into(),
+                id: "coding".into(),
+                values: values(json!({ "weekly_target_min": 300 })),
+            },
+            Op::Insert {
+                table: "routine_blocks".into(),
+                id: "b1".into(),
+                values: values(
+                    json!({ "weekday": 1, "start_min": 360, "duration_min": 20, "kind": "routine", "area_id": "quran", "title": "Quran" }),
+                ),
+            },
+        ];
+        apply_ops(&conn, "user", Some("setup"), &ops, 1).expect("write");
+        let target: i64 = conn
+            .query_row(
+                "SELECT weekly_target_min FROM area_items WHERE id = 'coding'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read");
+        assert_eq!(target, 300);
     }
 }

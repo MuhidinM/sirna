@@ -45,9 +45,19 @@ pub fn run() {
         )
         .plugin(hotkey::plugin())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            // SIRNA_DATA_DIR points a test run at a throwaway folder, so checks
+            // never touch your real data.
+            let test_dir = std::env::var_os("SIRNA_DATA_DIR").map(std::path::PathBuf::from);
+            let data_dir = match &test_dir {
+                Some(dir) => dir.clone(),
+                None => app.path().app_data_dir()?,
+            };
             std::fs::create_dir_all(&data_dir)?;
-            let backups = backup::default_dir(&data_dir);
+            let backups = if test_dir.is_some() {
+                data_dir.join("backups")
+            } else {
+                backup::default_dir(&data_dir)
+            };
             app.manage(db::Db::open(
                 &data_dir.join("sirna.db"),
                 &backups,
@@ -72,6 +82,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::autostart_set,
+            commands::autostart_status,
             commands::capture_commit,
             commands::capture_undo,
             commands::db_query,
