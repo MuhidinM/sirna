@@ -402,13 +402,17 @@ pub fn tick(app: &AppHandle, now_ms: i64) {
     let actions = {
         let db = app.state::<Db>();
         let conn = db.write.lock();
-        let due = match due_now(&conn, now_ms) {
+        let mut due = match due_now(&conn, now_ms) {
             Ok(due) => due,
             Err(error) => {
                 log::error!("could not read reminders: {error}");
                 return;
             }
         };
+        // Away (plan §3.11): block toasts and nudges pause; your own reminders don't.
+        if crate::away::is_away(&conn, &tasks::logical_day(now_ms).0) {
+            due.retain(|item| !is_moment(&item.kind));
+        }
         let mut actions = plan_tick(due, now_ms);
         // Nudges are app-initiated: at most DAILY_NUDGE_CAP a day.
         let mut nudges = nudges_today(&conn, now_ms);
@@ -470,6 +474,16 @@ pub fn start(app: AppHandle) {
                 }));
                 if result.is_err() {
                     log::error!("the reminder tick panicked; it will run again next minute");
+                }
+                // The daily backup rides on the same minute (a no-op once done today).
+                let backed_up = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let dir = app.state::<crate::backup::BackupDir>().0.clone();
+                    let now = clock::now_ms();
+                    let today = tasks::logical_day(now).0;
+                    crate::backup::daily(&app.state::<Db>().write.lock(), &dir, &today, now);
+                }));
+                if backed_up.is_err() {
+                    log::error!("the daily backup panicked; it will run again next minute");
                 }
                 // At 03:00 a new logical day starts: the tray and Today must show it
                 // even when nothing was written overnight.

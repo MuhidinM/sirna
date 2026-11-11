@@ -71,6 +71,8 @@ fn main() {
         "open_notes",
         "secret_set",
         "secret_status",
+        "set_away",
+        "clear_away",
         "setup_info",
         "setup_start",
         "take_screen",

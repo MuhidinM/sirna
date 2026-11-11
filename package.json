@@ -18,7 +18,8 @@
     "rust:lint": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings",
     "prepare": "husky",
     "test": "pnpm --filter @sirna/desktop test",
-    "ship": "node scripts/ship.mjs"
+    "ship": "node scripts/ship.mjs",
+    "usage": "node scripts/usage.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

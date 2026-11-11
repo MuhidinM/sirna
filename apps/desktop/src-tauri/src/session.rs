@@ -114,7 +114,8 @@ fn handle(app: &AppHandle, trigger: Trigger) {
             trigger,
             local_minutes(now),
             wake_min(&conn),
-            shown_on(&conn, &date),
+            // Away (plan §3.11) counts as already shown: no brief until you're back.
+            shown_on(&conn, &date) || crate::away::is_away(&conn, &date),
             platform::busy(),
         )
     };

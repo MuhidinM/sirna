@@ -21,6 +21,7 @@
     "allow-brief-ready",
     "allow-take-screen",
     "allow-focus-setup-open",
-    "allow-notes-undo"
+    "allow-notes-undo",
+    "allow-clear-away"
   ]
 }

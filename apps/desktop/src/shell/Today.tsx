@@ -1,8 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
+import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan } from "../features/plan/dayplan";
 import { formatAmount } from "../kernel/money";
 import {
@@ -143,6 +145,8 @@ export function Today({
     today,
   ]);
   const minuteNow = useMinute();
+  const away = useLiveQuery<{ value_json: string }>(AWAY_SQL);
+  const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
 
   const topIds = new Set(top.rows.map((task) => task.id));
@@ -177,6 +181,12 @@ export function Today({
         )}
       </header>
 
+      {backOn && (
+        <p className="row meta" role="status">
+          Away until {returnLabel(backOn)}: no brief, review or block reminders.
+          <Button onClick={() => void invoke("clear_away")}>I&apos;m back</Button>
+        </p>
+      )}
       {error && (
         <p role="alert" className="error">
           Couldn&apos;t load today: {error}

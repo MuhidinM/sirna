@@ -61,7 +61,7 @@ Morning brief, night review, burnout rules, focus kits, DND, waiting-on, cheat s
 | T-029 | [#29](https://github.com/MuhidinM/sirna/issues/29) | Spike: switch Do Not Disturb on during focus | R-FOC-05 | M | done |
 | T-030 | [#30](https://github.com/MuhidinM/sirna/issues/30) | Track waiting-on items and show what changed since yesterday | R-PRJ-04, R-CHK-05 | M | done |
 | T-031 | [#31](https://github.com/MuhidinM/sirna/issues/31) | Keep cheat sheets: pin from capture, Notes page, show in focus | R-NOTE-01, R-NOTE-02, R-NOTE-03 | M | done |
-| T-032 | [#32](https://github.com/MuhidinM/sirna/issues/32) | Back up daily, document restore, away mode and usage numbers | R-PLT-03 | M | todo |
+| T-032 | [#32](https://github.com/MuhidinM/sirna/issues/32) | Back up daily, document restore, away mode and usage numbers | R-PLT-03 | M | done |
 | T-046 | [#33](https://github.com/MuhidinM/sirna/issues/33) | Release v0.1.0 (daily use) | — | S | todo |
 
 ## M4 — Projects and AI timing check
