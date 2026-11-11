@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { systemClock } from "../kernel/clock";
-import { commitCapture, query, undoCapture } from "../kernel/db";
+import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import { readings } from "./alternatives";
 import { echo as echoLine, toOps } from "./ops";
@@ -20,8 +20,9 @@ import "./capture.css";
 applyTheme(cachedTheme());
 
 const ECHO_MS = 1500;
+// Same rule as the tray: lines that made no records (search, away) can't be undone.
 const LAST_CAPTURE_SQL =
-  "SELECT id, body FROM core_raw_items WHERE source = 'capture' AND parse_status != 'ignored' ORDER BY id DESC LIMIT 1";
+  "SELECT id, body FROM core_raw_items WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new') ORDER BY id DESC LIMIT 1";
 
 function element<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -39,6 +40,8 @@ let options: Parsed[] = [];
 let picked = 0;
 /** Set while fixing the last capture with Up arrow: saving replaces it. */
 let editing: { id: number; body: string } | undefined;
+/** True while a save, fix or undo is in flight. */
+let busy = false;
 
 const close = () => invoke("close_window");
 
@@ -94,11 +97,15 @@ form.addEventListener("submit", (event) => {
   const ops = toOps(parsed, { nowMs, newId: () => ulid() });
   const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
   input.disabled = true;
-  const replaced = editing ? undoCapture(editing.id) : Promise.resolve(0);
-  replaced
-    .then(() => commitCapture(rawText, ops, parser))
+  busy = true;
+  // A fix undoes the old capture and saves the new one in one transaction.
+  const saved = editing
+    ? replaceCapture(editing.id, rawText, ops, parser)
+    : commitCapture(rawText, ops, parser);
+  saved
     .then(() => finish((editing ? "Fixed · " : "") + echoLine(parsed, nowMs)))
     .catch((error: unknown) => {
+      busy = false;
       input.disabled = false;
       output.textContent = typeof error === "string" ? error : "Couldn't save. Try again.";
       input.focus();
@@ -119,9 +126,19 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (input.value !== "") return;
+  // One action at a time: a held key or a second press doesn't run it again.
+  if (event.repeat || busy) {
+    if (event.key === "ArrowUp" || (event.key.toLowerCase() === "z" && event.ctrlKey))
+      event.preventDefault();
+    return;
+  }
   if (event.key === "ArrowUp") {
     event.preventDefault();
+    busy = true;
     void query<{ id: number; body: string }>(LAST_CAPTURE_SQL).then(([last]) => {
+      busy = false;
+      // Typed something while we were looking it up: keep what was typed.
+      if (input.value !== "") return;
       if (!last) {
         output.textContent = "Nothing to fix yet";
         return;
@@ -135,12 +152,26 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key.toLowerCase() === "z" && event.ctrlKey) {
     event.preventDefault();
-    void query<{ id: number; body: string }>(LAST_CAPTURE_SQL).then(([last]) => {
-      if (!last) {
-        output.textContent = "Nothing to undo";
-        return;
-      }
-      void undoCapture(last.id).then(() => finish(`Undone: ${last.body}`));
-    });
+    busy = true;
+    input.disabled = true;
+    const release = () => {
+      busy = false;
+      input.disabled = false;
+      input.focus();
+    };
+    void query<{ id: number; body: string }>(LAST_CAPTURE_SQL)
+      .then(([last]) => {
+        if (!last) {
+          output.textContent = "Nothing to undo";
+          release();
+          return;
+        }
+        // Stays busy after a successful undo, until the box closes.
+        return undoCapture(last.id).then(() => finish(`Undone: ${last.body}`));
+      })
+      .catch(() => {
+        output.textContent = "Couldn't undo. Try again.";
+        release();
+      });
   }
 });
