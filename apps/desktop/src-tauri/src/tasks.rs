@@ -1,6 +1,6 @@
 //! Task reads and writes the tray needs with no window open (plan §4.1).
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::tx::{self, Op};
@@ -127,6 +127,48 @@ pub fn mark_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<(), tx:
     }
 }
 
+/// Days a follow-up moves when there is still no reply.
+pub const FOLLOW_UP_AGAIN_DAYS: i64 = 3;
+
+/// "Still waiting": moves a waiting item's follow-up to `days` after today.
+/// The reminder key includes the date, so it fires again then. Returns the
+/// new date, or None when the item is gone, no longer waiting, or its
+/// follow-up is no longer `toast_date` (an old toast clicked after the date
+/// was changed in the app must not overwrite it).
+pub fn follow_up_later(
+    conn: &mut Connection,
+    id: &str,
+    toast_date: &str,
+    now_ms: i64,
+    days: i64,
+) -> Result<Option<String>, tx::TxError> {
+    let current: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT status, follow_up_date FROM task_items WHERE id = ?1 AND deleted_at IS NULL",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    match current {
+        Some((status, Some(date))) if status == "waiting" && date == toast_date => {}
+        _ => return Ok(None),
+    }
+    let (_, today_start) = logical_day(now_ms);
+    let (date, _) = logical_day(today_start + days * DAY_MS + HOUR_MS);
+    let mut values = Map::new();
+    values.insert("follow_up_date".into(), Value::from(date.clone()));
+    let op = Op::Update {
+        table: "task_items".into(),
+        id: id.into(),
+        values,
+    };
+    let txn = conn.transaction().map_err(sql_error)?;
+    tx::apply_ops(&txn, "user", Some("reminder"), &[op], now_ms)?;
+    txn.commit().map_err(sql_error)?;
+    Ok(Some(date))
+}
+
 pub fn last_capture(conn: &Connection) -> Option<(i64, String)> {
     conn.query_row(LAST_CAPTURE_SQL, [], |row| Ok((row.get(0)?, row.get(1)?)))
         .ok()
@@ -204,6 +246,51 @@ mod tests {
         )
         .expect("seed");
         assert_eq!(last_capture(&conn), Some((1, "lunch 120".into())));
+    }
+
+    #[test]
+    fn still_waiting_moves_the_follow_up_three_days_on() {
+        let mut conn = conn();
+        conn.execute_batch(
+            "INSERT INTO task_items (id, title, status, waiting_on, follow_up_date, created_at, updated_at) VALUES
+               ('w', 'reply', 'waiting', 'recruiter', '2026-11-11', 0, 0),
+               ('t', 'todo', 'todo', NULL, NULL, 0, 0);",
+        )
+        .expect("tasks");
+        // 01:00 on 12 Nov is still the 11th's logical day: 3 days on is the 14th.
+        let late = NOON_11_NOV + 13 * HOUR_MS;
+        assert_eq!(
+            follow_up_later(&mut conn, "w", "2026-11-11", late, FOLLOW_UP_AGAIN_DAYS)
+                .expect("move"),
+            Some("2026-11-14".into())
+        );
+        // The old toast clicked again: its date no longer matches, nothing moves.
+        assert_eq!(
+            follow_up_later(&mut conn, "w", "2026-11-11", late, FOLLOW_UP_AGAIN_DAYS)
+                .expect("stale"),
+            None
+        );
+        let date: String = conn
+            .query_row(
+                "SELECT follow_up_date FROM task_items WHERE id = 'w'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("date");
+        assert_eq!(date, "2026-11-14");
+        // Only waiting items move; the change is in the audit log.
+        assert_eq!(
+            follow_up_later(&mut conn, "t", "2026-11-11", late, 3).expect("todo"),
+            None
+        );
+        let logged: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM core_activity WHERE entity_id = 'w' AND context = 'reminder'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("log");
+        assert_eq!(logged, 1);
     }
 
     #[test]

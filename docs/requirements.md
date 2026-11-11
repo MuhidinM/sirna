@@ -51,7 +51,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-CHK-02 | Night review in 4 steps, ≤ 7 taps, works offline, "Skip tonight" counts against nothing | T-026 | Four steps, all local; a full run took 5 taps in the debug build with the test data; prompt timing, snooze and skip in review.rs tests (#26) | ☑ |
 | R-CHK-03 | Review asks what you spent today, with one-tap chips for repeated expenses | T-026 | `lunch 120, taxi 40` saves two expenses, unread lines are named; chips for an expense typed 3 times in 60 days (review.test.ts, #26) | ☑ |
 | R-CHK-04 | Sunday week card: time per area vs target, next week's load, projects, spending pace, one suggested change | T-039 | | ☐ |
-| R-CHK-05 | "What changed since yesterday" line in the brief | T-030 | | ☐ |
+| R-CHK-05 | "What changed since yesterday" line in the brief | T-030 | CHANGED line: captures (undone ones left out), tasks done, tasks moved (each once), follow-ups due, since yesterday 03:00; hidden when nothing changed (changed.test.ts, brief.test.ts, #30) | ☑ |
 
 ## F. Projects (§3.8)
 
@@ -60,7 +60,7 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 | R-PRJ-01 | An idea with a date gets a Good / Tight / Too much verdict from the numbers, with reasons and alternatives | T-034, T-035, T-038 | | ☐ |
 | R-PRJ-02 | An idea without a date is placed in the first slot that keeps load ≤ 85%, automatically, with undo | T-034, T-035 | | ☐ |
 | R-PRJ-03 | Project board: To do / Doing / Waiting / Done, plus a list view | T-033 | | ☐ |
-| R-PRJ-04 | Waiting-on items with a follow-up reminder | T-030 | | ☐ |
+| R-PRJ-04 | Waiting-on items with a follow-up reminder | T-030 | `wait: recruiter reply mon` fires at 09:00 on its date (reminders.rs test); the toast offers "Got a reply" or "Still waiting · 3 days", which only moves the date the toast was shown for (tasks.rs test, #30) | ☑ |
 | R-PRJ-05 | At-risk deadlines flagged in the brief | T-035 | | ☐ |
 
 ## G. Cheat sheets (§3.15)
