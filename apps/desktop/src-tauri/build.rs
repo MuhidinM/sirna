@@ -61,6 +61,9 @@ fn main() {
         "close_window",
         "db_query",
         "db_tx",
+        "focus_control",
+        "focus_start",
+        "focus_status",
         "secret_set",
         "secret_status",
     ]);

@@ -13,6 +13,9 @@
     "allow-secret-status",
     "allow-autostart-set",
     "allow-autostart-status",
-    "allow-capture-replace"
+    "allow-capture-replace",
+    "allow-focus-start",
+    "allow-focus-control",
+    "allow-focus-status"
   ]
 }

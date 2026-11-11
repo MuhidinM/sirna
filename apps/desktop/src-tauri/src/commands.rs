@@ -333,3 +333,39 @@ pub fn autostart_status(app: AppHandle) -> Result<bool, String> {
         .is_enabled()
         .map_err(|error| error.to_string())
 }
+
+/// Starts a focus session for a block (or a plain one). Returns "started",
+/// "confirm" (it would cut a long break short; call again with force) or
+/// "already" (a session is running).
+#[tauri::command]
+pub fn focus_start(block_id: Option<String>, force: Option<bool>, app: AppHandle) -> String {
+    let effects = crate::focus::start_with_block(&app, block_id, force.unwrap_or(false));
+    if effects.contains(&crate::focus::Effect::NeedConfirm) {
+        "confirm".into()
+    } else if effects.contains(&crate::focus::Effect::AlreadyFocusing) {
+        "already".into()
+    } else {
+        "started".into()
+    }
+}
+
+/// pause, resume, stop or distracted.
+#[tauri::command]
+pub fn focus_control(action: String, app: AppHandle) -> Result<(), String> {
+    use crate::focus::Event;
+    let event = match action.as_str() {
+        "pause" => Event::Pause,
+        "resume" => Event::Resume,
+        "stop" => Event::Stop,
+        "distracted" => Event::Distracted,
+        other => return Err(format!("Unknown focus action: {other}")),
+    };
+    crate::focus::dispatch(&app, event);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn focus_status(focus: State<'_, crate::focus::FocusState>) -> crate::focus::Status {
+    let machine = focus.machine.lock();
+    crate::focus::status(&machine, clock::now_ms())
+}
