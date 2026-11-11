@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window: everything the UI needs.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-capture-commit",
+    "allow-capture-undo",
+    "allow-db-query",
+    "allow-db-tx",
+    "allow-secret-set",
+    "allow-secret-status"
+  ]
+}
