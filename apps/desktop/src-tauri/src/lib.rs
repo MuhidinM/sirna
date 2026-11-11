@@ -10,6 +10,7 @@ mod notify;
 mod secrets;
 mod startup;
 mod tray;
+mod tx;
 mod windows;
 
 use tauri::{Manager, RunEvent};
@@ -64,6 +65,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::capture_commit,
+            commands::capture_undo,
+            commands::db_query,
+            commands::db_tx,
             commands::capture_ready,
             commands::close_window,
             commands::secret_set,

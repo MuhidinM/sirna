@@ -4,12 +4,14 @@
 use std::path::Path;
 
 use parking_lot::Mutex;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::{backup, migrate};
 
 pub struct Db {
     pub write: Mutex<Connection>,
+    /// A second connection that cannot write (query_only), for db_query.
+    pub read: Mutex<Connection>,
 }
 
 impl Db {
@@ -35,8 +37,12 @@ impl Db {
         if !applied.is_empty() {
             log::info!("applied migrations: {}", applied.join(", "));
         }
+        let read = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        read.pragma_update(None, "query_only", "ON")?;
+        read.pragma_update(None, "busy_timeout", 5000)?;
         Ok(Self {
             write: Mutex::new(conn),
+            read: Mutex::new(read),
         })
     }
 }
@@ -60,6 +66,42 @@ fn has_user_tables(conn: &Connection) -> rusqlite::Result<bool> {
     )
 }
 
+/// Runs a read-only query and returns the rows as JSON objects.
+pub fn query_json(
+    conn: &Connection,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> rusqlite::Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    let mut statement = conn.prepare(sql)?;
+    let names: Vec<String> = statement
+        .column_names()
+        .map(|name| (*name).to_string())
+        .collect();
+    let bound: Vec<rusqlite::types::Value> = params
+        .iter()
+        .map(|value| match value {
+            serde_json::Value::Null => rusqlite::types::Value::Null,
+            serde_json::Value::Bool(flag) => rusqlite::types::Value::Integer(i64::from(*flag)),
+            serde_json::Value::Number(number) => number
+                .as_i64()
+                .map(rusqlite::types::Value::Integer)
+                .unwrap_or_else(|| rusqlite::types::Value::Real(number.as_f64().unwrap_or(0.0))),
+            other => rusqlite::types::Value::Text(match other {
+                serde_json::Value::String(text) => text.clone(),
+                _ => other.to_string(),
+            }),
+        })
+        .collect();
+    let rows = statement.query_map(rusqlite::params_from_iter(bound), |row| {
+        let mut object = serde_json::Map::new();
+        for (index, name) in names.iter().enumerate() {
+            object.insert(name.clone(), crate::tx::to_json(row.get_ref(index)?));
+        }
+        Ok(object)
+    })?;
+    rows.collect()
+}
+
 /// Stores a capture exactly as typed and returns its row id.
 pub fn insert_capture(conn: &Connection, body: &str, received_at_ms: i64) -> rusqlite::Result<i64> {
     conn.execute(
@@ -67,6 +109,34 @@ pub fn insert_capture(conn: &Connection, body: &str, received_at_ms: i64) -> rus
         params![received_at_ms, body],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Records that a parser turned a raw item into records.
+pub fn mark_parsed(
+    conn: &Connection,
+    raw_id: i64,
+    parser: Option<&str>,
+    at_ms: i64,
+) -> rusqlite::Result<()> {
+    let (parser_id, parser_version) = match parser.and_then(|value| value.split_once('@')) {
+        Some((id, version)) => (Some(id), version.parse::<i64>().ok()),
+        None => (parser, None),
+    };
+    conn.execute(
+        "UPDATE core_raw_items SET parse_status = 'parsed', parser_id = ?2, parser_version = ?3, parsed_at = ?4
+         WHERE id = ?1",
+        params![raw_id, parser_id, parser_version, at_ms],
+    )?;
+    Ok(())
+}
+
+/// Marks an undone capture so re-parsing skips it.
+pub fn mark_ignored(conn: &Connection, raw_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE core_raw_items SET parse_status = 'ignored' WHERE id = ?1",
+        [raw_id],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

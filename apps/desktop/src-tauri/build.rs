@@ -49,5 +49,18 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"));
     fs::write(out.join("migrations.rs"), code).expect("write migrations.rs");
 
-    tauri_build::build()
+    // Declaring the commands makes each one a permission (allow-db-tx, …),
+    // so capabilities/*.json decide which window may call which (plan §4.5).
+    let commands = tauri_build::AppManifest::new().commands(&[
+        "capture_commit",
+        "capture_undo",
+        "capture_ready",
+        "close_window",
+        "db_query",
+        "db_tx",
+        "secret_set",
+        "secret_status",
+    ]);
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands))
+        .expect("tauri build step failed");
 }

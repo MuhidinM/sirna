@@ -36,6 +36,8 @@ for ($i = 0; $i -lt $Tries; $i++) {
   $lines = Ready-Lines
   if ($lines.Count -le $before) { "try $($i + 1): capture box never became ready"; continue }
   $times += [int][regex]::Match([string]$lines[-1], '(\d+) ms').Groups[1].Value
+  # A person needs far longer than this to start typing; it lets focus settle.
+  Start-Sleep -Milliseconds 200
   if ($Text) { [System.Windows.Forms.SendKeys]::SendWait($Text + "{ENTER}"); Start-Sleep -Milliseconds 2500 }
   else { [System.Windows.Forms.SendKeys]::SendWait("{ESC}"); Start-Sleep -Milliseconds 800 }
 }
