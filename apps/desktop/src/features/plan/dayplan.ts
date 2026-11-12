@@ -41,9 +41,16 @@ export const DONE_THIS_WEEK_SQL = `
     AND logical_date >= ? AND logical_date < ?
   GROUP BY area_id`;
 
+/** Open tasks, with what is left of their estimate after focus time on them. */
 export const OPEN_TASKS_SQL = `
-  SELECT id, title, area_id, due_date, created_at FROM task_items
-  WHERE deleted_at IS NULL AND status = 'todo' ORDER BY created_at`;
+  SELECT t.id, t.title, t.area_id, t.due_date, t.created_at,
+         CASE WHEN t.estimate_min IS NULL THEN NULL ELSE MAX(0, t.estimate_min - COALESCE((
+           SELECT sum(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
+           FROM focus_sessions f
+           WHERE f.task_id = t.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)) END
+           AS remaining_min
+  FROM task_items t
+  WHERE t.deleted_at IS NULL AND t.status = 'todo' ORDER BY t.created_at`;
 
 export const CHOSEN_TOP_SQL =
   "SELECT task_id FROM task_daily_top WHERE logical_date = ? AND chosen_by = 'user' ORDER BY position";
@@ -94,6 +101,7 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       area_id: string | null;
       due_date: string | null;
       created_at: number;
+      remaining_min: number | null;
     }>(OPEN_TASKS_SQL),
     query<{ task_id: string }>(CHOSEN_TOP_SQL, [date]),
     query<{ id: string; start_at: number; end_at: number }>(KEPT_BLOCKS_SQL, [date]),
@@ -121,7 +129,11 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
 
   return {
     date,
-    isRestDay: restDay === isoWeekday(date),
+    // The routine decides: a day with a Rest block is a rest day (My week can
+    // move or remove it). Routines from before the editor fall back to the answer.
+    isRestDay: template.length
+      ? template.some((block) => block.kind === "rest" && block.duration_min >= REST_DAY_MIN)
+      : restDay === isoWeekday(date),
     recentEnergy: energy.map((row) => row.energy),
     template: template.map((block) => ({
       startMin: block.start_min,
@@ -151,6 +163,7 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       areaId: task.area_id,
       dueDate: task.due_date,
       createdAt: task.created_at,
+      remainingMin: task.remaining_min,
     })),
     chosenTop: chosen.map((row) => row.task_id),
   };
@@ -208,6 +221,36 @@ export function ensureDayPlan(
   const run = planOnce(query, transact, nowMs, newId).finally(() => running.delete(date));
   running.set(date, run);
   return run;
+}
+
+/** A Rest block this long makes a rest day; a shorter one is just time off. */
+export const REST_DAY_MIN = 6 * 60;
+
+/** Today's plan blocks Sirna made and you didn't touch. */
+export const STALE_BLOCKS_SQL = `SELECT id FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL
+  AND source IN ('template', 'generator') AND user_edited_at IS NULL`;
+
+/**
+ * After the routine changes: a day that already has a plan gets a new one
+ * from the new routine. Blocks you added, edited, started or finished stay,
+ * and the new plan goes around them; your top-3 choice stays. A day not yet
+ * planned is left alone (Today plans it when opened).
+ */
+export async function replanDay(
+  query: Query,
+  transact: (ops: Op[]) => Promise<unknown>,
+  date: string,
+  newId: () => string,
+): Promise<void> {
+  const [exists] = await query<{ n: number }>(PLAN_EXISTS_SQL, [date]);
+  if ((exists?.n ?? 0) === 0) return;
+  const stale = await query<{ id: string }>(STALE_BLOCKS_SQL, [date]);
+  const input = await loadPlanInput(query, date);
+  const plan = generateDay(input);
+  await transact([
+    ...stale.map(({ id }): Op => ({ op: "delete", table: "day_blocks", id })),
+    ...planOps(plan, date, newId, true),
+  ]);
 }
 
 async function planOnce(

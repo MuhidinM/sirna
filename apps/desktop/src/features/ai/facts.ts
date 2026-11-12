@@ -142,3 +142,31 @@ export function acceptGuessOps(
     done,
   ];
 }
+
+/**
+ * Using an AI split: the steps become tasks with the same area and date, each
+ * with its own minutes, so the planner spreads them over the coming days; the
+ * big task is dropped. All under `split:<id>`, so one undo restores it.
+ */
+export function splitOps(
+  task: { id: string; area_id: string | null; due_date: string | null },
+  steps: { title: string; minutes: number }[],
+  newId: () => string,
+): Op[] {
+  return [
+    ...steps.map((step): Op => ({
+      op: "insert",
+      table: "task_items",
+      id: newId(),
+      values: {
+        title: step.title.trim(),
+        status: "todo",
+        area_id: task.area_id,
+        due_date: task.due_date,
+        estimate_min: step.minutes,
+        origin: `split:${task.id}`,
+      },
+    })),
+    { op: "update", table: "task_items", id: task.id, values: { status: "dropped" } },
+  ];
+}

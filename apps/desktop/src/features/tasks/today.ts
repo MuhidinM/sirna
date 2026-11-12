@@ -17,7 +17,7 @@ export function todayParams(nowMs: number): [string, number] {
 
 /** Open tasks due today or earlier that aren't in the top 3. */
 export const DUE_SQL = `
-  SELECT id, title, due_date, due_at FROM task_items
+  SELECT id, title, 'todo' AS status, due_date, due_at, estimate_min, area_id FROM task_items
   WHERE deleted_at IS NULL AND status = 'todo' AND due_date <= ?1
   ORDER BY due_date, CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at
   LIMIT 20`;

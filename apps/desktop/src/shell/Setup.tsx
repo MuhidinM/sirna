@@ -89,8 +89,8 @@ export function Setup({ onDone }: { onDone: () => void }) {
       query<{ key: string; value_json: string }>(
         "SELECT key, value_json FROM core_settings WHERE key IN ('day.wake', 'day.hard_stop', 'day.review', 'capture.clock_style', 'setup.answers')",
       ),
-      query<{ id: string; weekly_target_min: number; active: number }>(
-        "SELECT id, weekly_target_min, active FROM area_items WHERE deleted_at IS NULL",
+      query<{ id: string; name: string; weekly_target_min: number; active: number }>(
+        "SELECT id, name, weekly_target_min, active FROM area_items WHERE deleted_at IS NULL",
       ),
       invoke<boolean>("autostart_status").catch(() => true),
     ]).then(([settings, savedAreas, autostart]) => {
@@ -114,7 +114,15 @@ export function Setup({ onDone }: { onDone: () => void }) {
         const activeIds = new Set(
           savedAreas.filter((area) => area.active === 1).map((area) => area.id),
         );
-        setJobs(answers.jobs.map((job) => ({ ...job, enabled: activeIds.has(job.areaId) })));
+        // Names as they are now (My week can rename a job), not as first answered.
+        const nameOf = new Map(savedAreas.map((area) => [area.id, area.name]));
+        setJobs(
+          answers.jobs.map((job) => ({
+            ...job,
+            name: nameOf.get(job.areaId) ?? job.name,
+            enabled: activeIds.has(job.areaId),
+          })),
+        );
       }
       if (answers.gymDays) setGymDays(answers.gymDays);
       if (answers.gymTime) setGymTime(answers.gymTime);
@@ -173,9 +181,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
       const existing = await query<{ id: string }>(
         "SELECT id FROM routine_blocks WHERE deleted_at IS NULL",
       );
-      const allAreas = await query<{ id: string }>(
-        "SELECT id FROM area_items WHERE deleted_at IS NULL",
-      );
+      // Only the areas these questions ask about; ones added in My week stay as they are.
+      const managed = new Set([...jobs.map((job) => job.areaId), ...AREAS.map((area) => area.id)]);
+      const allAreas = (
+        await query<{ id: string }>("SELECT id FROM area_items WHERE deleted_at IS NULL")
+      ).filter((area) => managed.has(area.id));
       // Today's generated blocks follow the old routine; drop them so Today replans.
       const today = logicalDate(systemClock.now());
       const generated = await query<{ id: string }>(

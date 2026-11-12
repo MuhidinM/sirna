@@ -282,3 +282,70 @@ describe("strict mode while loading", () => {
     expect(strictOrNull({ loading: false, rows: [{ value_json: "true" }] })).toBe(true);
   });
 });
+
+describe("splitting a big task", () => {
+  const input = { task: "Write the report", area: "Job hunt", estimateMin: 180, due: "2026-11-20" };
+
+  it("keeps steps that add up to the estimate", async () => {
+    const { SPLIT } = await import("./touchpoints");
+    const good = JSON.stringify({
+      steps: [
+        { title: "Outline the sections", minutes: 30 },
+        { title: "Draft the findings", minutes: 90 },
+        { title: "Edit and send", minutes: 60 },
+      ],
+    });
+    expect(await runTask(SPLIT, input, mock({ split: good }))).toMatchObject({ ok: true });
+    const short = good.replace("90", "20");
+    expect(await runTask(SPLIT, input, mock({ split: short }))).toMatchObject({
+      code: "ungrounded:steps add up to 110 min, not 180",
+    });
+    const one = JSON.stringify({ steps: [{ title: "Do it", minutes: 180 }] });
+    expect((await runTask(SPLIT, input, mock({ split: one }))).ok).toBe(false);
+  });
+
+  it("turns the steps into tasks and drops the big one, in one undoable write", async () => {
+    const { splitOps } = await import("./facts");
+    const db = openTestDb();
+    db.exec(`INSERT INTO task_items (id, title, status, area_id, due_date, estimate_min, created_at, updated_at)
+      VALUES ('big', 'Write the report', 'todo', 'jobhunt', '2026-11-20', 180, 0, 0)`);
+    let n = 0;
+    const ops = splitOps(
+      { id: "big", area_id: "jobhunt", due_date: "2026-11-20" },
+      [
+        { title: "Outline", minutes: 30 },
+        { title: "Draft", minutes: 150 },
+      ],
+      () => `s${++n}`,
+    );
+    expect(ops).toEqual([
+      {
+        op: "insert",
+        table: "task_items",
+        id: "s1",
+        values: {
+          title: "Outline",
+          status: "todo",
+          area_id: "jobhunt",
+          due_date: "2026-11-20",
+          estimate_min: 30,
+          origin: "split:big",
+        },
+      },
+      {
+        op: "insert",
+        table: "task_items",
+        id: "s2",
+        values: {
+          title: "Draft",
+          status: "todo",
+          area_id: "jobhunt",
+          due_date: "2026-11-20",
+          estimate_min: 150,
+          origin: "split:big",
+        },
+      },
+      { op: "update", table: "task_items", id: "big", values: { status: "dropped" } },
+    ]);
+  });
+});

@@ -209,3 +209,56 @@ export const CAPTURE: AiTask<CaptureFacts, { items: CaptureGuess[] }> = {
     );
   },
 };
+
+// --- Split a big task into steps (spread over days by the planner) ---------------
+
+export interface SplitFacts {
+  task: string;
+  area: string | null;
+  estimateMin: number;
+  due: string | null;
+}
+
+export interface SplitReply {
+  steps: { title: string; minutes: number }[];
+}
+
+export const SPLIT_TOLERANCE = 0.1;
+/** 6 steps of at most 240 min: anything bigger is a project, not a task. */
+export const SPLIT_MAX_MIN = 6 * 240;
+
+export const SPLIT: AiTask<SplitFacts, SplitReply> = {
+  id: "split",
+  version: "1",
+  schema: s.object({
+    steps: s.array(
+      s.object({
+        title: s.string({ maxLength: 80, description: "A concrete step that starts with a verb" }),
+        minutes: s.integer({ min: 10, max: 240 }),
+      }),
+      { maxItems: 6 },
+    ),
+  }),
+  system: SYSTEM,
+  facts: (f) =>
+    [
+      `task: ${f.task}`,
+      `area: ${f.area ?? "none"}`,
+      `estimate: ${f.estimateMin} min`,
+      `due: ${f.due ?? "no date"}`,
+    ].join("\n"),
+  ask: (f) =>
+    `Break the task into 2 to 6 steps someone can each finish in one sitting. The minutes must add up to about ${f.estimateMin}.`,
+  // Step titles carry no new numbers; the minutes are the split itself and
+  // must add up to the estimate (within 10%).
+  ground: (output, input) => {
+    if (output.steps.length < 2) return "fewer than 2 steps";
+    const total = output.steps.reduce((sum, step) => sum + step.minutes, 0);
+    if (Math.abs(total - input.estimateMin) > input.estimateMin * SPLIT_TOLERANCE)
+      return `steps add up to ${total} min, not ${input.estimateMin}`;
+    return groundText(
+      output.steps.map((step) => step.title),
+      SPLIT.facts(input),
+    );
+  },
+};

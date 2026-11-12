@@ -48,15 +48,17 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea }: OpsContext): Op[] 
           id: newId(),
           values: {
             title: parsed.title,
-            status:
-              parsed.dueDate || parsed.waitingOn
-                ? parsed.waitingOn
-                  ? "waiting"
-                  : "todo"
+            // An undated task with an estimate is meant to be done soon: the day
+            // planner fits it into free slots. Without either, it waits as someday.
+            status: parsed.waitingOn
+              ? "waiting"
+              : parsed.dueDate || parsed.estimateMin
+                ? "todo"
                 : "someday",
             due_date: parsed.dueDate ?? null,
             due_at: parsed.dueAt ?? null,
             remind_at: parsed.dueAt ?? null,
+            estimate_min: parsed.estimateMin ?? null,
             area_id: parsed.area ?? null,
             waiting_on: parsed.waitingOn ?? null,
             follow_up_date: parsed.waitingOn ? (parsed.dueDate ?? null) : null,
@@ -155,8 +157,13 @@ export function echo(parsed: Parsed, nowMs: number, idea?: Placement): string {
       }
       const when = parsed.dueDate
         ? ` · ${dayLabel(parsed.dueDate, nowMs)}${parsed.dueAt ? ` ${timeLabel(parsed.dueAt)}` : ""}`
-        : " · Someday";
-      return `Task${when}${area}`;
+        : parsed.estimateMin
+          ? " · planned into free time"
+          : " · Someday";
+      const size = parsed.estimateMin
+        ? ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
+        : "";
+      return `Task${when}${size}${area}`;
     }
     case "expense":
       return `${formatAmount(parsed.amount)} · ${CATEGORY_NAMES[parsed.categoryId] ?? "Other"}${area}`;

@@ -9,7 +9,10 @@
  * 3. Area blocks go to the area furthest behind its weekly target (as a share),
  *    ties broken by priority. Capped areas stop at their target. An area with a
  *    task due within 48 hours goes first.
- * 4. Tasks go into their area's blocks: deadline first, then oldest.
+ * 4. Tasks go into their area's blocks: deadline first, then oldest; a slot
+ *    with no task of its area takes a task with no area. A task with more
+ *    estimated time left than one block continues in the next one (and on
+ *    later days, since it stays open).
  * 5. At least 20% of free time stays unplanned.
  * 6. Top 3: last night's choice, then deadlines within 48 h, then the most
  *    behind area's task.
@@ -40,6 +43,8 @@ export interface TaskInput {
   areaId: string | null;
   dueDate: string | null;
   createdAt: number;
+  /** Minutes left of its estimate; null when it has none (one block is enough). */
+  remainingMin?: number | null;
 }
 
 /** A block you edited or added; regeneration keeps it and plans around it. */
@@ -122,16 +127,31 @@ export function generateDay(input: PlanInput): DayPlan {
 
   const activeAreas = input.areas.filter((area) => area.active);
   const tasksLeft = [...input.tasks];
-  const takeTask = (areaId: string): TaskInput | undefined => {
-    const candidates = tasksLeft.filter((task) => task.areaId === areaId).sort(byDeadlineThenAge);
-    const task = candidates[0];
-    if (task) tasksLeft.splice(tasksLeft.indexOf(task), 1);
+  const left = new Map<string, number>();
+  const takeTask = (areaId: string, minutes: number): TaskInput | undefined => {
+    const pick = (match: (task: TaskInput) => boolean) =>
+      tasksLeft.filter(match).sort(byDeadlineThenAge)[0];
+    const task = pick((t) => t.areaId === areaId) ?? pick((t) => t.areaId === null);
+    if (!task) return undefined;
+    const remaining = (left.get(task.id) ?? task.remainingMin ?? 0) - minutes;
+    // Done for today once its estimate is covered (or it had none).
+    if (remaining > 0) left.set(task.id, remaining);
+    else tasksLeft.splice(tasksLeft.indexOf(task), 1);
     return task;
   };
 
   if (!light) {
     // 5. Free time = waking time not taken by fixed/routine blocks; keep 20% of it open.
-    const areaSlots = input.template.filter((block) => block.kind === "area").filter(free);
+    // Time off (a short Rest block) is busy: no slot overlapping it is filled.
+    const off = input.template.filter((block) => block.kind === "rest");
+    const areaSlots = input.template
+      .filter((block) => block.kind === "area")
+      .filter(free)
+      .filter((slot) => !off.some((rest) => overlaps(rest, slot)))
+      // Slots you tied to an area come first, so the buffer never squeezes them out.
+      .sort(
+        (a, b) => Number(b.areaId !== null) - Number(a.areaId !== null) || a.startMin - b.startMin,
+      );
     const freeMin = areaSlots.reduce((sum, block) => sum + block.durationMin, 0);
     const budget = Math.floor(freeMin * (1 - BUFFER_SHARE));
 
@@ -151,10 +171,13 @@ export function generateDay(input: PlanInput): DayPlan {
       const remaining = (area: AreaInput) =>
         area.weeklyTargetMin - (input.doneThisWeekMin[area.id] ?? 0) - (planned[area.id] ?? 0);
       const eligible = fillable.filter((area) => !area.capped || remaining(area) > 0);
+      // A free slot you tied to an area in My week gets that area.
+      const tied = slot.areaId ? activeAreas.find((area) => area.id === slot.areaId) : undefined;
       const urgentPick = urgentAreas.find(
         (id) => eligible.some((area) => area.id === id) && !(planned[id] ?? 0),
       );
       const pick =
+        tied ??
         eligible.find((area) => area.id === urgentPick) ??
         [...eligible].sort(
           (a, b) =>
@@ -164,13 +187,14 @@ export function generateDay(input: PlanInput): DayPlan {
       // A deadline beats the weekly target: an urgent area gets its block even
       // when its target is met (a capped area still stops at its cap).
       const isUrgent = pick?.id === urgentPick;
-      if (!pick || (!isUrgent && remaining(pick) <= 0)) continue;
+      if (!pick || (!tied && !isUrgent && remaining(pick) <= 0)) continue;
+      if (tied && tied.capped && remaining(tied) <= 0) continue;
       const minutes = pick.capped ? Math.min(duration, remaining(pick)) : duration;
       if (minutes < 25) continue;
       planned[pick.id] = (planned[pick.id] ?? 0) + minutes;
       used += minutes;
       // 4. The area's most pressing task goes into the block.
-      const task = takeTask(pick.id);
+      const task = takeTask(pick.id, minutes);
       blocks.push({
         startMin: slot.startMin,
         durationMin: minutes,

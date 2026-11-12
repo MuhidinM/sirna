@@ -3,7 +3,7 @@
 -- Done tasks stay visible for the day they were completed.
 -- ?1 = logical date (YYYY-MM-DD), ?2 = start of that logical day (UTC epoch ms).
 -- Shared by the tray (Rust, include_str!) and the Today screen (TypeScript, ?raw).
-SELECT t.id, t.title, t.status, t.due_date, t.due_at
+SELECT t.id, t.title, t.status, t.due_date, t.due_at, t.estimate_min, t.area_id
 FROM task_items AS t
 LEFT JOIN task_daily_top AS top ON top.task_id = t.id AND top.logical_date = ?1
 WHERE t.deleted_at IS NULL

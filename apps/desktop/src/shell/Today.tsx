@@ -3,6 +3,11 @@ import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { query, transact } from "../kernel/db";
+import { ask } from "../features/ai/ask";
+import { aiUnavailable } from "../features/ai/codes";
+import { splitOps } from "../features/ai/facts";
+import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
+import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan } from "../features/plan/dayplan";
@@ -28,6 +33,80 @@ interface TaskRow extends Record<string, string | number | null> {
   status: string;
   due_date: string | null;
   due_at: number | null;
+  estimate_min: number | null;
+  area_id: string | null;
+}
+
+/** A task this long can be split into steps (plan §7.3, the AI's suggestion). */
+const SPLIT_FROM_MIN = 90;
+
+/**
+ * Split with AI: shows the proposed steps; nothing changes until "Use these
+ * steps". Strict mode sends the area instead of the title.
+ */
+function SplitTask({ task, onClose }: { task: TaskRow; onClose: () => void }) {
+  const [state, setState] = useState<SplitReply | "asking" | string>("asking");
+  const [using, setUsing] = useState(false);
+  const strictRows = useLiveQuery<{ value_json: string | null }>(STRICT_SQL);
+  const strict = strictOrNull(strictRows);
+  // The AI sees the area's name, never its id.
+  const area = useLiveQuery<{ name: string }>("SELECT name FROM area_items WHERE id = ?", [
+    task.area_id ?? "",
+  ]);
+  const areaName = area.loading ? undefined : (area.rows[0]?.name ?? null);
+  useEffect(() => {
+    if (strict === null || areaName === undefined || !task.estimate_min) return;
+    let live = true;
+    void ask(SPLIT, {
+      task: label(task.title, areaName, strict, "task"),
+      area: areaName,
+      estimateMin: task.estimate_min,
+      due: task.due_date,
+    }).then((result) => {
+      if (live) setState(result.ok ? result.value : aiUnavailable(result.code));
+    });
+    return () => {
+      live = false;
+    };
+  }, [strict, areaName, task]);
+  if (state === "asking") return <p className="meta">Asking for steps…</p>;
+  if (typeof state === "string")
+    return (
+      <p className="meta">
+        {state} <Button onClick={onClose}>OK</Button>
+      </p>
+    );
+  return (
+    <div className="split ai-text">
+      <ol>
+        {state.steps.map((step) => (
+          <li key={step.title}>
+            {step.title} <span className="meta">{step.minutes} min</span>
+          </li>
+        ))}
+      </ol>
+      <div className="row">
+        <Button
+          primary
+          disabled={using}
+          onClick={() => {
+            if (using) return;
+            setUsing(true);
+            void transact(
+              "user",
+              splitOps(task, state.steps, () => ulid()),
+              `split:${task.id}`,
+            )
+              .then(onClose)
+              .catch(() => setUsing(false));
+          }}
+        >
+          Use these steps
+        </Button>
+        <Button onClick={onClose}>Cancel</Button>
+      </div>
+    </div>
+  );
 }
 
 const longDate = new Intl.DateTimeFormat("en-GB", {
@@ -56,6 +135,11 @@ function toggle(task: TaskRow) {
 
 function TaskLine({ task, today }: { task: TaskRow; today: string }) {
   const overdue = task.due_date !== null && task.due_date < today;
+  const [splitting, setSplitting] = useState(false);
+  const big =
+    task.status === "todo" &&
+    (task.estimate_min ?? 0) >= SPLIT_FROM_MIN &&
+    (task.estimate_min ?? 0) <= SPLIT_MAX_MIN;
   return (
     <li className="task">
       <label>
@@ -63,12 +147,19 @@ function TaskLine({ task, today }: { task: TaskRow; today: string }) {
         <span className={task.status === "done" ? "done" : undefined}>{task.title}</span>
       </label>
       <span className="meta">
+        {task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h · ` : ""}
         {overdue
           ? `since ${task.due_date}${task.due_at !== null ? ` ${time.format(task.due_at)}` : ""}`
           : task.due_at !== null
             ? time.format(task.due_at)
             : ""}
+        {big && !splitting && (
+          <Button className="split-button" onClick={() => setSplitting(true)}>
+            Split
+          </Button>
+        )}
       </span>
+      {splitting && <SplitTask task={task} onClose={() => setSplitting(false)} />}
     </li>
   );
 }

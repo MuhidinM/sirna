@@ -13,6 +13,8 @@ export type Parsed =
   | {
       kind: "task";
       title: string;
+      /** `~3h`: how long it takes, so the day plan can give it more than one block. */
+      estimateMin?: number;
       dueDate?: string;
       dueAt?: number;
       area?: string;
@@ -309,11 +311,18 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
   return withArea({ kind: "inbox", body: untagged }, area);
 }
 
-function readTask(text: string, nowMs: number, clockStyle: ClockStyle): Parsed {
+function readTask(raw: string, nowMs: number, clockStyle: ClockStyle): Parsed {
+  // Only a marked estimate (`~3h`, `about 2 hours`) on a task: a bare "2h" is too
+  // easily part of the title.
+  const estimate = MARKED_ESTIMATE.exec(raw);
+  const minutes = estimate ? Math.round(Number(estimate[1]) * 60) : 0;
+  const text =
+    minutes > 0 && estimate ? raw.replace(estimate[0], " ").replace(/\s+/g, " ").trim() : raw;
   const when = readWhen(text, nowMs, clockStyle);
   // "build CLI tool by 20 dec" → "build CLI tool".
   const title = when.date ? when.rest.replace(/\s+(?:by|on|at|before|due)$/i, "") : when.rest;
   const task: Parsed = { kind: "task", title: title || text };
+  if (minutes > 0) task.estimateMin = minutes;
   if (when.date) task.dueDate = when.date;
   if (when.date && when.minutes !== undefined) task.dueAt = localToEpoch(when.date, when.minutes);
   return task;
