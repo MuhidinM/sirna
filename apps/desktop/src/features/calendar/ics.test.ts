@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { openTestDb } from "../../test/sqlite";
 import { localToEpoch } from "../../capture/when";
 import { DAY_EVENTS_SQL } from "../plan/dayplan";
-import { FeedError, parseFeed, syncOps, windowOf, WINDOW_SQL } from "./ics";
+import ICAL from "ical.js";
+
+import { fastStart, FeedError, parseFeed, syncOps, windowOf, WINDOW_SQL } from "./ics";
 
 const feed = (...events: string[]) =>
   [
@@ -370,5 +372,117 @@ describe("syncing the window", () => {
       },
     ]);
     expect(db.prepare(WINDOW_SQL).all("2026-11-11", "2026-11-26")).toHaveLength(3);
+  });
+});
+
+describe("skipping ahead in long-running rules", () => {
+  const master = (...lines: string[]) =>
+    new ICAL.Event(
+      new ICAL.Component(
+        ICAL.parse(feed(NAIROBI, event("UID:r", "SUMMARY:r", ...lines))),
+      ).getFirstSubcomponent("vevent") as ICAL.Component,
+    );
+  const from = at("2026-11-01", "00:00");
+  const until = at("2026-12-01", "00:00");
+  const walk = (it: ICAL.RecurExpansion) => {
+    const seen: number[] = [];
+    for (let next = it.next(); next; next = it.next()) {
+      const ms = next.toJSDate().getTime();
+      if (ms >= until) break;
+      if (ms >= from) seen.push(ms);
+    }
+    return seen;
+  };
+
+  const cases: [string, string[]][] = [
+    ["daily", ["DTSTART:20100104T050000Z", "DTEND:20100104T060000Z", "RRULE:FREQ=DAILY"]],
+    [
+      "every 3 days",
+      ["DTSTART:20100104T050000Z", "DTEND:20100104T060000Z", "RRULE:FREQ=DAILY;INTERVAL=3"],
+    ],
+    [
+      "weekdays",
+      [
+        "DTSTART:20100104T050000Z",
+        "DTEND:20100104T060000Z",
+        "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+      ],
+    ],
+    [
+      "daily on weekdays",
+      ["DTSTART:20100104T050000Z", "DTEND:20100104T060000Z", "RRULE:FREQ=DAILY;BYDAY=MO,WE,FR"],
+    ],
+    [
+      "every 2 weeks",
+      ["DTSTART:20100105T050000Z", "DTEND:20100105T060000Z", "RRULE:FREQ=WEEKLY;INTERVAL=2"],
+    ],
+    [
+      "in a time zone",
+      [
+        "DTSTART;TZID=Africa/Nairobi:20100104T090000",
+        "DTEND;TZID=Africa/Nairobi:20100104T100000",
+        "RRULE:FREQ=WEEKLY;BYDAY=MO",
+      ],
+    ],
+    ["all day", ["DTSTART;VALUE=DATE:20100104", "DTEND;VALUE=DATE:20100105", "RRULE:FREQ=WEEKLY"]],
+    [
+      "every 90 minutes",
+      ["DTSTART:20200101T000000Z", "DURATION:PT10M", "RRULE:FREQ=MINUTELY;INTERVAL=90"],
+    ],
+    [
+      "with UNTIL",
+      [
+        "DTSTART:20100104T050000Z",
+        "DTEND:20100104T060000Z",
+        "RRULE:FREQ=DAILY;UNTIL=20261115T000000Z",
+      ],
+    ],
+    [
+      "with EXDATE",
+      [
+        "DTSTART:20100104T050000Z",
+        "DTEND:20100104T060000Z",
+        "RRULE:FREQ=DAILY",
+        "EXDATE:20261110T050000Z",
+      ],
+    ],
+  ];
+  for (const [name, lines] of cases)
+    it(`gives the same occurrences: ${name}`, () => {
+      const event = master(...lines);
+      const start = fastStart(event, from - 31 * 24 * 60 * 60 * 1000);
+      expect(start).not.toBeNull();
+      expect(walk(event.iterator(start ?? undefined))).toEqual(walk(event.iterator()));
+    });
+
+  it("walks from the real start when skipping could change the answer", () => {
+    const none = (...lines: string[]) => expect(fastStart(master(...lines), from)).toBeNull();
+    none("DTSTART:20100104T050000Z", "RRULE:FREQ=DAILY;COUNT=10000");
+    none("DTSTART:20100104T050000Z", "RRULE:FREQ=MONTHLY");
+    none("DTSTART:20100104T050000Z", "RRULE:FREQ=WEEKLY;BYDAY=TU");
+    none("DTSTART:20100104T050000Z", "RRULE:FREQ=DAILY;BYHOUR=9,17");
+    none("DTSTART;TZID=Africa/Nairobi:20100104T090000", "RRULE:FREQ=HOURLY");
+    none("DTSTART:20100104T050000Z", "RRULE:FREQ=DAILY", "RDATE:20261111T050000Z");
+  });
+
+  it("expands decades-old daily rules quickly", () => {
+    const started = performance.now();
+    const occurrences = parseFeed(
+      feed(
+        ...Array.from({ length: 20 }, (_, i) =>
+          event(
+            `UID:old${i}`,
+            "SUMMARY:Old",
+            "DTSTART:19000101T050000Z",
+            "DTEND:19000101T051000Z",
+            "RRULE:FREQ=DAILY",
+          ),
+        ),
+      ),
+      FROM,
+      TO,
+    );
+    expect(occurrences).toHaveLength(20 * 15);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
