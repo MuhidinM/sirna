@@ -1010,3 +1010,74 @@ input[type="number"] {
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
 }
+
+.accent-swatch.accent-lime {
+  background: #97c459;
+}
+.accent-swatch.accent-sky {
+  background: #5b9bdb;
+}
+.accent-swatch.accent-coral {
+  background: #e07a57;
+}
+.accent-swatch.accent-violet {
+  background: #8f87e0;
+}
+.accent-swatch.accent-rose {
+  background: #de6f95;
+}
+.accent-swatch.accent-teal {
+  background: #3fae89;
+}
+
+/* Arranging the dashboard (plan §3.14). */
+.dash-head h1 {
+  margin: 0 var(--space-4) 0 0;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.dash-card {
+  min-width: 0;
+}
+
+.dash-card > .card,
+.dash-card > .tiles {
+  margin-bottom: 0;
+}
+
+.dash-card.span-2 {
+  grid-column: span 2;
+}
+
+.dash-card.span-3 {
+  grid-column: span 3;
+}
+
+.dash-card.span-6 {
+  grid-column: span 6;
+}
+
+.dash-card.arranging {
+  outline: 1px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  padding: var(--space-2);
+  cursor: grab;
+}
+
+.card-controls {
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .dash-card.span-2,
+  .dash-card.span-3 {
+    grid-column: span 6;
+  }
+}

@@ -29,7 +29,7 @@
   --warning: #fac775;
   --success: #97c459;
 
-  --focus-ring: 0 0 0 2px #121212, 0 0 0 4px #97c459;
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent-strong);
 }
 
 [data-theme="light"] {
@@ -53,7 +53,7 @@
   --warning: #854f0b;
   --success: #3b6d11;
 
-  --focus-ring: 0 0 0 2px #f6f4ef, 0 0 0 4px #3b6d11;
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent-strong);
 }
 
 :root {
@@ -83,4 +83,57 @@
   --text-md: 1rem;
   --text-lg: 1.4rem;
   --text-xl: 1.6rem;
+}
+
+/* Accents (Settings → Focus and look). Lime is the default above; each pair
+   is tuned for contrast on its theme's surfaces. */
+[data-accent="sky"] {
+  --accent: #85b7eb;
+  --accent-strong: #5b9bdb;
+  --on-accent: #0b2440;
+}
+[data-theme="light"][data-accent="sky"] {
+  --accent: #1f5f9e;
+  --accent-strong: #154a7c;
+  --on-accent: #ffffff;
+}
+[data-accent="coral"] {
+  --accent: #f0997b;
+  --accent-strong: #e07a57;
+  --on-accent: #3d1306;
+}
+[data-theme="light"][data-accent="coral"] {
+  --accent: #a8431f;
+  --accent-strong: #833216;
+  --on-accent: #ffffff;
+}
+[data-accent="violet"] {
+  --accent: #afa9ec;
+  --accent-strong: #8f87e0;
+  --on-accent: #1c1745;
+}
+[data-theme="light"][data-accent="violet"] {
+  --accent: #5246b3;
+  --accent-strong: #3f358f;
+  --on-accent: #ffffff;
+}
+[data-accent="rose"] {
+  --accent: #ed93b1;
+  --accent-strong: #de6f95;
+  --on-accent: #3d0a1d;
+}
+[data-theme="light"][data-accent="rose"] {
+  --accent: #a32a57;
+  --accent-strong: #821f45;
+  --on-accent: #ffffff;
+}
+[data-accent="teal"] {
+  --accent: #5dcaa5;
+  --accent-strong: #3fae89;
+  --on-accent: #06301f;
+}
+[data-theme="light"][data-accent="teal"] {
+  --accent: #17705a;
+  --accent-strong: #105846;
+  --on-accent: #ffffff;
 }
