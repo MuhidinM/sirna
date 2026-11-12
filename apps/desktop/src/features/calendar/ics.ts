@@ -27,11 +27,12 @@ export const WINDOW_BACK_DAYS = 1;
 export const WINDOW_AHEAD_DAYS = 14;
 /** A runaway rule (every minute) can't hang the app: steps near the window… */
 const MAX_STEPS = 5000;
-/** …and all steps, counted from the first one (a daily rule since 1900 fits). */
-const MAX_TOTAL_STEPS = 200_000;
+/** …and all steps (about half a second of work); fastStart skips most of them. */
+const MAX_TOTAL_STEPS = 20_000;
 /** A moved instance can sit up to this far from its original slot and still be seen. */
 const MOVE_MARGIN_MS = 31 * 24 * 60 * 60 * 1000;
 const DAY_START_MIN = 180;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class FeedError extends Error {
   constructor(public code: "bad_payload") {
@@ -116,7 +117,7 @@ export function parseFeed(feed: string, from: string, to: string): Occurrence[] 
     }
     // Walk the rule by each instance's original slot; a moved instance is
     // placed by add() at its new time.
-    const iterator = event.iterator();
+    const iterator = event.iterator(fastStart(event, windowStart - MOVE_MARGIN_MS) ?? undefined);
     let near = 0;
     for (
       let total = 0, next = iterator.next();
@@ -132,6 +133,58 @@ export function parseFeed(feed: string, from: string, to: string): Occurrence[] 
     }
   }
   return [...out.values()].sort((a, b) => a.start_at - b.start_at);
+}
+
+const DAY_UNITS: Record<string, number> = { DAILY: 1, WEEKLY: 7 };
+const SUB_DAY_SECONDS: Record<string, number> = { HOURLY: 3600, MINUTELY: 60, SECONDLY: 1 };
+const PLAIN_PARTS = new Set(["BYDAY", "WKST"]);
+
+/**
+ * A later start for a long-running rule, so it isn't walked from years ago:
+ * the original start moved forward by whole periods to just before `beforeMs`.
+ * Only for rules where that gives the same occurrences: one RRULE, no COUNT
+ * (it counts from the real start), no RDATE, nothing but BYDAY (whole weeks,
+ * and only when the start is itself on one of those days), and for rules
+ * under a day only in UTC (a DST change would shift them). Otherwise null.
+ */
+export function fastStart(event: ICAL.Event, beforeMs: number): ICAL.Time | null {
+  const component = event.component;
+  const rules = component.getAllProperties("rrule");
+  if (rules.length !== 1 || component.hasProperty("rdate")) return null;
+  const rule = rules[0]?.getFirstValue() as ICAL.Recur | undefined;
+  if (!rule || rule.count || !rule.freq) return null;
+  const interval = rule.interval || 1;
+  const start = event.startDate;
+  const startMs = start.toJSDate().getTime();
+  if (beforeMs <= startMs) return null;
+  const parts = Object.keys(rule.parts);
+  if (parts.some((part) => !PLAIN_PARTS.has(part))) return null;
+  const byDay = (rule.parts.BYDAY ?? []) as string[];
+  if (byDay.some((day) => /\d/.test(day))) return null;
+  if (byDay.length > 0) {
+    const names = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+    if (!byDay.includes(names[start.dayOfWeek() - 1] ?? "")) return null;
+  }
+
+  const days = DAY_UNITS[rule.freq];
+  const seconds = SUB_DAY_SECONDS[rule.freq];
+  const shifted = start.clone();
+  if (days !== undefined) {
+    // With BYDAY, a whole number of weeks keeps the weekday.
+    const stepDays = byDay.length > 0 && days === 1 ? 7 * interval : days * interval;
+    const steps = Math.floor((beforeMs - startMs) / (stepDays * DAY_MS));
+    if (steps < 1) return null;
+    shifted.adjust(steps * stepDays, 0, 0, 0);
+  } else if (seconds !== undefined) {
+    if (byDay.length > 0 || start.isDate || start.zone !== ICAL.Timezone.utcTimezone) return null;
+    const stepSeconds = seconds * interval;
+    const steps = Math.floor((beforeMs - startMs) / (stepSeconds * 1000));
+    if (steps < 1) return null;
+    shifted.adjust(0, 0, 0, steps * stepSeconds);
+  } else return null;
+  // Past UNTIL: nothing left to find, walking from the real start is cheap enough.
+  if (rule.until && shifted.compare(rule.until) > 0) return null;
+  return shifted;
 }
 
 export const WINDOW_SQL = `SELECT id, ical_uid, summary, location, start_at, end_at, local_date, all_day
