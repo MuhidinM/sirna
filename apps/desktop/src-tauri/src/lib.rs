@@ -3,6 +3,7 @@
 mod ai;
 mod away;
 mod backup;
+mod calendar;
 mod clock;
 mod commands;
 mod db;
@@ -128,6 +129,7 @@ pub fn run() {
             commands::close_window,
             commands::secret_set,
             commands::ai_send,
+            commands::calendar_fetch,
             commands::ai_models,
             commands::ai_usage,
             commands::hotkey_current,

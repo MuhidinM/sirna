@@ -11,6 +11,7 @@ import {
   themeFromSetting,
 } from "./theme/theme";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
+import { useCalendarSync } from "./shell/Calendar";
 import { Kits } from "./shell/Kits";
 import { Nav, type Page } from "./shell/Nav";
 import { Dashboard } from "./shell/Dashboard";
@@ -43,6 +44,7 @@ export function App() {
   const [notes, setNotes] = useState({ query: "", visit: 0 });
   // "Start over" in My week shows the setup questions again.
   const [rebuild, setRebuild] = useState(false);
+  useCalendarSync();
 
   // The cached look is applied before the first paint; the settings confirm it.
   useEffect(() => {

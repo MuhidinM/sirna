@@ -27,6 +27,7 @@
     "allow-hotkey-set",
     "allow-ai-send",
     "allow-ai-models",
-    "allow-ai-usage"
+    "allow-ai-usage",
+    "allow-calendar-fetch"
   ]
 }

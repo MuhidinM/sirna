@@ -13,6 +13,7 @@ export type WritableTable =
   | "task_items"
   | "project_items"
   | "savings_goals"
+  | "cal_occurrences"
   | "savings_entries"
   | "note_items"
   | "money_txns"

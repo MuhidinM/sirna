@@ -49,6 +49,22 @@ pub const TABLES: &[TableSpec] = &[
         has_user_edited_at: true,
     },
     TableSpec {
+        name: "cal_occurrences",
+        id_column: "id",
+        columns: &[
+            "ical_uid",
+            "summary",
+            "location",
+            "start_at",
+            "end_at",
+            "local_date",
+            "all_day",
+        ],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
+    },
+    TableSpec {
         name: "savings_goals",
         id_column: "id",
         columns: &["title", "target_minor", "start_date", "status"],
@@ -395,6 +411,9 @@ pub fn apply_ops(
     let mut ids = Vec::with_capacity(ops.len());
     for op in ops {
         let resolved;
+        // An upsert means "this row, with these values": it also brings back
+        // a soft-deleted row (undo puts the deletion back).
+        let upsert = matches!(op, Op::Upsert { .. });
         let op = if let Op::Upsert { table, id, values } = op {
             let exists = row_json(conn, spec(table)?, id)?.is_some();
             resolved = if exists {
@@ -467,6 +486,10 @@ pub fn apply_ops(
                 for (name, value) in values {
                     sets.push(column(spec, name)?);
                     sql_values.push(to_sql(name, value)?);
+                }
+                if upsert && spec.soft_delete && !before["deleted_at"].is_null() {
+                    sets.push("deleted_at");
+                    sql_values.push(SqlValue::Null);
                 }
                 sets.push("updated_at");
                 sql_values.push(SqlValue::Integer(now_ms));
@@ -862,6 +885,36 @@ mod tests {
             .expect("read");
         assert_eq!(value, "\"light\"");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upsert_revives_a_soft_deleted_row() {
+        let conn = conn();
+        let put = |summary: &str| Op::Upsert {
+            table: "cal_occurrences".into(),
+            id: "e|1".into(),
+            values: values(json!({
+                "ical_uid": "e", "summary": summary, "start_at": 1, "end_at": 2,
+                "local_date": "2026-11-12", "all_day": 0
+            })),
+        };
+        let deleted = |conn: &Connection| -> Option<i64> {
+            conn.query_row(
+                "SELECT deleted_at FROM cal_occurrences WHERE id = 'e|1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("read")
+        };
+        apply_ops(&conn, "system", None, &[put("A")], 1).expect("insert");
+        let delete = Op::Delete {
+            table: "cal_occurrences".into(),
+            id: "e|1".into(),
+        };
+        apply_ops(&conn, "system", None, &[delete], 2).expect("delete");
+        assert_eq!(deleted(&conn), Some(2));
+        apply_ops(&conn, "system", None, &[put("B")], 3).expect("revive");
+        assert_eq!(deleted(&conn), None);
     }
 
     #[test]

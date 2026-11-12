@@ -66,6 +66,14 @@ export interface PlanInput {
   tasks: TaskInput[];
   /** Task ids chosen last night for today's top 3, in order. */
   chosenTop: string[];
+  /** Timed events from your calendar: fixed, and never filled. */
+  events?: CalendarEvent[];
+}
+
+export interface CalendarEvent {
+  startMin: number;
+  durationMin: number;
+  title: string;
 }
 
 export interface PlannedBlock {
@@ -89,6 +97,27 @@ const FILLABLE_KINDS = new Set(["growth", "admin"]);
 
 function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
+}
+
+/** The parts of a slot not covered by any busy block. */
+export function cut(
+  slot: { startMin: number; durationMin: number },
+  busy: { startMin: number; durationMin: number }[],
+): { startMin: number; durationMin: number }[] {
+  let pieces = [{ start: slot.startMin, end: slot.startMin + slot.durationMin }];
+  for (const block of busy) {
+    const from = block.startMin;
+    const to = block.startMin + block.durationMin;
+    pieces = pieces.flatMap((piece) =>
+      to <= piece.start || from >= piece.end
+        ? [piece]
+        : [
+            { start: piece.start, end: Math.max(piece.start, from) },
+            { start: Math.min(piece.end, to), end: piece.end },
+          ].filter((part) => part.end > part.start),
+    );
+  }
+  return pieces.map((piece) => ({ startMin: piece.start, durationMin: piece.end - piece.start }));
 }
 
 function overlaps(
@@ -124,6 +153,10 @@ export function generateDay(input: PlanInput): DayPlan {
     .filter((block) => block.kind !== "area")
     .filter(free)
     .map((block) => ({ ...block, taskId: null }));
+  // Calendar events are fixed blocks; a block you edited still wins.
+  const events = (input.events ?? []).filter((event) => event.durationMin > 0);
+  for (const event of events.filter(free))
+    blocks.push({ ...event, kind: "fixed", areaId: null, taskId: null });
 
   const activeAreas = input.areas.filter((area) => area.active);
   const tasksLeft = [...input.tasks];
@@ -148,6 +181,9 @@ export function generateDay(input: PlanInput): DayPlan {
       .filter((block) => block.kind === "area")
       .filter(free)
       .filter((slot) => !off.some((rest) => overlaps(rest, slot)))
+      // An event takes its time out of a slot; what's left still gets filled.
+      .flatMap((slot) => cut(slot, events).map((piece) => ({ ...slot, ...piece })))
+      .filter((slot) => slot.durationMin >= 25)
       // Slots you tied to an area come first, so the buffer never squeezes them out.
       .sort(
         (a, b) => Number(b.areaId !== null) - Number(a.areaId !== null) || a.startMin - b.startMin,

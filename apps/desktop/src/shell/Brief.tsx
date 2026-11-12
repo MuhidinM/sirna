@@ -20,13 +20,14 @@ import { ask } from "../features/ai/ask";
 import { briefFacts } from "../features/ai/facts";
 import { isStrict, STRICT_SQL } from "../features/ai/strict";
 import { BRIEF } from "../features/ai/touchpoints";
+import { calendarCheck, readStatus, SYNC_KEY } from "../features/calendar/sync";
 import { useInsights } from "./Insights";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 const SETTINGS_SQL = `
   SELECT key, value_json FROM core_settings
-  WHERE key IN ('day.wake', 'day.hard_stop', '${BRIEF_DISMISSED_KEY}')`;
+  WHERE key IN ('day.wake', 'day.hard_stop', '${BRIEF_DISMISSED_KEY}', '${SYNC_KEY}')`;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -120,6 +121,9 @@ export function Brief({
     changed: changed.rows[0],
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
+    calendar: calendarCheck(
+      readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),
+    ),
   });
 
   return (

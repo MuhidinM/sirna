@@ -40,6 +40,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Savings:** Dashboard → New goal "Laptop" 100,000. Capture `saved 45k laptop`: the echo says "Saved 45,000 ETB · Laptop" and the plant is a small plant (45%). Capture `took 2k from laptop`: 43%, the plant doesn't shrink below its stage's start. On Saturday the week card asks "Put anything aside this week?" (T-041).
 - **Insights:** after two weeks of sessions, the Dashboard's Insights card names your best focus window; the brief shows one INSIGHT line; with no AI key the week card still shows a plain summary (T-042).
 - **Arrange and accent:** Dashboard → Arrange: drag Savings above the streak, set Insights to S, hide The year; Done arranging; quit and start Sirna: the layout is the same. Settings → Accent Teal → Save: buttons and bars turn teal, in both themes (T-043).
+- **Calendar:** Settings → paste the Google Calendar secret iCal address → Sync now: "Synced: N events". Add an event in Google Calendar today, Sync now: it shows on Today as a fixed block and focus blocks move around it. Paste a wrong address: Settings says why in words and the brief shows a CHECK line (T-044).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

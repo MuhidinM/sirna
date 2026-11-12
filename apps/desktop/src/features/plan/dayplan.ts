@@ -10,6 +10,8 @@ import { type AreaInput, type DayPlan, generateDay, type PlanInput } from "./gen
 export type Query = <T extends Row>(sql: string, params?: SqlValue[]) => Promise<T[]>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** The logical day starts at 03:00 (rule 4). */
+const DAY_START_MIN = 180;
 
 /** ISO weekday of a YYYY-MM-DD date: Monday = 1 … Sunday = 7. */
 export function isoWeekday(date: string): number {
@@ -59,6 +61,12 @@ export const KEPT_BLOCKS_SQL = `
   SELECT id, start_at, end_at FROM day_blocks
   WHERE logical_date = ? AND deleted_at IS NULL AND (source = 'user' OR user_edited_at IS NOT NULL)`;
 
+/**
+ * Timed calendar events that overlap a logical day, given its start and end
+ * (an overnight flight counts on both days). All-day ones don't take time.
+ */
+export const DAY_EVENTS_SQL = `SELECT summary, start_at, end_at FROM cal_occurrences
+  WHERE deleted_at IS NULL AND all_day = 0 AND start_at < ? AND end_at > ? ORDER BY start_at`;
 export const REST_DAY_SQL = "SELECT value_json FROM core_settings WHERE key = 'setup.answers'";
 
 /** Energy from the last two night reviews, newest first (plan §3.7: two 1s → light day). */
@@ -76,7 +84,7 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
   const dayStartMs = localToEpoch(date, 0);
   const minuteOf = (epochMs: number) => Math.round((epochMs - dayStartMs) / 60000);
 
-  const [template, areas, done, tasks, chosen, kept, answers] = await Promise.all([
+  const [template, areas, done, tasks, chosen, kept, answers, events] = await Promise.all([
     query<{
       start_min: number;
       duration_min: number;
@@ -106,6 +114,10 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
     query<{ task_id: string }>(CHOSEN_TOP_SQL, [date]),
     query<{ id: string; start_at: number; end_at: number }>(KEPT_BLOCKS_SQL, [date]),
     query<{ value_json: string }>(REST_DAY_SQL),
+    query<{ summary: string; start_at: number; end_at: number }>(DAY_EVENTS_SQL, [
+      localToEpoch(shiftDate(date, 1), DAY_START_MIN),
+      localToEpoch(date, DAY_START_MIN),
+    ]),
   ]);
   const energy = await query<{ energy: number }>(ENERGY_SQL, [
     shiftDate(date, -1),
@@ -166,6 +178,12 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       remainingMin: task.remaining_min,
     })),
     chosenTop: chosen.map((row) => row.task_id),
+    // Clipped to the logical day (03:00 to 03:00).
+    events: events.map((event) => {
+      const start = Math.max(minuteOf(event.start_at), DAY_START_MIN);
+      const end = Math.min(minuteOf(event.end_at), DAY_START_MIN + 24 * 60);
+      return { startMin: start, durationMin: Math.max(0, end - start), title: event.summary };
+    }),
   };
 }
 
