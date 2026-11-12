@@ -3,6 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 
 import { query } from "./kernel/db";
+import {
+  accentFromSetting,
+  applyAccent,
+  applyTheme,
+  LOOK_SQL,
+  themeFromSetting,
+} from "./theme/theme";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { Kits } from "./shell/Kits";
 import { Nav, type Page } from "./shell/Nav";
@@ -36,6 +43,17 @@ export function App() {
   const [notes, setNotes] = useState({ query: "", visit: 0 });
   // "Start over" in My week shows the setup questions again.
   const [rebuild, setRebuild] = useState(false);
+
+  // The cached look is applied before the first paint; the settings confirm it.
+  useEffect(() => {
+    query<{ key: string; value_json: string }>(LOOK_SQL)
+      .then((rows) => {
+        const get = (key: string) => rows.find((row) => row.key === key)?.value_json;
+        applyTheme(themeFromSetting(get("ui.theme")));
+        applyAccent(accentFromSetting(get("ui.accent")));
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const open = (pending: string | null) => {

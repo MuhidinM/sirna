@@ -11,7 +11,12 @@ import {
 
 describe("readSettings", () => {
   it("uses the defaults when nothing is stored", () => {
-    expect(readSettings([])).toEqual({ capMin: DEFAULT_CAP_MIN, dnd: true, theme: "dark" });
+    expect(readSettings([])).toEqual({
+      capMin: DEFAULT_CAP_MIN,
+      dnd: true,
+      theme: "dark",
+      accent: "lime",
+    });
   });
 
   it("reads stored values", () => {
@@ -20,8 +25,9 @@ describe("readSettings", () => {
         { key: "focus.daily_cap_min", value_json: "180" },
         { key: "focus.dnd", value_json: '"off"' },
         { key: "ui.theme", value_json: '"light"' },
+        { key: "ui.accent", value_json: '"teal"' },
       ]),
-    ).toEqual({ capMin: 180, dnd: false, theme: "light" });
+    ).toEqual({ capMin: 180, dnd: false, theme: "light", accent: "teal" });
   });
 
   it("ignores broken values", () => {
@@ -30,7 +36,7 @@ describe("readSettings", () => {
         { key: "focus.daily_cap_min", value_json: "nope" },
         { key: "ui.theme", value_json: null },
       ]),
-    ).toEqual({ capMin: DEFAULT_CAP_MIN, dnd: true, theme: "dark" });
+    ).toEqual({ capMin: DEFAULT_CAP_MIN, dnd: true, theme: "dark", accent: "lime" });
   });
 });
 
@@ -46,7 +52,7 @@ describe("checkCap", () => {
 
 describe("settingsOps", () => {
   it("writes JSON the Rust side reads", () => {
-    const ops = settingsOps({ capMin: 200, dnd: false, theme: "light" });
+    const ops = settingsOps({ capMin: 200, dnd: false, theme: "light", accent: "sky" });
     expect(ops).toEqual([
       {
         op: "upsert",
@@ -56,6 +62,7 @@ describe("settingsOps", () => {
       },
       { op: "upsert", table: "core_settings", id: "focus.dnd", values: { value_json: '"off"' } },
       { op: "upsert", table: "core_settings", id: "ui.theme", values: { value_json: '"light"' } },
+      { op: "upsert", table: "core_settings", id: "ui.accent", values: { value_json: '"sky"' } },
     ]);
   });
 });

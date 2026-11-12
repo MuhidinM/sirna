@@ -1,6 +1,20 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
+import { transact } from "../kernel/db";
+import {
+  CARDS,
+  type CardId,
+  type CardPlace,
+  LAYOUT_SQL,
+  layoutOps,
+  move,
+  moveTo,
+  readLayout,
+  setSize,
+  span,
+  toggleHidden,
+} from "../features/dashboard/layout";
 import { logicalDate } from "../kernel/dates";
 import {
   AWAY_HISTORY_SQL,
@@ -27,7 +41,9 @@ import { hoursLabel } from "../features/projects/capacity";
 import { AREA_WEEK_SQL, type AreaWeek, share } from "../features/week/card";
 import { InsightList } from "./Insights";
 import { Savings } from "./Savings";
-import { type AreaColor, Bar } from "./ui";
+import { type AreaColor, Bar, Button } from "./ui";
+
+const labelOf = (id: CardId) => CARDS.find((card) => card.id === id)?.label ?? id;
 import { useLiveQuery } from "./useLiveQuery";
 
 const AREAS_SQL =
@@ -94,6 +110,23 @@ export function Dashboard() {
   const first = yearStart(today);
   const [area, setArea] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
+  const [arranging, setArranging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const saved = useLiveQuery<{ value_json: string }>(LAYOUT_SQL);
+  // Changes show at once and build on each other; each new layout is then saved.
+  const [local, setLocal] = useState<CardPlace[] | null>(null);
+  const savedLayout = saved.rows[0]?.value_json;
+  const layout = local ?? readLayout(savedLayout);
+  const save = (change: (current: CardPlace[]) => CardPlace[]) =>
+    setLocal((current) => change(current ?? readLayout(savedLayout)));
+  useEffect(() => {
+    if (!local) return;
+    transact("user", layoutOps(local), "settings").catch((failure: unknown) =>
+      setError(
+        `Couldn't save the layout: ${failure instanceof Error ? failure.message : String(failure)}`,
+      ),
+    );
+  }, [local]);
 
   const tiles = useLiveQuery<Tiles & Record<string, number>>(TILES_SQL, [startMs, nowMs]);
   const goal = useLiveQuery<{ goal_min: number }>(GOAL_SQL);
@@ -135,10 +168,8 @@ export function Dashboard() {
   const t = tiles.rows[0];
   const goalMin = goal.rows[0]?.goal_min ?? 0;
 
-  return (
-    <main className="dashboard">
-      <h1>Dashboard</h1>
-
+  const cards: Record<CardId, ReactNode> = {
+    tiles: (
       <section className="tiles" aria-label="This week">
         <div className="card tile">
           <span className="meta">Focus this week</span>
@@ -169,7 +200,8 @@ export function Dashboard() {
           <strong>{t?.distractions ?? 0}</strong>
         </div>
       </section>
-
+    ),
+    streak: (
       <section className="card streak" aria-label="Focus streak">
         <Flame lit={streak.alive} />
         <div>
@@ -181,7 +213,8 @@ export function Dashboard() {
           </p>
         </div>
       </section>
-
+    ),
+    year: (
       <section className="card" aria-labelledby="year">
         <div className="row">
           <h2 id="year">The year</h2>
@@ -219,14 +252,15 @@ export function Dashboard() {
           )}
         </p>
       </section>
-
+    ),
+    insights: (
       <section className="card" aria-labelledby="insights">
         <h2 id="insights">Insights</h2>
         <InsightList today={today} />
       </section>
-
-      <Savings />
-
+    ),
+    savings: <Savings />,
+    areas: (
       <section className="card" aria-labelledby="areas">
         <h2 id="areas">Areas this week</h2>
         <ul className="area-bars">
@@ -245,6 +279,98 @@ export function Dashboard() {
           ))}
         </ul>
       </section>
+    ),
+  };
+
+  return (
+    <main className="dashboard">
+      <div className="row dash-head">
+        <h1>Dashboard</h1>
+        <Button onClick={() => setArranging(!arranging)}>
+          {arranging ? "Done arranging" : "Arrange"}
+        </Button>
+        {error && (
+          <span role="alert" className="error">
+            {error}
+          </span>
+        )}
+      </div>
+      {arranging && (
+        <p className="meta">
+          Drag a card onto another to move it, or use the arrows. Sizes: S, M, L. Hidden cards wait
+          below.
+        </p>
+      )}
+      <div className="dash-grid">
+        {layout
+          .filter((place) => !place.hidden)
+          .map((place) => (
+            <div
+              key={place.id}
+              className={`dash-card span-${span(place.size)}${arranging ? " arranging" : ""}`}
+              draggable={arranging}
+              onDragStart={(event) => event.dataTransfer.setData("text/plain", place.id)}
+              onDragOver={(event) => {
+                if (arranging) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const id = event.dataTransfer.getData("text/plain");
+                if (CARDS.some((card) => card.id === id))
+                  save((current) => moveTo(current, id as CardId, place.id));
+              }}
+            >
+              {arranging && (
+                <div className="row card-controls" aria-label={`Arrange ${labelOf(place.id)}`}>
+                  <strong>{labelOf(place.id)}</strong>
+                  <Button
+                    aria-label="Move earlier"
+                    onClick={() => save((current) => move(current, place.id, -1))}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    aria-label="Move later"
+                    onClick={() => save((current) => move(current, place.id, 1))}
+                  >
+                    ↓
+                  </Button>
+                  {(["S", "M", "L"] as const).map((size) => (
+                    <Button
+                      key={size}
+                      primary={place.size === size}
+                      aria-pressed={place.size === size}
+                      onClick={() => save((current) => setSize(current, place.id, size))}
+                    >
+                      {size}
+                    </Button>
+                  ))}
+                  <Button onClick={() => save((current) => toggleHidden(current, place.id))}>
+                    Hide
+                  </Button>
+                </div>
+              )}
+              {cards[place.id]}
+            </div>
+          ))}
+      </div>
+      {arranging && layout.some((place) => place.hidden) && (
+        <section className="card" aria-label="Hidden cards">
+          <h2>Hidden</h2>
+          <div className="row">
+            {layout
+              .filter((place) => place.hidden)
+              .map((place) => (
+                <Button
+                  key={place.id}
+                  onClick={() => save((current) => toggleHidden(current, place.id))}
+                >
+                  Show {labelOf(place.id)}
+                </Button>
+              ))}
+          </div>
+        </section>
+      )}
     </main>
   );
 }

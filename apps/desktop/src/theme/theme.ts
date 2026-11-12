@@ -33,3 +33,48 @@ export function themeFromSetting(valueJson: string | undefined): Theme {
     return "dark";
   }
 }
+
+// --- Accent colour (plan §3.14, from Mamuku) ------------------------------------
+
+export type Accent = "lime" | "sky" | "coral" | "violet" | "rose" | "teal";
+
+export const ACCENTS: { accent: Accent; label: string }[] = [
+  { accent: "lime", label: "Lime" },
+  { accent: "sky", label: "Sky" },
+  { accent: "coral", label: "Coral" },
+  { accent: "violet", label: "Violet" },
+  { accent: "rose", label: "Rose" },
+  { accent: "teal", label: "Teal" },
+];
+
+const ACCENT_KEY = "sirna.accent";
+
+export function accentFromSetting(valueJson: string | undefined | null): Accent {
+  try {
+    const value = JSON.parse(valueJson ?? "null") as unknown;
+    return ACCENTS.some((a) => a.accent === value) ? (value as Accent) : "lime";
+  } catch {
+    return "lime";
+  }
+}
+
+export function cachedAccent(): Accent {
+  try {
+    return accentFromSetting(JSON.stringify(localStorage.getItem(ACCENT_KEY)));
+  } catch {
+    return "lime";
+  }
+}
+
+export function applyAccent(accent: Accent, root: HTMLElement = document.documentElement): void {
+  root.dataset.accent = accent;
+  try {
+    localStorage.setItem(ACCENT_KEY, accent);
+  } catch {
+    // The setting in SQLite stays the source of truth.
+  }
+}
+
+/** Settings that confirm the cached look at start (the cache can be empty or stale). */
+export const LOOK_SQL =
+  "SELECT key, value_json FROM core_settings WHERE key IN ('ui.theme', 'ui.accent')";

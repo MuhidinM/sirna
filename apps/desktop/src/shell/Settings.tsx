@@ -11,7 +11,7 @@ import {
   settingsOps,
   type SettingsValues,
 } from "../features/settings/settings";
-import { applyTheme } from "../theme/theme";
+import { ACCENTS, applyAccent, applyTheme } from "../theme/theme";
 import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
 import { systemClock } from "../kernel/clock";
 import { Button } from "./ui";
@@ -157,6 +157,7 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
         transact("user", settingsOps(next), "settings")
           .then(() => {
             applyTheme(next.theme);
+            applyAccent(next.accent);
             setNote("Saved");
           })
           .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
@@ -193,6 +194,20 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
           <option value="light">Light</option>
         </select>
       </label>
+      <fieldset className="row colors">
+        <legend>Accent</legend>
+        {ACCENTS.map(({ accent, label }) => (
+          <label key={accent} className={values.accent === accent ? "swatch on" : "swatch"}>
+            <input
+              type="radio"
+              name="accent"
+              checked={values.accent === accent}
+              onChange={() => change({ ...values, accent })}
+            />
+            <span className={`accent-swatch accent-${accent}`} aria-label={label} title={label} />
+          </label>
+        ))}
+      </fieldset>
       <div className="row">
         <Button type="submit" primary>
           Save

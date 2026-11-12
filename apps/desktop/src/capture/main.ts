@@ -17,12 +17,13 @@ import { echo as echoLine, ideaInput, toOps } from "./ops";
 import { type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { type ClockStyle } from "./when";
 
-import { applyTheme, cachedTheme } from "../theme/theme";
+import { applyAccent, applyTheme, cachedAccent, cachedTheme } from "../theme/theme";
 
 import "../theme/tokens.css";
 import "./capture.css";
 
 applyTheme(cachedTheme());
+applyAccent(cachedAccent());
 
 const ECHO_MS = 1500;
 // Same rule as the tray: lines that made no records (search, away) can't be undone.
