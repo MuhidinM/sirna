@@ -1,8 +1,10 @@
 /** The sidebar on every page after setup (plan §3.14). */
-export type Page = "today" | "projects" | "notes" | "kits" | "review" | "week" | "settings";
+export type Page =
+  "today" | "tasks" | "projects" | "notes" | "kits" | "review" | "week" | "settings";
 
 export const PAGES: { page: Page; label: string }[] = [
   { page: "today", label: "Today" },
+  { page: "tasks", label: "Tasks" },
   { page: "projects", label: "Projects" },
   { page: "notes", label: "Cheat sheets" },
   { page: "kits", label: "Focus kits" },

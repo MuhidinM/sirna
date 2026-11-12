@@ -11,6 +11,7 @@ import { Projects } from "./shell/Projects";
 import { Review } from "./shell/Review";
 import { Settings } from "./shell/Settings";
 import { Setup } from "./shell/Setup";
+import { Tasks } from "./shell/Tasks";
 import { Today } from "./shell/Today";
 import { Week } from "./shell/Week";
 
@@ -88,6 +89,7 @@ export function App() {
   else if (screen === "kits") page = <Kits onClose={home} />;
   else if (screen === "settings") page = <Settings />;
   else if (screen === "projects") page = <Projects />;
+  else if (screen === "tasks") page = <Tasks />;
   else if (screen === "notes")
     page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
   else page = <Today />;

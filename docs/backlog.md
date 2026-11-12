@@ -82,6 +82,7 @@ Projects board, capacity and slot finder, timing card, Gemini gate and touchpoin
 | ID | Issue | Task | Requirements | Size | Status |
 | --- | --- | --- | --- | --- | --- |
 | T-047 | [#90](https://github.com/MuhidinM/sirna/issues/90) | Edit the routine and areas by hand; plan tasks into free slots | R-PLAN-02, R-PLAN-03 | L | done |
+| T-048 | [#92](https://github.com/MuhidinM/sirna/issues/92) | A Tasks page: every task, editable | R-CAP-05 | M | done |
 
 ## M5 — Week card and dashboard
 
