@@ -12,6 +12,8 @@ export type Row = Record<string, SqlValue>;
 export type WritableTable =
   | "task_items"
   | "project_items"
+  | "savings_goals"
+  | "savings_entries"
   | "note_items"
   | "money_txns"
   | "money_templates"

@@ -43,11 +43,20 @@ export type Parsed =
   | { kind: "cheat"; body: string; area?: string }
   | { kind: "search"; query: string }
   | { kind: "away"; until?: string }
+  | {
+      kind: "saving";
+      /** Santim, positive: saved; negative: taken out. */
+      amount: Santim;
+      /** Words naming the goal (`laptop`), matched in the capture box. */
+      goal?: string;
+    }
   | { kind: "focus" };
 
 export interface ParseOptions {
   nowMs: number;
   clockStyle?: ClockStyle;
+  /** Goal names (lowercase), so `saved 500 laptop` is read as saving only when a goal fits. */
+  goals?: string[];
 }
 
 /** Verbs that make an undated line a task rather than a loose note. */
@@ -223,6 +232,29 @@ export function readIdea(
   return idea;
 }
 
+const SAVING =
+  /^(saved|put aside|set aside|took|withdrew)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)(?:\s+(.*))?$/i;
+
+function readSaving(text: string, goals: string[]): Parsed | undefined {
+  const match = SAVING.exec(text);
+  if (!match) return undefined;
+  const amount = parseAmount(match[2] ?? "");
+  if (amount === null || amount <= 0) return undefined;
+  const out = /^(took|withdrew)$/i.test(match[1] ?? "");
+  const rest = (match[3] ?? "").trim();
+  const words = rest.replace(/^(?:from|for|to|into|on)\s+/i, "").trim();
+  const names = (goal: string) =>
+    goals.some((name) => name.includes(goal.toLowerCase()) || goal.toLowerCase().includes(name));
+  const marked = /[a-z]/i.test(match[2] ?? ""); // `etb`, `birr`, `br` or `k`
+  if (out) {
+    // Taking out names where from: `took 2000 from laptop`.
+    if (!/^from\s+/i.test(rest) || !words) return undefined;
+  } else if (rest && !names(words) && !marked) {
+    return undefined;
+  }
+  return { kind: "saving", amount: out ? -amount : amount, ...(words ? { goal: words } : {}) };
+}
+
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const { nowMs, clockStyle = "western" } = options;
   const text = raw.trim().replace(/\s+/g, " ");
@@ -235,6 +267,14 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
     const when = readWhen(text.replace(/^away\s*(?:till|until|to)?/i, ""), nowMs, clockStyle);
     return when.date ? { kind: "away", until: when.date } : { kind: "away" };
   }
+
+  // Savings (plan §3.13). Kept narrow so ordinary lines stay what they were:
+  // `saved 500` / `put aside 2k`  — nothing after the amount;
+  // `saved 500 laptop`            — the words name a goal;
+  // `saved 500 ETB rent`          — a currency marks it as money;
+  // `took 2000 from laptop`       — taking out needs `from` and a goal.
+  const saving = readSaving(text, options.goals ?? []);
+  if (saving) return saving;
 
   const prefix = /^(t|n|idea|pin|wait|fb)\s*:\s*/i.exec(text);
   const body = prefix ? text.slice(prefix[0].length) : text;

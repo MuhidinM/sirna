@@ -914,3 +914,94 @@ input[type="number"] {
 .legend .year-cell {
   cursor: default;
 }
+
+/* Savings and the plant (plan §3.13). */
+.goals .goal {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.goal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.goal-body input,
+.new-goal input {
+  width: 9rem;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  font: inherit;
+}
+
+.garden {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.garden-tree {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.plant-pot {
+  fill: #b9775a;
+}
+
+.plant-soil,
+.plant-seed {
+  fill: #6b4a35;
+}
+
+.plant-stem {
+  stroke: #6fae3c;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.plant-leaf {
+  fill: #8cc152;
+}
+
+.plant-flower {
+  fill: #f0997b;
+}
+
+.plant-flower-heart {
+  fill: #fac775;
+}
+
+.plant-trunk {
+  fill: #8a5a3c;
+}
+
+.plant-crown {
+  fill: #6fae3c;
+}
+
+.plant-ground {
+  stroke: var(--border-strong);
+  stroke-width: 2;
+}
+
+.dashboard input[type="date"] {
+  width: auto;
+  max-width: 12rem;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  font: inherit;
+}

@@ -11,6 +11,8 @@ export interface OpsContext {
   newId: () => string;
   /** Where an idea lands (features/projects/idea.ts); without it, an unplaced idea. */
   idea?: Placement;
+  /** The goal a saving goes to (matched in the capture box); null waits for one. */
+  savingGoal?: { id: string; title: string } | null;
 }
 
 const CATEGORY_NAMES: Record<string, string> = {
@@ -38,7 +40,7 @@ export function ideaInput(parsed: Extract<Parsed, { kind: "idea" }>) {
   };
 }
 
-export function toOps(parsed: Parsed, { nowMs, newId, idea }: OpsContext): Op[] {
+export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsContext): Op[] {
   switch (parsed.kind) {
     case "task":
       return [
@@ -110,6 +112,22 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea }: OpsContext): Op[] 
           },
         },
       ];
+    case "saving":
+      return [
+        {
+          op: "insert",
+          table: "savings_entries",
+          id: newId(),
+          values: {
+            goal_id: savingGoal?.id ?? null,
+            occurred_at: nowMs,
+            local_date: logicalDate(nowMs),
+            amount_minor: parsed.amount,
+            note: parsed.goal ?? null,
+            origin: "capture",
+          },
+        },
+      ];
     case "search":
     case "away":
     case "focus":
@@ -147,7 +165,12 @@ function timeLabel(epochMs: number): string {
 }
 
 /** The short confirmation shown in the capture box. */
-export function echo(parsed: Parsed, nowMs: number, idea?: Placement): string {
+export function echo(
+  parsed: Parsed,
+  nowMs: number,
+  idea?: Placement,
+  savingGoal?: { id: string; title: string } | null,
+): string {
   const area = "area" in parsed && parsed.area ? ` · #${parsed.area}` : "";
   switch (parsed.kind) {
     case "task": {
@@ -185,5 +208,14 @@ export function echo(parsed: Parsed, nowMs: number, idea?: Placement): string {
       return parsed.until ? `Away until ${dayLabel(parsed.until, nowMs)}` : "Away";
     case "focus":
       return "Focus";
+    case "saving": {
+      const what = parsed.amount > 0 ? "Saved" : "Took out";
+      const where = savingGoal
+        ? ` · ${savingGoal.title}`
+        : savingGoal === null
+          ? " · no goal yet: add one on the Dashboard"
+          : "";
+      return `${what} ${formatAmount(Math.abs(parsed.amount))}${where}`;
+    }
   }
 }

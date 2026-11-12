@@ -37,6 +37,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Tasks page:** add `write the report ~3h fri #jobhunt`: it shows under To do with Job hunt, ~3 h and Friday. Edit it to Someday: it moves to Someday and leaves tomorrow's plan. Drop it, then Restore it from Dropped.
 - **Week card:** after a few focus sessions and expenses, This week shows the minutes per area, next week's load and spending against the usual; on Friday or later with an area under half its target, One change offers a target it can meet; No hides it for the week (T-039).
 - **Dashboard:** after two focus sessions today the flame is lit and the streak counts today; the year chart's last column has today shaded; pick an area: the chart shows only its time (T-040).
+- **Savings:** Dashboard → New goal "Laptop" 100,000. Capture `saved 45k laptop`: the echo says "Saved 45,000 ETB · Laptop" and the plant is a small plant (45%). Capture `took 2k from laptop`: 43%, the plant doesn't shrink below its stage's start. On Saturday the week card asks "Put anything aside this week?" (T-041).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

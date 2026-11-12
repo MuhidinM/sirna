@@ -25,6 +25,7 @@ import {
 import { weekStart } from "../features/plan/dayplan";
 import { hoursLabel } from "../features/projects/capacity";
 import { AREA_WEEK_SQL, type AreaWeek, share } from "../features/week/card";
+import { Savings } from "./Savings";
 import { type AreaColor, Bar } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -217,6 +218,8 @@ export function Dashboard() {
           )}
         </p>
       </section>
+
+      <Savings />
 
       <section className="card" aria-labelledby="areas">
         <h2 id="areas">Areas this week</h2>

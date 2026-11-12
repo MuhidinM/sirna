@@ -37,7 +37,10 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
 pub fn capture_ops_allowed(ops: &[Op]) -> bool {
     ops.iter().all(|op| {
         matches!(op, Op::Insert { table, .. }
-            if matches!(table.as_str(), "task_items" | "note_items" | "money_txns" | "project_items"))
+        if matches!(
+            table.as_str(),
+            "task_items" | "note_items" | "money_txns" | "project_items" | "savings_entries"
+        ))
     })
 }
 
@@ -63,7 +66,7 @@ fn check_capture(raw_text: &str, ops: &[Op]) -> Result<(), String> {
         return Err("Nothing to save".into());
     }
     if !capture_ops_allowed(ops) {
-        return Err("A capture can only add tasks, notes, money or ideas".into());
+        return Err("A capture can only add tasks, notes, money, ideas or savings".into());
     }
     Ok(())
 }
@@ -195,7 +198,8 @@ mod tests {
             insert("task_items"),
             insert("money_txns"),
             insert("note_items"),
-            insert("project_items")
+            insert("project_items"),
+            insert("savings_entries")
         ]));
         assert!(!capture_ops_allowed(&[insert("area_items")]));
         assert!(!capture_ops_allowed(&[insert("core_settings")]));
