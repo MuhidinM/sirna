@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
-import { formatAmount } from "../kernel/money";
+import { formatAmount, parseAmount } from "../kernel/money";
 import { ask } from "../features/ai/ask";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { WEEK } from "../features/ai/touchpoints";
@@ -34,6 +34,10 @@ import {
   spendParams,
   type SpendRow,
 } from "../features/week/card";
+
+import { ulid } from "../kernel/ulid";
+import { entryOps, type GoalRow, GOALS_SQL, WEEK_SAVED_SQL } from "../features/savings/savings";
+import { shiftDate } from "../features/plan/dayplan";
 import { type AreaColor, Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -132,6 +136,108 @@ function WeekParagraph({
   }, [ready, fresh, focus, next, strict, areas, monday]);
   if (!fresh || !stored.text) return null;
   return <p className="ai-text">{stored.text}</p>;
+}
+
+const ASKED_KEY = "week.saving_asked";
+
+/** The Sunday question (plan §3.13): "Put anything aside this week?" */
+function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
+  const saved = useLiveQuery<{ minor: number }>(WEEK_SAVED_SQL, [monday, shiftDate(monday, 7)]);
+  const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
+  const asked = useLiveQuery<{ value_json: string }>(
+    `SELECT value_json FROM core_settings WHERE key = '${ASKED_KEY}'`,
+  );
+  const active = goals.rows.filter((goal) => goal.status === "active");
+  const [amount, setAmount] = useState("");
+  const [goalId, setGoalId] = useState("");
+  const [note, setNote] = useState("");
+  if (saved.loading || goals.loading || asked.loading) return null;
+  const minor = saved.rows[0]?.minor ?? 0;
+  if (minor > 0)
+    return (
+      <section className="card" aria-labelledby="saving">
+        <h2 id="saving">Saving</h2>
+        <p>{formatAmount(minor)} put aside this week.</p>
+      </section>
+    );
+  if (asked.rows[0]?.value_json === JSON.stringify(monday)) return null;
+  return (
+    <section className="card" aria-labelledby="saving">
+      <h2 id="saving">Put anything aside this week?</h2>
+      <form
+        className="row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const value = parseAmount(amount);
+          if (value === null || value <= 0) {
+            setNote("An amount like 500 or 2k.");
+            return;
+          }
+          const goal = goalId || (active.length === 1 ? (active[0]?.id ?? "") : "");
+          if (active.length > 1 && !goal) {
+            setNote("Pick the goal it's for.");
+            return;
+          }
+          transact(
+            "user",
+            entryOps(goal || null, value, nowMs, logicalDate(nowMs), ulid(), "week"),
+            `week:${monday}`,
+          ).catch((failure: unknown) =>
+            setNote(
+              `Couldn't save: ${failure instanceof Error ? failure.message : String(failure)}`,
+            ),
+          );
+        }}
+      >
+        <input
+          inputMode="decimal"
+          aria-label="Amount put aside"
+          placeholder="500"
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
+        />
+        {active.length > 1 && (
+          <select
+            aria-label="Goal"
+            value={goalId}
+            onChange={(event) => setGoalId(event.target.value)}
+          >
+            <option value="">Pick a goal</option>
+            {active.map((goal) => (
+              <option key={goal.id} value={goal.id}>
+                {goal.title}
+              </option>
+            ))}
+          </select>
+        )}
+        <Button type="submit" primary>
+          Save
+        </Button>
+        <Button
+          onClick={() =>
+            void transact(
+              "user",
+              [
+                {
+                  op: "upsert",
+                  table: "core_settings",
+                  id: ASKED_KEY,
+                  values: { value_json: JSON.stringify(monday) },
+                },
+              ],
+              "settings",
+            )
+          }
+        >
+          No
+        </Button>
+        <span className="meta" role="status">
+          {note}
+          {active.length === 0 ? "It joins the first savings goal you add on the Dashboard." : ""}
+        </span>
+      </form>
+    </section>
+  );
 }
 
 /** The week card (plan §3.10; R-CHK-04). */
@@ -335,6 +441,8 @@ export function WeekCard() {
           ))}
         </ul>
       </section>
+
+      {isoWeekday(today) >= 6 && <SavingQuestion monday={monday} nowMs={nowMs} />}
 
       {showChange && (
         <section className="card one-change" aria-labelledby="change">

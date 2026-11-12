@@ -49,6 +49,29 @@ pub const TABLES: &[TableSpec] = &[
         has_user_edited_at: true,
     },
     TableSpec {
+        name: "savings_goals",
+        id_column: "id",
+        columns: &["title", "target_minor", "start_date", "status"],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
+    },
+    TableSpec {
+        name: "savings_entries",
+        id_column: "id",
+        columns: &[
+            "goal_id",
+            "occurred_at",
+            "local_date",
+            "amount_minor",
+            "note",
+            "origin",
+        ],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
+    },
+    TableSpec {
         name: "project_items",
         id_column: "id",
         columns: &[

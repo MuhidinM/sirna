@@ -92,7 +92,7 @@ Sunday week card, dashboard tiles, forgiving streak, year chart, savings plant, 
 |---|---|---|---|---|---|
 | T-039 | [#40](https://github.com/MuhidinM/sirna/issues/40) | Build the Sunday week card | R-CHK-04 | L | done |
 | T-040 | [#41](https://github.com/MuhidinM/sirna/issues/41) | Add dashboard tiles, the forgiving streak and the year chart | R-PRG-01, R-PRG-02, R-PRG-04 | M | done |
-| T-041 | [#42](https://github.com/MuhidinM/sirna/issues/42) | Track savings goals with the growing plant | R-PRG-03 | M | todo |
+| T-041 | [#42](https://github.com/MuhidinM/sirna/issues/42) | Track savings goals with the growing plant | R-PRG-03 | M | done |
 | T-042 | [#43](https://github.com/MuhidinM/sirna/issues/43) | Compute focus insights and the week paragraph | R-PRG-04 | M | todo |
 | T-043 | [#44](https://github.com/MuhidinM/sirna/issues/44) | Make dashboard cards rearrangeable and add a theme picker | R-PRG-05 | M | todo |
 

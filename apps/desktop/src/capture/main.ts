@@ -11,6 +11,7 @@ import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../feat
 import { readings } from "./alternatives";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
+import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
 import { echo as echoLine, ideaInput, toOps } from "./ops";
 import { type Parsed, parseCapture, PARSER_ID } from "./parse";
@@ -39,6 +40,8 @@ const input = element<HTMLInputElement>("#capture-input");
 const output = element<HTMLOutputElement>("#capture-echo");
 
 let clockStyle: ClockStyle = "western";
+/** Savings goal names, so `saved 500 laptop` reads as saving only when a goal fits. */
+let goalNames: string[] = [];
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
@@ -64,10 +67,20 @@ void query<{ value_json: string }>("SELECT value_json FROM core_settings WHERE k
   })
   .catch(() => undefined);
 
+void query<{ title: string }>(
+  "SELECT title FROM savings_goals WHERE deleted_at IS NULL AND status = 'active'",
+)
+  .then((rows) => {
+    goalNames = rows.map((row) => row.title.toLowerCase());
+  })
+  .catch(() => undefined);
+
 function refresh() {
   const text = input.value.trim();
   const nowMs = systemClock.now();
-  options = text ? readings(parseCapture(text, { nowMs, clockStyle }), text, nowMs) : [];
+  options = text
+    ? readings(parseCapture(text, { nowMs, clockStyle, goals: goalNames }), text, nowMs)
+    : [];
   picked = 0;
   showChip();
 }
@@ -120,7 +133,7 @@ form.addEventListener("submit", (event) => {
     return;
   }
   const nowMs = systemClock.now();
-  const parsed = options[picked] ?? parseCapture(rawText, { nowMs, clockStyle });
+  const parsed = options[picked] ?? parseCapture(rawText, { nowMs, clockStyle, goals: goalNames });
   const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
   input.disabled = true;
   busy = true;
@@ -149,13 +162,28 @@ form.addEventListener("submit", (event) => {
           .catch(() => placeIdea(ideaInput(parsed), null))
       : Promise.resolve(undefined);
   let idea: Placement | undefined;
+  // A saving goes to the goal it names, or the only one (plan §3.13).
+  let savingGoal: { id: string; title: string } | null | undefined;
+  const goalFor: Promise<{ id: string; title: string } | null | undefined> =
+    parsed.kind === "saving"
+      ? query<{ id: string; title: string; status: "active" | "done" | "paused" }>(
+          "SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL",
+        )
+          .then((goals) => {
+            const id = matchGoal(goals, parsed.goal);
+            return goals.find((goal) => goal.id === id) ?? null;
+          })
+          .catch(() => null)
+      : Promise.resolve(undefined);
   // A fix undoes the old capture and saves the new one in one transaction.
-  const saved = placed.then((placement) => {
+  const saved = Promise.all([placed, goalFor]).then(([placement, goal]) => {
     idea = placement;
+    savingGoal = goal;
     const ops = toOps(parsed, {
       nowMs,
       newId: () => ulid(),
       ...(placement ? { idea: placement } : {}),
+      ...(goal !== undefined ? { savingGoal: goal } : {}),
     });
     return fixing
       ? replaceCapture(fixing.id, rawText, ops, parser)
@@ -177,7 +205,7 @@ form.addEventListener("submit", (event) => {
           .catch(() => finish("Couldn't set away. Try again."));
         return;
       }
-      finish(fixed + echoLine(parsed, nowMs, idea));
+      finish(fixed + echoLine(parsed, nowMs, idea, savingGoal));
     })
     .catch((error: unknown) => {
       busy = false;
