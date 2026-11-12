@@ -576,6 +576,19 @@ pub fn ai_send(
     crate::ai::send_now(&db, &request).map_err(|refusal| refusal.code())
 }
 
+/// Fetches the calendar feed (plan Appendix A). The secret address stays in
+/// Rust; the page gets the feed text, or a code to show in words.
+#[tauri::command(async)]
+pub fn calendar_fetch() -> Result<String, String> {
+    match crate::calendar::fetch() {
+        crate::calendar::Fetched::Feed(text) => Ok(text),
+        crate::calendar::Fetched::Code(code) => {
+            log::info!("calendar fetch: {code}");
+            Err(code.to_string())
+        }
+    }
+}
+
 /// The models the saved key can use, for picking one in Settings.
 #[tauri::command(async)]
 pub fn ai_models(db: State<'_, Db>) -> Result<Vec<crate::ai::Model>, String> {

@@ -14,6 +14,7 @@ import {
 import { ACCENTS, applyAccent, applyTheme } from "../theme/theme";
 import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
 import { systemClock } from "../kernel/clock";
+import { CalendarStatus, syncNow } from "./Calendar";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -44,6 +45,8 @@ function SecretField({ name, label, help, placeholder }: (typeof SECRETS)[number
       .then(() => {
         setText("");
         setNote(done);
+        // A new calendar address is tried at once, so the status says if it works.
+        if (name === "ical_url") void syncNow();
         return refresh();
       })
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
@@ -408,6 +411,7 @@ export function Settings() {
         {SECRETS.map((secret) => (
           <SecretField key={secret.name} {...secret} />
         ))}
+        <CalendarStatus />
         <p className="meta">
           Email: Sirna doesn&apos;t sign in to email, so there is no email password to store. The
           &ldquo;Check email&rdquo; blocks only remind you; change their times in My week.

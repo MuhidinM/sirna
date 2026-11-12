@@ -102,7 +102,7 @@ Google Calendar secret iCal as fixed blocks. Plan Appendix A.
 
 | ID | Issue | Task | Reqs | Size | Status |
 |---|---|---|---|---|---|
-| T-044 | [#45](https://github.com/MuhidinM/sirna/issues/45) | Show Google Calendar events as fixed blocks | R-CAL-01 | L | todo |
+| T-044 | [#45](https://github.com/MuhidinM/sirna/issues/45) | Show Google Calendar events as fixed blocks | R-CAL-01 | L | done |
 
 ## M7 — Desktop widget
 

@@ -58,6 +58,7 @@ fn main() {
         "autostart_set",
         "autostart_status",
         "brief_checks",
+        "calendar_fetch",
         "brief_ready",
         "capture_commit",
         "capture_undo",

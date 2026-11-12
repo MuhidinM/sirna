@@ -117,4 +117,4 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-CAL-01 | Google Calendar events (secret iCal, read-only) become fixed blocks | T-044 | | ☐ |
+| R-CAL-01 | Google Calendar events (secret iCal, read-only) become fixed blocks | T-044 | Rust fetches the Credential-Manager address (HTTPS, Google hosts only, no redirects, 8 MB cap) and returns codes; ical.js expands RRULE/EXDATE, overrides, cancelled, all-day, TZID and UTC into `cal_occurrences` for yesterday to +14 days (ics.test.ts); a feed that shrinks by over half deletes nothing until Sync now (sync.test.ts); events are fixed blocks and free slots lose only the overlapped time (generate.test.ts); sync on open if over 15 min, every 15 min, and Settings → Sync now; status in words in Settings and a brief CHECK line when the address needs replacing | ☑ |

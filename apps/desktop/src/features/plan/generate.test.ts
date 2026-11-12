@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type AreaInput, generateDay, type PlanInput, type TaskInput } from "./generate";
+import { type AreaInput, cut, generateDay, type PlanInput, type TaskInput } from "./generate";
 import { DEFAULT_ANSWERS, defaultRoutine, type Weekday } from "./routine";
 
 const AREAS: AreaInput[] = [
@@ -318,5 +318,68 @@ describe("tied slots and time off", () => {
     };
     const plan = generateDay(input({ template: [off, slot(17 * 60 + 30), slot(20 * 60)] }));
     expect(areaBlocks(plan).map((b) => b.startMin)).toEqual([20 * 60]);
+  });
+});
+
+describe("calendar events", () => {
+  const slot = (startMin: number, durationMin: number) => ({
+    startMin,
+    durationMin,
+    kind: "area" as const,
+    areaId: null,
+    title: "Focus block",
+  });
+
+  it("adds events as fixed blocks and plans around them", () => {
+    const plan = generateDay(
+      input({
+        template: [slot(9 * 60, 180)],
+        events: [{ startMin: 10 * 60, durationMin: 60, title: "Dentist" }],
+      }),
+    );
+    expect(plan.blocks.find((b) => b.title === "Dentist")).toMatchObject({
+      kind: "fixed",
+      startMin: 600,
+      durationMin: 60,
+    });
+    for (const block of areaBlocks(plan))
+      expect(block.startMin + block.durationMin <= 600 || block.startMin >= 660).toBe(true);
+    expect(areaBlocks(plan).length).toBeGreaterThan(0);
+  });
+
+  it("drops a leftover too short to use", () => {
+    const plan = generateDay(
+      input({
+        template: [slot(9 * 60, 60)],
+        events: [{ startMin: 9 * 60 + 20, durationMin: 40, title: "Call" }],
+      }),
+    );
+    expect(areaBlocks(plan)).toEqual([]);
+  });
+
+  it("lets a block you edited win over an event", () => {
+    const plan = generateDay(
+      input({
+        template: [],
+        kept: [{ startMin: 600, durationMin: 60 }],
+        events: [{ startMin: 600, durationMin: 30, title: "Clash" }],
+      }),
+    );
+    expect(plan.blocks.some((b) => b.title === "Clash")).toBe(false);
+  });
+});
+
+describe("cut", () => {
+  it("takes busy time out of a slot", () => {
+    expect(
+      cut({ startMin: 0, durationMin: 100 }, [
+        { startMin: 20, durationMin: 10 },
+        { startMin: 90, durationMin: 30 },
+      ]),
+    ).toEqual([
+      { startMin: 0, durationMin: 20 },
+      { startMin: 30, durationMin: 60 },
+    ]);
+    expect(cut({ startMin: 0, durationMin: 60 }, [{ startMin: 0, durationMin: 60 }])).toEqual([]);
   });
 });

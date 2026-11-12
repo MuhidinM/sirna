@@ -42,6 +42,8 @@ export interface BriefInput {
   atRisk?: string | null;
   /** The first focus insight, if any (T-042). */
   insight?: string | null;
+  /** A calendar sync problem you need to fix (T-044). */
+  calendar?: string | null;
 }
 
 export interface BriefLine {
@@ -103,6 +105,8 @@ export function buildBrief(input: BriefInput): BriefLine[] {
       text: "Sirna won't start with Windows; the brief can't find you.",
       tone: "warn",
     });
+
+  if (input.calendar) lines.push({ label: "CHECK", text: input.calendar, tone: "warn" });
 
   const live = input.blocks.filter((block) => block.status !== "skipped");
   const { now, next } = nowAndNext(live, input.nowMs);
