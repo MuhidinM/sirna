@@ -768,3 +768,43 @@ input[type="number"] {
   gap: var(--space-2);
   align-items: center;
 }
+
+/* The week card (plan §3.10). */
+.week-card .card {
+  margin-bottom: var(--space-4);
+}
+
+.area-bars li,
+.spend-bars li {
+  display: grid;
+  grid-template-columns: 9rem 1fr 11rem;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-2) 0;
+}
+
+.spend-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.spend-bar {
+  display: block;
+  height: 8px;
+  min-width: 2px;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+.spend-bar.usual {
+  background: var(--border-strong);
+}
+
+.warn-text {
+  color: var(--warning);
+}
+
+.one-change {
+  border-left: 3px solid var(--accent);
+}
