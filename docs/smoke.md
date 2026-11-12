@@ -32,6 +32,8 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **At risk:** a project with a deadline 2 weeks out, 10 h estimate and 2 h a week: the brief shows `AT RISK  … 6 h short before …` and Projects marks it (T-035).
 - **AI gate:** with a Gemini key saved, Settings → AI → Pick a model lists models; pick a Flash-Lite one. "Today: 0 of 15 requests" shows. What was sent lists the models request. Remove the key: Pick a model is greyed out (T-036, ADR-0008).
 - **AI touchpoints:** with a key and model set, open an idea with an estimate and a date: the reasons from the AI appear in italics under the numbers, and What was sent lists the request. In the night review write something under "Anything on your mind?": a short reply shows before it closes (or "Noted. Sleep well." after 4 s). With loose ends, "Suggest with AI" offers one button per note. Turn on Strict mode: the next request in What was sent has area names, not titles. Remove the key: everything still works with plain text (T-038).
+- **My week editor:** Routine → Mon → Change on Gym → move it to 06:30–07:15 on every day it's on: Today replans with Gym in the morning. Add a block "Quran" 13:00–13:20 Habit on all days; remove the morning Quran. Areas → Add an area "Job C" (Job), then Routine → Add a block "Job C" Fixed Tue/Thu 18:00–20:00. Turn off an area: its blocks leave the routine. Day times → change the hard stop.
+- **Planning tasks:** capture `t: write the report ~3h`: it shows in tomorrow's plan in free slots and, if not finished, the day after. On a task of 90 min or more, Split shows AI steps; Use these steps replaces it with them.
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

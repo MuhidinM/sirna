@@ -243,3 +243,80 @@ describe("generateDay", () => {
     expect(new Set(areas).size).toBe(areas.length);
   });
 });
+
+describe("an editable routine (My week)", () => {
+  const first = {
+    startMin: 19 * 60,
+    durationMin: 60,
+    kind: "area" as const,
+    areaId: null,
+    title: "Focus block",
+  };
+  const second = {
+    startMin: 20 * 60 + 15,
+    durationMin: 45,
+    kind: "area" as const,
+    areaId: null,
+    title: "Focus block",
+  };
+  const twoSlots = [first, second];
+
+  it("gives a slot tied to an area that area", () => {
+    const tied = [{ ...first, areaId: "gym" }];
+    const plan = generateDay(input({ template: tied }));
+    expect(areaBlocks(plan).map((b) => b.areaId)).toEqual(["gym"]);
+  });
+
+  it("puts a task with no area into a slot whose area has none", () => {
+    const plan = generateDay(input({ template: [first], tasks: [task("Call the bank", null)] }));
+    expect(areaBlocks(plan)[0]?.taskId).toBe("Call the bank");
+  });
+
+  it("keeps a big task going into the next slot, then stops when its time is covered", () => {
+    const big = { ...task("Write the report", null), remainingMin: 90 };
+    const other = task("Small one", null, null, 5);
+    const plan = generateDay(input({ template: twoSlots, tasks: [big, other] }));
+    // The budget keeps 20% free: 105 min of slots → 84 planned: 60 + 24 (too short, 25 is the floor).
+    expect(areaBlocks(plan).map((b) => b.taskId)).toEqual(["Write the report"]);
+    const roomy = generateDay(
+      input({
+        template: [...twoSlots, { ...second, startMin: 21 * 60 + 30, durationMin: 60 }],
+        tasks: [big, other],
+      }),
+    );
+    expect(areaBlocks(roomy).map((b) => b.taskId)).toEqual([
+      "Write the report",
+      "Write the report",
+      "Small one",
+    ]);
+  });
+});
+
+describe("tied slots and time off", () => {
+  const slot = (startMin: number, areaId: string | null = null) => ({
+    startMin,
+    durationMin: 60,
+    kind: "area" as const,
+    areaId,
+    title: "Focus block",
+  });
+
+  it("fills a tied slot even when earlier slots used the buffer", () => {
+    const plan = generateDay(
+      input({ template: [slot(17 * 60), slot(18 * 60), slot(19 * 60, "gym")] }),
+    );
+    expect(areaBlocks(plan).map((b) => b.areaId)).toContain("gym");
+  });
+
+  it("plans nothing in a slot that overlaps time off", () => {
+    const off = {
+      startMin: 17 * 60,
+      durationMin: 120,
+      kind: "rest" as const,
+      areaId: null,
+      title: "Off",
+    };
+    const plan = generateDay(input({ template: [off, slot(17 * 60 + 30), slot(20 * 60)] }));
+    expect(areaBlocks(plan).map((b) => b.startMin)).toEqual([20 * 60]);
+  });
+});

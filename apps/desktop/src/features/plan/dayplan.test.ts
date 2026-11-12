@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { openTestDb } from "../../test/sqlite";
-import { ensureDayPlan, isoWeekday, loadPlanInput, weekStart } from "./dayplan";
+import { ensureDayPlan, isoWeekday, loadPlanInput, replanDay, weekStart } from "./dayplan";
 import { DEFAULT_ANSWERS } from "./routine";
 import { setupOps } from "./setup";
 
@@ -142,6 +142,37 @@ describe("ensureDayPlan", () => {
     expect(input.isRestDay).toBe(true);
   });
 
+  it("follows the routine when the rest block moves in My week", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, restDay: 3, clockStyle: "western", targetsHours: {} },
+        [],
+        [],
+        h.newId,
+      ),
+    );
+    // Remove Wednesday's rest block by hand: the old answer no longer decides.
+    h.db
+      .prepare("UPDATE routine_blocks SET deleted_at = 1 WHERE weekday = 3 AND kind = 'rest'")
+      .run();
+    expect((await loadPlanInput(h.query, "2026-11-11")).isRestDay).toBe(false);
+  });
+
+  it("reads what is left of a task's estimate after focus time", async () => {
+    const h = harness();
+    h.db.exec(`INSERT INTO task_items (id, title, estimate_min, created_at, updated_at)
+      VALUES ('t1', 'Report', 120, 0, 0), ('t2', 'No estimate', NULL, 0, 0);
+      INSERT INTO focus_sessions (id, task_id, kind, started_at, planned_min, ended_at, paused_ms)
+      VALUES ('f1', 't1', 'focus', 0, 50, 3600000, 600000)`);
+    const input = await loadPlanInput(h.query, "2026-11-11");
+    expect(input.tasks.map((t) => [t.id, t.remainingMin])).toEqual([
+      ["t1", 70],
+      ["t2", null],
+    ]);
+  });
+
   it("reads the last two nights' energy, newest first", async () => {
     const h = harness();
     h.db
@@ -189,5 +220,57 @@ describe("ensureDayPlan", () => {
       .run();
     const input = await loadPlanInput(h.query, "2026-11-11");
     expect(input.doneThisWeekMin).toEqual({ coding: 90 });
+  });
+});
+
+describe("replanning after a routine change", () => {
+  it("rebuilds a planned day from the new routine and keeps the blocks you touched", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    // You started Quran this morning (a touched block)…
+    h.db.prepare("UPDATE day_blocks SET user_edited_at = 1 WHERE title = 'Quran'").run();
+    // …then moved Gym to 06:30 in My week.
+    h.db.prepare("UPDATE routine_blocks SET start_min = 390 WHERE title = 'Gym'").run();
+    await replanDay(h.query, h.transact, "2026-11-11", h.newId);
+    const blocks = h.db
+      .prepare(
+        "SELECT title, start_at FROM day_blocks WHERE logical_date = '2026-11-11' AND deleted_at IS NULL ORDER BY start_at",
+      )
+      .all() as { title: string; start_at: number }[];
+    const titles = blocks.map((b) => b.title);
+    expect(titles.filter((t) => t === "Quran")).toHaveLength(1);
+    expect(titles).toContain("Gym");
+    const gym = blocks.find((b) => b.title === "Gym");
+    // 06:30 in Addis is 03:30 UTC.
+    expect(gym && new Date(gym.start_at).toISOString().slice(11, 16)).toBe("03:30");
+  });
+
+  it("leaves a day nobody planned yet alone", async () => {
+    const h = harness();
+    await replanDay(h.query, h.transact, "2026-11-12", h.newId);
+    expect(h.db.prepare("SELECT count(*) AS n FROM day_blocks").get()).toEqual({ n: 0 });
+  });
+
+  it("treats a short Rest block as time off, not a rest day", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps({ ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} }, [], [], h.newId),
+    );
+    h.db
+      .prepare(
+        "INSERT INTO routine_blocks (id, weekday, start_min, duration_min, kind, title, created_at, updated_at) VALUES ('off', 3, 840, 240, 'rest', 'Afternoon off', 0, 0)",
+      )
+      .run();
+    expect((await loadPlanInput(h.query, "2026-11-11")).isRestDay).toBe(false);
   });
 });

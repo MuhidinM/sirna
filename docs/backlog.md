@@ -77,6 +77,12 @@ Projects board, capacity and slot finder, timing card, Gemini gate and touchpoin
 | T-037 | [#38](https://github.com/MuhidinM/sirna/issues/38) | Add Gemini and mock providers with schemas and grounding | R-AI-01, R-AI-03, R-AI-04 | L | done |
 | T-038 | [#39](https://github.com/MuhidinM/sirna/issues/39) | Wire the AI touchpoints and the eval set | R-PRJ-01, R-AI-02 | L | done (eval baseline waits for a key) |
 
+## M4b — Real-use fixes (from first use)
+
+| ID | Issue | Task | Requirements | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| T-047 | [#90](https://github.com/MuhidinM/sirna/issues/90) | Edit the routine and areas by hand; plan tasks into free slots | R-PLAN-02, R-PLAN-03 | L | done |
+
 ## M5 — Week card and dashboard
 
 Sunday week card, dashboard tiles, forgiving streak, year chart, savings plant, in-app widgets. Plan §3.10, §3.13-3.14.

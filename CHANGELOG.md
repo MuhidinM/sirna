@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **At risk:** the morning brief and Projects flag a deadline the planned hours won't reach.
 - **AI gate:** Settings → AI picks the Gemini model your key can use and sets a daily limit; What was sent shows every request and reply for 30 days. The key stays in Credential Manager and travels only in a request header.
 - **AI touchpoints (Gemini, optional):** an idea's card adds the AI's reasons under the numbers and can ask for an estimate; the morning brief gets one AI line a day; the night review answers what is on your mind; loose ends get "Suggest with AI". Every reply is checked against the facts it was sent, and everything works without it. **Strict mode** in Settings sends area names instead of titles. `pnpm eval:ai` scores prompts against a 20-idea and 60-capture eval set.
+- **My week is a real editor:** add, change or remove any block on any days (one day or the whole series), with a warning when blocks share time; add areas (a third job, Music, anything), rename them, set their hours, colour, priority, cap or protection, or turn them off; set wake, review and hard-stop times. Today plans again after each change. "Start over" still offers the setup questions.
+- **Planning tasks:** a free slot can be tied to an area; tasks with no area still get scheduled; `t: write the report ~3h` carries an estimate, gets planned even without a date, and continues across slots and days until its time is done. **Split** (AI) breaks a task of 90 min or more into steps the planner spreads over the coming days.
 - **My week:** choose the "Check email" reminder times (or none) instead of the fixed 10:00 and 15:00.
 
 ## [0.1.0] - 2026-11-11

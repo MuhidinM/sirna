@@ -55,9 +55,12 @@ export function freeMinutes(blocks: TemplateBlock[], window: Window): number {
   let free = 0;
   for (let day = 1; day <= 7; day++) {
     const today = blocks.filter((block) => block.weekday === day);
-    if (today.some((block) => block.kind === "rest")) continue;
+    // A long Rest block is a rest day; a short one is busy time like any other.
+    if (today.some((block) => block.kind === "rest" && block.duration_min >= 6 * 60)) continue;
     const busy = today
-      .filter((block) => block.kind === "fixed" || block.kind === "routine")
+      .filter(
+        (block) => block.kind === "fixed" || block.kind === "routine" || block.kind === "rest",
+      )
       .map((block) => [block.start_min, block.start_min + block.duration_min] as [number, number]);
     const length = Math.max(0, window.toMin - window.fromMin);
     free += length - covered(busy, window.fromMin, window.toMin);

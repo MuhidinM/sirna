@@ -12,6 +12,7 @@ import { Review } from "./shell/Review";
 import { Settings } from "./shell/Settings";
 import { Setup } from "./shell/Setup";
 import { Today } from "./shell/Today";
+import { Week } from "./shell/Week";
 
 /** "setup" is the first run (no sidebar); "week" is the same form later. */
 type Screen = "loading" | "setup" | Page;
@@ -30,6 +31,8 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("loading");
   // Each search from the capture box remounts Notes with its query.
   const [notes, setNotes] = useState({ query: "", visit: 0 });
+  // "Start over" in My week shows the setup questions again.
+  const [rebuild, setRebuild] = useState(false);
 
   useEffect(() => {
     const open = (pending: string | null) => {
@@ -61,6 +64,7 @@ export function App() {
 
   const home = () => setScreen("today");
   const go = (page: Page) => {
+    setRebuild(false);
     // Opening Cheat sheets from the sidebar starts with an empty search.
     if (page === "notes") setNotes((old) => ({ query: "", visit: old.visit + 1 }));
     setScreen(page);
@@ -69,7 +73,17 @@ export function App() {
   if (screen === "setup") return <Setup onDone={home} />;
 
   let page;
-  if (screen === "week") page = <Setup onDone={home} />;
+  if (screen === "week")
+    page = rebuild ? (
+      <Setup
+        onDone={() => {
+          setRebuild(false);
+          home();
+        }}
+      />
+    ) : (
+      <Week onStartOver={() => setRebuild(true)} />
+    );
   else if (screen === "review") page = <Review onClose={home} />;
   else if (screen === "kits") page = <Kits onClose={home} />;
   else if (screen === "settings") page = <Settings />;

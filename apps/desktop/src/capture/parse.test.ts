@@ -128,3 +128,43 @@ describe("after midnight, before 03:00 (still the evening before)", () => {
     });
   });
 });
+
+describe("task estimates", () => {
+  it("reads a marked estimate and leaves bare numbers alone", () => {
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    expect(parseCapture("t: write the report ~3h by fri", { nowMs: now })).toMatchObject({
+      kind: "task",
+      title: "write the report",
+      estimateMin: 180,
+      dueDate: "2026-11-13",
+    });
+    expect(parseCapture("t: 2h podcast edit", { nowMs: now })).not.toHaveProperty("estimateMin");
+  });
+});
+
+describe("tasks with an estimate get planned", () => {
+  it("makes an undated task with an estimate a to-do, not someday", async () => {
+    const { toOps } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    const planned = toOps(parseCapture("t: clean up the repo ~2h", { nowMs: now }), {
+      nowMs: now,
+      newId: () => "t1",
+    });
+    expect(planned[0]).toMatchObject({ values: { status: "todo", estimate_min: 120 } });
+    const later = toOps(parseCapture("t: clean up the repo", { nowMs: now }), {
+      nowMs: now,
+      newId: () => "t1",
+    });
+    expect(later[0]).toMatchObject({ values: { status: "someday", estimate_min: null } });
+  });
+});
+
+describe("the echo for an estimated task", () => {
+  it("says it will be planned, not someday", async () => {
+    const { echo } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    expect(echo(parseCapture("t: clean up the repo ~2h", { nowMs: now }), now)).toBe(
+      "Task · planned into free time · ~2 h",
+    );
+  });
+});
