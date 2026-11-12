@@ -38,13 +38,21 @@ interface TaskRow extends Record<string, string | number | null> {
 }
 
 /** A task this long can be split into steps (plan §7.3, the AI's suggestion). */
-const SPLIT_FROM_MIN = 90;
+export const SPLIT_FROM_MIN = 90;
 
 /**
  * Split with AI: shows the proposed steps; nothing changes until "Use these
  * steps". Strict mode sends the area instead of the title.
  */
-function SplitTask({ task, onClose }: { task: TaskRow; onClose: () => void }) {
+export function SplitTask({
+  task,
+  onClose,
+}: {
+  task: Pick<TaskRow, "id" | "title" | "estimate_min" | "area_id" | "due_date"> & {
+    project_id?: string | null;
+  };
+  onClose: () => void;
+}) {
   const [state, setState] = useState<SplitReply | "asking" | string>("asking");
   const [using, setUsing] = useState(false);
   const strictRows = useLiveQuery<{ value_json: string | null }>(STRICT_SQL);
