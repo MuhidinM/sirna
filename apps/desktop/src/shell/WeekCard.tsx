@@ -38,6 +38,8 @@ import {
 import { ulid } from "../kernel/ulid";
 import { entryOps, type GoalRow, GOALS_SQL, WEEK_SAVED_SQL } from "../features/savings/savings";
 import { shiftDate } from "../features/plan/dayplan";
+import { weekSummary } from "../features/dashboard/insights";
+import { InsightList } from "./Insights";
 import { type AreaColor, Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -134,8 +136,19 @@ function WeekParagraph({
       );
     });
   }, [ready, fresh, focus, next, strict, areas, monday]);
-  if (!fresh || !stored.text) return null;
-  return <p className="ai-text">{stored.text}</p>;
+  if (fresh && stored.text) return <p className="ai-text">{stored.text}</p>;
+  // Without the AI's paragraph (no key, offline, or before Friday): the numbers in plain words.
+  if (!focus) return null;
+  return (
+    <p className="meta">
+      {weekSummary({
+        areas,
+        sessions: focus.sessions,
+        overrunDays: focus.overrun_days,
+        nextWeekPercent: next && Number.isFinite(next.ratio) ? Math.round(next.ratio * 100) : null,
+      })}
+    </p>
+  );
 }
 
 const ASKED_KEY = "week.saving_asked";
@@ -336,6 +349,11 @@ export function WeekCard() {
           next={next}
           ready={ready && weekMostlyDone}
         />
+      </section>
+
+      <section className="card" aria-labelledby="week-insights">
+        <h2 id="week-insights">Insights</h2>
+        <InsightList today={today} />
       </section>
 
       <section className="card" aria-labelledby="next">
