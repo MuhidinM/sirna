@@ -40,6 +40,8 @@ export interface BriefInput {
   changed?: ChangedCounts | undefined;
   /** Projects whose plan falls short of their deadline (T-035). */
   atRisk?: string | null;
+  /** The first focus insight, if any (T-042). */
+  insight?: string | null;
 }
 
 export interface BriefLine {
@@ -165,6 +167,8 @@ export function buildBrief(input: BriefInput): BriefLine[] {
 
   const changed = changedText(input.changed);
   if (changed) lines.push({ label: "CHANGED", text: changed });
+  // Last, so it is the line dropped when the brief is full.
+  if (input.insight) lines.push({ label: "INSIGHT", text: input.insight });
 
   return lines.slice(0, MAX_LINES);
 }

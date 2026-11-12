@@ -20,6 +20,7 @@ import { ask } from "../features/ai/ask";
 import { briefFacts } from "../features/ai/facts";
 import { isStrict, STRICT_SQL } from "../features/ai/strict";
 import { BRIEF } from "../features/ai/touchpoints";
+import { useInsights } from "./Insights";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -80,6 +81,7 @@ export function Brief({
     today,
   ]);
   const risky = useLiveQuery<RiskRow & Record<string, string | number | null>>(AT_RISK_SQL);
+  const found = useInsights(today);
   const checks = useChecks();
   const [reopened, setReopened] = useState(false);
   const ready =
@@ -87,6 +89,7 @@ export function Brief({
     !week.loading &&
     !changed.loading &&
     !risky.loading &&
+    found !== null &&
     checks !== undefined;
 
   useEffect(() => {
@@ -116,6 +119,7 @@ export function Brief({
     hardStopMin: toMinutes(typeof stop === "string" ? stop : "22:00"),
     changed: changed.rows[0],
     atRisk: riskLine(risks(risky.rows, today)),
+    insight: found?.[0]?.text ?? null,
   });
 
   return (
