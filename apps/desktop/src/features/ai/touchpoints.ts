@@ -262,3 +262,36 @@ export const SPLIT: AiTask<SplitFacts, SplitReply> = {
     );
   },
 };
+
+// --- Week paragraph (plan §3.10, card 1) -------------------------------------------
+
+export interface WeekFacts {
+  areas: { area: string; doneH: number; targetH: number }[];
+  sessions: number;
+  distractions: number;
+  overrunDays: number;
+  nextWeekLoad: number; // %
+}
+
+export const WEEK: AiTask<WeekFacts, { paragraph: string }> = {
+  id: "week",
+  version: "1",
+  schema: s.object({
+    paragraph: s.string({ maxLength: 520, description: "At most 80 words" }),
+  }),
+  system: SYSTEM,
+  facts: (f) =>
+    [
+      `hours this week vs target: ${f.areas.map((a) => `${a.area} ${a.doneH} of ${a.targetH} h`).join("; ") || "none"}`,
+      `focus sessions finished: ${f.sessions}`,
+      `distractions noted: ${f.distractions}`,
+      `days past the focus cap: ${f.overrunDays}`,
+      `next week's load: ${f.nextWeekLoad}% of free time`,
+    ].join("\n"),
+  ask: () =>
+    "Write one short, kind paragraph (at most 80 words) on how the week went and what to keep in mind next week.",
+  ground: (output, input) =>
+    output.paragraph.split(/\s+/).length > 90
+      ? "longer than 80 words"
+      : groundText([output.paragraph], WEEK.facts(input)),
+};

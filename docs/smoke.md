@@ -35,6 +35,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **My week editor:** Routine → Mon → Change on Gym → move it to 06:30–07:15 on every day it's on: Today replans with Gym in the morning. Add a block "Quran" 13:00–13:20 Habit on all days; remove the morning Quran. Areas → Add an area "Job C" (Job), then Routine → Add a block "Job C" Fixed Tue/Thu 18:00–20:00. Turn off an area: its blocks leave the routine. Day times → change the hard stop.
 - **Planning tasks:** capture `t: write the report ~3h`: it shows in tomorrow's plan in free slots and, if not finished, the day after. On a task of 90 min or more, Split shows AI steps; Use these steps replaces it with them.
 - **Tasks page:** add `write the report ~3h fri #jobhunt`: it shows under To do with Job hunt, ~3 h and Friday. Edit it to Someday: it moves to Someday and leaves tomorrow's plan. Drop it, then Restore it from Dropped.
+- **Week card:** after a few focus sessions and expenses, This week shows the minutes per area, next week's load and spending against the usual; on Friday or later with an area under half its target, One change offers a target it can meet; No hides it for the week (T-039).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

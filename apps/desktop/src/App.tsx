@@ -14,6 +14,7 @@ import { Setup } from "./shell/Setup";
 import { Tasks } from "./shell/Tasks";
 import { Today } from "./shell/Today";
 import { Week } from "./shell/Week";
+import { WeekCard } from "./shell/WeekCard";
 
 /** "setup" is the first run (no sidebar); "week" is the same form later. */
 type Screen = "loading" | "setup" | Page;
@@ -90,6 +91,7 @@ export function App() {
   else if (screen === "settings") page = <Settings />;
   else if (screen === "projects") page = <Projects />;
   else if (screen === "tasks") page = <Tasks />;
+  else if (screen === "weekcard") page = <WeekCard />;
   else if (screen === "notes")
     page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
   else page = <Today />;

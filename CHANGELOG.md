@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **My week is a real editor:** add, change or remove any block on any days (one day or the whole series), with a warning when blocks share time; add areas (a third job, Music, anything), rename them, set their hours, colour, priority, cap or protection, or turn them off; set wake, review and hard-stop times. Today plans again after each change. "Start over" still offers the setup questions.
 - **Planning tasks:** a free slot can be tied to an area; tasks with no area still get scheduled; `t: write the report ~3h` carries an estimate, gets planned even without a date, and continues across slots and days until its time is done. **Split** (AI) breaks a task of 90 min or more into steps the planner spreads over the coming days.
 - **Tasks page:** every task in one place (To do, Waiting, Someday, Done, Dropped) with search and an area filter; edit title, status, area, project, due date, hours, waiting on and notes; Done, Someday, Plan it, Drop and Restore; Split for big tasks; quick add that reads `~3h fri #area` like the capture box.
+- **This week (week card):** where the week's time went (area bars vs target, sessions, distractions, days past the cap), next week's load, projects with Pause / Start / Done, spending by category against your 4-week average, and one suggested change with Apply / No; from Friday, a short paragraph from the AI.
 - **My week:** choose the "Check email" reminder times (or none) instead of the fixed 10:00 and 15:00.
 
 ## [0.1.0] - 2026-11-11

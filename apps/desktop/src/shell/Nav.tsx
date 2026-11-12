@@ -1,11 +1,12 @@
 /** The sidebar on every page after setup (plan §3.14). */
 export type Page =
-  "today" | "tasks" | "projects" | "notes" | "kits" | "review" | "week" | "settings";
+  "today" | "tasks" | "projects" | "weekcard" | "notes" | "kits" | "review" | "week" | "settings";
 
 export const PAGES: { page: Page; label: string }[] = [
   { page: "today", label: "Today" },
   { page: "tasks", label: "Tasks" },
   { page: "projects", label: "Projects" },
+  { page: "weekcard", label: "This week" },
   { page: "notes", label: "Cheat sheets" },
   { page: "kits", label: "Focus kits" },
   { page: "review", label: "Night review" },
