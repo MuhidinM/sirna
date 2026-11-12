@@ -36,6 +36,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Planning tasks:** capture `t: write the report ~3h`: it shows in tomorrow's plan in free slots and, if not finished, the day after. On a task of 90 min or more, Split shows AI steps; Use these steps replaces it with them.
 - **Tasks page:** add `write the report ~3h fri #jobhunt`: it shows under To do with Job hunt, ~3 h and Friday. Edit it to Someday: it moves to Someday and leaves tomorrow's plan. Drop it, then Restore it from Dropped.
 - **Week card:** after a few focus sessions and expenses, This week shows the minutes per area, next week's load and spending against the usual; on Friday or later with an area under half its target, One change offers a target it can meet; No hides it for the week (T-039).
+- **Dashboard:** after two focus sessions today the flame is lit and the streak counts today; the year chart's last column has today shaded; pick an area: the chart shows only its time (T-040).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

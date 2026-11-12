@@ -75,10 +75,10 @@ Status: ☐ todo · ◐ in progress · ☑ verified. Section references point to
 
 | ID | Requirement | Task | Evidence | ✓ |
 |---|---|---|---|---|
-| R-PRG-01 | Forgiving focus streak with a flame (rest, away, light days and one miss a week don't break it) | T-040 | | ☐ |
-| R-PRG-02 | GitHub-style year chart of focus minutes, filterable by area | T-040 | | ☐ |
+| R-PRG-01 | Forgiving focus streak with a flame (rest, away, light days and one miss a week don't break it) | T-040 | Computed from sessions and plans, never stored: 2 sessions or all protected habits count; rest, away, light days and today never break it; one free miss a week; best kept (streak.test.ts, incl. surviving a rest day and one miss) | ☑ |
+| R-PRG-02 | GitHub-style year chart of focus minutes, filterable by area | T-040 | 53 Monday-to-Sunday weeks, 5 shades (0, <1 h, 1–2 h, 2–3 h, 3 h+), rest and away days outlined, area filter, day detail on click; grouped by the 03:00 day (streak.test.ts) | ☑ |
 | R-PRG-03 | Savings goals with a plant that grows by % and never dies | T-041 | | ☐ |
-| R-PRG-04 | Focus, break and distraction tiles; insights computed from sessions | T-040, T-042 | | ☐ |
+| R-PRG-04 | Focus, break and distraction tiles; insights computed from sessions | T-040, T-042 | T-040: focus against the week's goal, sessions, breaks and distractions tiles (streak.test.ts). Insights come in T-042 | ◐ |
 | R-PRG-05 | Dashboard cards can be reordered, hidden and resized (in-app widgets) | T-043 | | ☐ |
 | R-WID-01 | Optional desktop mini widget (Now, timer, top 3, cheat sheet), off by default | T-045 | | ☐ |
 

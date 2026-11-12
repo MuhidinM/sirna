@@ -808,3 +808,109 @@ input[type="number"] {
 .one-change {
   border-left: 3px solid var(--accent);
 }
+
+/* Dashboard (plan §3.13). */
+.dashboard {
+  padding: var(--space-6);
+  max-width: 980px;
+}
+
+.dashboard .card {
+  margin-bottom: var(--space-4);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: 0 !important;
+}
+
+.tile strong {
+  font-size: 1.75rem;
+}
+
+.streak {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.streak-number {
+  font-size: 2.5rem;
+}
+
+.flame {
+  width: 40px;
+  height: 52px;
+  fill: var(--border-strong);
+}
+
+.flame.lit {
+  fill: var(--warning);
+}
+
+.year-chart {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding: var(--space-2) 0;
+}
+
+.year-week {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.year-cell {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--surface-3);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.year-cell.shade-1 {
+  background: color-mix(in srgb, var(--accent) 30%, var(--surface-3));
+}
+
+.year-cell.shade-2 {
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface-3));
+}
+
+.year-cell.shade-3 {
+  background: color-mix(in srgb, var(--accent) 80%, var(--surface-3));
+}
+
+.year-cell.shade-4 {
+  background: var(--accent);
+}
+
+.year-cell.outline {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.year-cell.future {
+  visibility: hidden;
+}
+
+.year-cell:focus-visible {
+  outline: 2px solid var(--text-primary);
+}
+
+.legend .year-cell {
+  cursor: default;
+}
