@@ -6,6 +6,7 @@ import { query } from "./kernel/db";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { Kits } from "./shell/Kits";
 import { Nav, type Page } from "./shell/Nav";
+import { Dashboard } from "./shell/Dashboard";
 import { Notes } from "./shell/Notes";
 import { Projects } from "./shell/Projects";
 import { Review } from "./shell/Review";
@@ -92,6 +93,7 @@ export function App() {
   else if (screen === "projects") page = <Projects />;
   else if (screen === "tasks") page = <Tasks />;
   else if (screen === "weekcard") page = <WeekCard />;
+  else if (screen === "dashboard") page = <Dashboard />;
   else if (screen === "notes")
     page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
   else page = <Today />;
