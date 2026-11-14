@@ -71,7 +71,13 @@ pub const TABLES: &[TableSpec] = &[
     TableSpec {
         name: "savings_goals",
         id_column: "id",
-        columns: &["title", "target_minor", "start_date", "status"],
+        columns: &[
+            "title",
+            "target_minor",
+            "start_date",
+            "status",
+            "target_date",
+        ],
         has_created_at: true,
         soft_delete: true,
         has_user_edited_at: false,
@@ -146,6 +152,15 @@ pub const TABLES: &[TableSpec] = &[
         has_created_at: true,
         soft_delete: true,
         has_user_edited_at: true,
+    },
+    // Categories you manage on the Money page (T-055). Hiding is a soft delete.
+    TableSpec {
+        name: "money_categories",
+        id_column: "id",
+        columns: &["name", "kind"],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
     },
     TableSpec {
         name: "money_templates",
@@ -684,7 +699,6 @@ mod tests {
         "core_notifications",
         "core_usage",
         "focus_sessions",
-        "money_categories",
     ];
 
     #[test]

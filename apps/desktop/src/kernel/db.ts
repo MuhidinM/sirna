@@ -18,6 +18,7 @@ export type WritableTable =
   | "note_items"
   | "money_txns"
   | "money_templates"
+  | "money_categories"
   | "area_items"
   | "routine_blocks"
   | "day_blocks"

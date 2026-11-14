@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
-import { transact } from "../kernel/db";
+import { type Op, query, transact } from "../kernel/db";
 import { formatAmount, parseAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import {
@@ -30,6 +30,17 @@ import {
   TXNS_SQL,
 } from "../features/money/money";
 import { shiftDate } from "../features/plan/dayplan";
+import {
+  addCategoryOps,
+  ALL_CATEGORIES_SQL,
+  CATEGORY_TEMPLATES_SQL,
+  CATEGORY_TXNS_SQL,
+  type CategoryRow,
+  checkCategoryName,
+  hideCategoryOps,
+  mergeCategoryOps,
+  renameCategoryOps,
+} from "../features/money/categories";
 import { Savings } from "./Savings";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -149,14 +160,13 @@ function MonthView({ month, today }: { month: string; today: string }) {
               </li>
             ))}
           </ul>
-          <p className="meta">The grey bar is your usual month (the middle of the last 3).</p>
+          {summary.categories.some((line) => line.usual !== null) && (
+            <p className="meta">The grey bar is your usual month (the middle of the last 3).</p>
+          )}
         </section>
       )}
 
-      <section className="card" aria-labelledby="money-goals">
-        <h2 id="money-goals">Savings goals</h2>
-        <Savings />
-      </section>
+      <Savings />
     </>
   );
 }
@@ -454,6 +464,163 @@ function LedgerView({ month, today }: { month: string; today: string }) {
   );
 }
 
+function CategoryItem({ row, all }: { row: CategoryRow; all: CategoryRow[] }) {
+  const [name, setName] = useState(row.name);
+  const [into, setInto] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const write = (ops: Op[]) =>
+    transact("user", ops, `category:${row.id}`).catch((failure: unknown) =>
+      setError(`Couldn't change it: ${message(failure)}`),
+    );
+  const others = all.filter(
+    (other) => other.id !== row.id && other.kind === row.kind && other.deleted_at === null,
+  );
+  return (
+    <li className="task">
+      <span className="row task-meta">
+        <input
+          className="category-name"
+          aria-label={`Name of ${row.name}`}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        {name.trim() !== row.name && (
+          <Button
+            onClick={() => {
+              const problem = checkCategoryName(name, all, row.id);
+              if (problem) setError(problem);
+              else void write(renameCategoryOps(row.id, name)).then(() => setError(null));
+            }}
+          >
+            Rename
+          </Button>
+        )}
+        <span className="meta">
+          {row.uses} {row.uses === 1 ? "entry" : "entries"}
+        </span>
+      </span>
+      <span className="row task-meta">
+        <select
+          aria-label={`Merge ${row.name} into`}
+          value={into}
+          onChange={(e) => setInto(e.target.value)}
+        >
+          <option value="">Merge into…</option>
+          {others.map((other) => (
+            <option key={other.id} value={other.id}>
+              {other.name}
+            </option>
+          ))}
+        </select>
+        {into && (
+          <Button
+            onClick={() =>
+              void Promise.all([
+                query<{ id: string }>(CATEGORY_TXNS_SQL, [row.id]),
+                query<{ id: string }>(CATEGORY_TEMPLATES_SQL, [row.id]),
+              ]).then(([txns, chips]) =>
+                write(
+                  mergeCategoryOps(
+                    row.id,
+                    into,
+                    txns.map((t) => t.id),
+                    chips.map((c) => c.id),
+                  ),
+                ),
+              )
+            }
+          >
+            Merge
+          </Button>
+        )}
+        <Button onClick={() => void write(hideCategoryOps(row.id))}>Hide</Button>
+      </span>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function CategoriesView() {
+  const all = useLiveQuery<CategoryRow & Record<string, string | number | null>>(
+    ALL_CATEGORIES_SQL,
+  );
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<CategoryRow["kind"]>("expense");
+  const [note, setNote] = useState<string | null>(null);
+  const shown = all.rows.filter((row) => row.deleted_at === null);
+  const hidden = all.rows.filter((row) => row.deleted_at !== null);
+  return (
+    <>
+      <form
+        className="row task-filters"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const problem = checkCategoryName(name, all.rows);
+          if (problem) {
+            setNote(problem);
+            return;
+          }
+          void transact("user", addCategoryOps(name, kind, all.rows, ulid()), "category")
+            .then(() => {
+              setNote(`Added ${name.trim()}.`);
+              setName("");
+            })
+            .catch((failure: unknown) => setNote(`Couldn't add it: ${message(failure)}`));
+        }}
+      >
+        <input
+          aria-label="New category"
+          placeholder="New category, e.g. Fuel"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <select
+          aria-label="Kind"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as CategoryRow["kind"])}
+        >
+          <option value="expense">Spending</option>
+          <option value="income">Income</option>
+        </select>
+        <Button type="submit" primary>
+          Add
+        </Button>
+        {note && (
+          <span className="meta" role="status">
+            {note}
+          </span>
+        )}
+      </form>
+      {(["expense", "income"] as const).map((group) => (
+        <section
+          key={group}
+          className="card"
+          aria-label={group === "expense" ? "Spending" : "Income"}
+        >
+          <h2>{group === "expense" ? "Spending" : "Income"}</h2>
+          <ul className="task-list">
+            {shown
+              .filter((row) => row.kind === group)
+              .map((row) => (
+                <CategoryItem key={row.id} row={row} all={all.rows} />
+              ))}
+          </ul>
+        </section>
+      ))}
+      {hidden.length > 0 && (
+        <p className="meta">
+          Hidden: {hidden.map((row) => row.name).join(", ")}. Old entries keep their name; add a
+          category with the same name to bring it back.
+        </p>
+      )}
+    </>
+  );
+}
+
 /**
  * Today's money in one line (proposal 1.6): spent today, left this month and
  * about how much a day. The same numbers as the Money page.
@@ -481,7 +648,7 @@ export function TodayMoney({
 export function Money() {
   const [today] = useState(() => logicalDate(systemClock.now()));
   const [month, setMonth] = useState(() => monthOf(today).from);
-  const [tab, setTab] = useState<"month" | "ledger">("month");
+  const [tab, setTab] = useState<"month" | "ledger" | "categories">("month");
   const isCurrent = month === monthOf(today).from;
   return (
     <main className="review money">
@@ -502,7 +669,7 @@ export function Money() {
         </div>
       </header>
       <div className="row" role="tablist" aria-label="View">
-        {(["month", "ledger"] as const).map((name) => (
+        {(["month", "ledger", "categories"] as const).map((name) => (
           <button
             key={name}
             type="button"
@@ -511,15 +678,13 @@ export function Money() {
             className={tab === name ? "step current" : "step"}
             onClick={() => setTab(name)}
           >
-            {name === "month" ? "Month" : "Ledger"}
+            {name === "month" ? "Month" : name === "ledger" ? "Ledger" : "Categories"}
           </button>
         ))}
       </div>
-      {tab === "month" ? (
-        <MonthView month={month} today={today} />
-      ) : (
-        <LedgerView month={month} today={today} />
-      )}
+      {tab === "month" && <MonthView month={month} today={today} />}
+      {tab === "ledger" && <LedgerView month={month} today={today} />}
+      {tab === "categories" && <CategoriesView />}
     </main>
   );
 }
