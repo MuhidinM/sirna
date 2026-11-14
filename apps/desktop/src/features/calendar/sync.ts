@@ -22,7 +22,14 @@ export const SYNC_KEY = "calendar.sync";
 export const SYNC_SQL = `SELECT value_json FROM core_settings WHERE key = '${SYNC_KEY}'`;
 
 export type SyncCode =
-  "ok" | "no-link" | "bad_link" | "link_revoked" | "bad_payload" | "parse_error" | "offline";
+  | "ok"
+  | "no-link"
+  | "bad_link"
+  | "link_revoked"
+  | "bad_payload"
+  | "parse_error"
+  | "google_error"
+  | "offline";
 
 export interface SyncStatus {
   at: number;
@@ -40,6 +47,7 @@ const CODES: SyncCode[] = [
   "link_revoked",
   "bad_payload",
   "parse_error",
+  "google_error",
   "offline",
 ];
 
@@ -78,6 +86,8 @@ export function statusText(status: SyncStatus | null): string {
       return "The address gave something that isn't a calendar. Check you copied the secret address in iCal format.";
     case "parse_error":
       return "The calendar arrived but Sirna couldn't read it. Your plan keeps the last events; this is a Sirna bug, not your address.";
+    case "google_error":
+      return 'Google answered with an error. If it keeps happening, the address is probably wrong: copy the "Secret address in iCal format" again. Your plan keeps the last events.';
     case "offline":
       return "Couldn't reach Google Calendar. Sirna will try again in 15 minutes; your plan keeps the last events.";
   }
@@ -89,6 +99,7 @@ const CHECKS: Partial<Record<SyncCode, string>> = {
   bad_link: "Calendar: that isn't a Google Calendar iCal address (Settings).",
   bad_payload: "Calendar: the address gave a web page, not a calendar (Settings).",
   parse_error: "Calendar: Sirna couldn't read your calendar; it keeps the last events.",
+  google_error: "Calendar: Google answered with an error; check the address (Settings).",
 };
 
 export function calendarCheck(status: SyncStatus | null): string | null {

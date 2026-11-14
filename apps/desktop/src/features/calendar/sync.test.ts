@@ -147,6 +147,7 @@ describe("calendar sync", () => {
     expect(calendarCheck(at("bad_link"))).toMatch(/isn't a Google Calendar/);
     expect(calendarCheck(at("bad_payload"))).toMatch(/web page/);
     expect(calendarCheck(at("parse_error"))).toMatch(/couldn't read/);
+    expect(calendarCheck(at("google_error"))).toMatch(/Google answered/);
     expect(calendarCheck(at("no-link"))).toBeNull();
     expect(calendarCheck(at("ok", true))).toMatch(/fewer events/);
     expect(calendarCheck(at("offline"))).toBeNull();
