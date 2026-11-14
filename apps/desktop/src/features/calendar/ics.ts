@@ -2,8 +2,8 @@
  * Reading a Google Calendar feed (plan Appendix A; R-CAL-01) with ical.js:
  * repeating events expanded (RRULE, EXDATE, RDATE), a moved instance
  * replaces its slot, cancelled ones are dropped, timed events follow their
- * time zone and all-day events stay on their date. Only yesterday to two
- * weeks ahead is kept. Pure and tested with fixtures.
+ * time zone and all-day events stay on their date. Only yesterday to a
+ * month ahead is kept. Pure and tested with fixtures.
  */
 import ICAL from "ical.js";
 
@@ -24,7 +24,8 @@ export interface Occurrence {
 }
 
 export const WINDOW_BACK_DAYS = 1;
-export const WINDOW_AHEAD_DAYS = 14;
+/** A month ahead: enough to plan, and a repeating event never fills a year. */
+export const WINDOW_AHEAD_DAYS = 31;
 /** A runaway rule (every minute) can't hang the app: steps near the window… */
 const MAX_STEPS = 5000;
 /** …and all steps (about half a second of work); fastStart skips most of them. */
@@ -35,7 +36,7 @@ const DAY_START_MIN = 180;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class FeedError extends Error {
-  constructor(public code: "bad_payload") {
+  constructor(public code: "bad_payload" | "parse_error") {
     super(code);
   }
 }

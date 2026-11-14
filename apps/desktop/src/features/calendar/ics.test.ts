@@ -283,8 +283,23 @@ describe("reading a calendar feed", () => {
     expect(() => parseFeed("BEGIN:VCARD\r\nEND:VCARD", FROM, TO)).toThrow(FeedError);
   });
 
-  it("windows from yesterday to two weeks ahead", () => {
-    expect(windowOf("2026-11-12")).toEqual({ from: "2026-11-11", to: "2026-11-26" });
+  it("windows from yesterday to a month ahead, so a daily event fills at most 33 days", () => {
+    const window = windowOf("2026-11-12");
+    expect(window).toEqual({ from: "2026-11-11", to: "2026-12-13" });
+    const daily = parseFeed(
+      feed(
+        event(
+          "UID:d",
+          "SUMMARY:Daily",
+          "DTSTART:20200101T060000Z",
+          "DTEND:20200101T070000Z",
+          "RRULE:FREQ=DAILY",
+        ),
+      ),
+      window.from,
+      window.to,
+    );
+    expect(daily).toHaveLength(33);
   });
 });
 

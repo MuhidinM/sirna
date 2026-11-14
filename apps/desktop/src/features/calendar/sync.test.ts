@@ -11,6 +11,7 @@ import {
   SYNC_EVERY_MS,
   SYNC_SQL,
   syncCalendar,
+  type SyncCode,
 } from "./sync";
 
 const NOW = localToEpoch("2026-11-12", 9 * 60);
@@ -91,7 +92,7 @@ describe("calendar sync", () => {
     const status = await syncCalendar(deps);
     expect(status).toMatchObject({ code: "link_revoked", count: 1 });
     expect(live(db)).toHaveLength(1);
-    expect(statusText(status)).toMatch(/copy the secret address again/);
+    expect(statusText(status)).toMatch(/Secret address in iCal format/);
   });
 
   it("calls a page that isn't a calendar bad_payload and anything unknown offline", async () => {
@@ -99,6 +100,21 @@ describe("calendar sync", () => {
     expect((await syncCalendar(page.deps)).code).toBe("bad_payload");
     const odd = harness(() => Promise.reject(new Error("socket hang up")));
     expect((await syncCalendar(odd.deps)).code).toBe("offline");
+  });
+
+  it("calls a calendar Sirna can't read parse_error, not offline", async () => {
+    const broken = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:x",
+      "DTSTART:garbage",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const run = harness(() => Promise.resolve(broken));
+    const status = await syncCalendar(run.deps);
+    expect(status.code).toBe("parse_error");
+    expect(statusText(status)).toMatch(/Sirna bug/);
   });
 
   it("holds deletions when the feed shrinks, until you accept it", async () => {
@@ -121,13 +137,17 @@ describe("calendar sync", () => {
   });
 
   it("asks for a new address in the brief only when you need to act", () => {
-    const at = (code: "ok" | "offline" | "link_revoked", held = false) => ({
+    const at = (code: SyncCode, held = false) => ({
       at: NOW,
       code,
       count: 0,
       held,
     });
-    expect(calendarCheck(at("link_revoked"))).toMatch(/needs replacing/);
+    expect(calendarCheck(at("link_revoked"))).toMatch(/refused/);
+    expect(calendarCheck(at("bad_link"))).toMatch(/isn't a Google Calendar/);
+    expect(calendarCheck(at("bad_payload"))).toMatch(/web page/);
+    expect(calendarCheck(at("parse_error"))).toMatch(/couldn't read/);
+    expect(calendarCheck(at("no-link"))).toBeNull();
     expect(calendarCheck(at("ok", true))).toMatch(/fewer events/);
     expect(calendarCheck(at("offline"))).toBeNull();
     expect(calendarCheck(at("ok"))).toBeNull();
