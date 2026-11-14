@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { type Op } from "../../kernel/db";
 import { migrations, openTestDb } from "../../test/sqlite";
+import { splitOps } from "../ai/facts";
 import { OPEN_TASKS_SQL } from "../plan/dayplan";
 import { carryOps, OPEN_DUE_SQL } from "../review/review";
 import { type TaskListRow, taskDraftOf, taskEditOps, TASKS_SQL } from "./list";
@@ -84,7 +85,7 @@ describe("a task's day apart from its deadline (T-050)", () => {
     });
   });
 
-  it("marks deadlines an old carry may have rewritten, once, when upgrading", () => {
+  it("marks only tasks whose last date change was a carry, when upgrading", () => {
     const db = openTestDb({ migrate: false });
     const all = migrations();
     const upTo = all.findIndex((m) => m.name.startsWith("0017"));
@@ -92,9 +93,31 @@ describe("a task's day apart from its deadline (T-050)", () => {
     const add = db.prepare(
       "INSERT INTO task_items (id, title, status, due_date, carries, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 0)",
     );
+    const log = db.prepare(
+      "INSERT INTO core_activity (at, actor, context, entity_type, entity_id, action, before_json, after_json) VALUES (?, 'user', ?, 'task_items', ?, 'update', ?, ?)",
+    );
+    const moved = (id: string, at: number, context: string | null, from: string, to: string) =>
+      log.run(
+        at,
+        context,
+        id,
+        JSON.stringify({ due_date: from }),
+        JSON.stringify({ due_date: to }),
+      );
+    // Carried twice by the night review.
     add.run("carried", "carried", "todo", "2026-11-13", 2);
+    moved("carried", 1, "review", "2026-11-11", "2026-11-12");
+    moved("carried", 2, "review", "2026-11-12", "2026-11-13");
+    // Carried, then "Smaller" reset the count: still a carry date.
+    add.run("smaller", "smaller", "todo", "2026-11-13", 0);
+    moved("smaller", 1, "review", "2026-11-12", "2026-11-13");
+    // Carried, then you typed a real deadline on the Tasks page.
+    add.run("redated", "redated", "todo", "2026-11-30", 1);
+    moved("redated", 1, "review", "2026-11-12", "2026-11-13");
+    moved("redated", 2, "tasks", "2026-11-13", "2026-11-30");
     add.run("fresh", "fresh", "todo", "2026-11-20", 0);
     add.run("done", "done", "done", "2026-11-01", 1);
+    moved("done", 1, "review", "2026-10-31", "2026-11-01");
     for (const migration of all.slice(upTo)) db.exec(migration.sql);
     expect(
       db.prepare("SELECT id, planned_date, deadline_stale FROM task_items ORDER BY id").all(),
@@ -102,6 +125,46 @@ describe("a task's day apart from its deadline (T-050)", () => {
       { id: "carried", planned_date: "2026-11-13", deadline_stale: 1 },
       { id: "done", planned_date: null, deadline_stale: 0 },
       { id: "fresh", planned_date: null, deadline_stale: 0 },
+      { id: "redated", planned_date: null, deadline_stale: 0 },
+      { id: "smaller", planned_date: "2026-11-13", deadline_stale: 1 },
     ]);
+  });
+
+  it("doesn't show or rank a date an old carry wrote as a deadline", () => {
+    const db = withTask("2026-11-13");
+    db.prepare("UPDATE task_items SET planned_date = '2026-11-14', deadline_stale = 1").run();
+    const dayStart = Date.parse("2026-11-14T03:00:00+03:00");
+    const [top] = db.prepare(todayTopSql).all("2026-11-14", dayStart);
+    expect(top).toMatchObject({ id: "cv", due_date: null, deadline_stale: 1 });
+    expect(db.prepare(DUE_SQL).all("2026-11-14")[0]).toMatchObject({ due_date: null });
+    expect(db.prepare(OPEN_TASKS_SQL).all("2026-11-14")[0]).toMatchObject({ due_date: null });
+  });
+
+  it("keeps a moved task's steps on the day it was moved to when it is split", () => {
+    const ops = splitOps(
+      {
+        id: "cv",
+        area_id: null,
+        due_date: "2026-11-12",
+        planned_date: "2026-11-15",
+        deadline_stale: 1,
+      },
+      [
+        { title: "Draft", minutes: 60 },
+        { title: "Send", minutes: 30 },
+      ],
+      (() => {
+        let n = 0;
+        return () => `s${++n}`;
+      })(),
+    );
+    const steps = ops.filter((op) => op.op === "insert");
+    expect(steps).toHaveLength(2);
+    for (const step of steps)
+      expect(step.op === "insert" && step.values).toMatchObject({
+        due_date: "2026-11-12",
+        planned_date: "2026-11-15",
+        deadline_stale: 1,
+      });
   });
 });

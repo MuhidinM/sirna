@@ -149,7 +149,14 @@ export function acceptGuessOps(
  * big task is dropped. All under `split:<id>`, so one undo restores it.
  */
 export function splitOps(
-  task: { id: string; area_id: string | null; due_date: string | null; project_id?: string | null },
+  task: {
+    id: string;
+    area_id: string | null;
+    due_date: string | null;
+    project_id?: string | null;
+    planned_date?: string | null;
+    deadline_stale?: number;
+  },
   steps: { title: string; minutes: number }[],
   newId: () => string,
 ): Op[] {
@@ -163,6 +170,9 @@ export function splitOps(
         status: "todo",
         area_id: task.area_id,
         due_date: task.due_date,
+        // Steps stay on the day the task was moved to, with its deadline mark (T-050).
+        planned_date: task.planned_date ?? null,
+        deadline_stale: task.deadline_stale ?? 0,
         project_id: task.project_id ?? null,
         estimate_min: step.minutes,
         origin: `split:${task.id}`,

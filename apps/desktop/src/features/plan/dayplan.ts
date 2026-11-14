@@ -45,7 +45,9 @@ export const DONE_THIS_WEEK_SQL = `
 
 /** Open tasks, with what is left of their estimate after focus time on them. */
 export const OPEN_TASKS_SQL = `
-  SELECT t.id, t.title, t.area_id, t.due_date, t.created_at,
+  SELECT t.id, t.title, t.area_id, t.created_at,
+         -- A deadline an old carry may have written isn't urgent until confirmed.
+         CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date,
          CASE WHEN t.estimate_min IS NULL THEN NULL ELSE MAX(0, t.estimate_min - COALESCE((
            SELECT sum(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
            FROM focus_sessions f
