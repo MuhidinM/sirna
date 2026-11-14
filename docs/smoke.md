@@ -50,6 +50,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Accounts:** Money → Accounts: Set CBO to what the bank shows; capture `lunch 120 @telebirr` and `moved 2000 cbo to telebirr`: balances move, Month in/out ignore the transfer; Check CBO with a lower figure: "unrecorded spending" appears in the Ledger (T-058).
 - **Pay and bills:** Money → Pay and bills: add Job A pay (monthly 10, into CBO) and Job B pay (monthly 21), and Rent (monthly 1, from CBO). Capture `got 18k job a`: Job A shows received. A bill due today shows on Today and in the brief with Paid; tapping it adds the entry (T-059, T-060).
 - **Lent and owed:** capture `lent 1000 abel` then `abel paid back 400`: Money → Lent and owed shows Abel 600 since today; set "ask on" to today: the brief shows "Abel owes you 600 ETB…"; Cash balance moved, Month in/out did not (T-061).
+- **Safe to spend:** after setting CBO's balance, Money → Month shows "N safe to spend · about M a day"; "How?" lists accounts, goals, pay to come and bills; Today shows the same line. With a month of entries, "Start one" creates the emergency fund (T-062).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)
