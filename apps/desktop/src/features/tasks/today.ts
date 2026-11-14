@@ -48,7 +48,7 @@ export const INBOX_SQL = `
 /** Today's spending, santim (positive number). */
 export const SPENT_TODAY_SQL = `
   SELECT COALESCE(-SUM(amount_minor), 0) AS spent FROM money_txns
-  WHERE deleted_at IS NULL AND amount_minor < 0 AND local_date = ?1`;
+  WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor < 0 AND local_date = ?1`;
 
 /** The last capture that can still be undone. */
 export const LAST_CAPTURE_SQL = `

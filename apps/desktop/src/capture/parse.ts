@@ -23,6 +23,16 @@ export type Parsed =
   | MoneyItem
   /** Several entries on one line: `lunch 120, taxi 40`. */
   | { kind: "money"; items: MoneyItem[] }
+  /** Between your own accounts: `moved 2000 cbe to telebirr`. */
+  | {
+      kind: "transfer";
+      amount: Santim;
+      from: string;
+      to: string;
+      fromName: string;
+      toName: string;
+      date: string;
+    }
   | { kind: "note" | "feedback" | "inbox"; body: string; area?: string }
   | {
       kind: "idea";
@@ -59,6 +69,9 @@ export interface MoneyItem {
   /** Income from a job you named (`got 18k job a`): the job's area. */
   jobId?: string;
   jobName?: string;
+  /** The account (`@telebirr`); spending defaults to cash, income to the pay account. */
+  account?: string;
+  accountName?: string;
 }
 
 export interface ParseOptions {
@@ -72,6 +85,54 @@ export interface ParseOptions {
   learned?: Record<string, string>;
   /** Your jobs (work areas), so income names where it came from. */
   jobs?: { id: string; name: string }[];
+  /** Your accounts, so `@telebirr` and transfers know them (T-058). */
+  accounts?: { id: string; name: string; kind: string; pays_in: number }[];
+}
+
+type AccountOption = NonNullable<ParseOptions["accounts"]>[number];
+
+/** An account by its short id or name (`cbe`, `E-birr`, `ebirr`). */
+function findAccount(word: string, accounts: AccountOption[]): AccountOption | undefined {
+  const key = squash(word);
+  if (!key) return undefined;
+  return (
+    accounts.find((account) => account.id === key) ??
+    accounts.find((account) => squash(account.name) === key)
+  );
+}
+
+/** Pulls a known `@account` out of a line. */
+function readAccount(text: string, accounts: AccountOption[]) {
+  const match = /(?:^|\s)@([\p{L}\p{N}_-]+)/u.exec(text);
+  const account = match?.[1] ? findAccount(match[1], accounts) : undefined;
+  if (!match || !account) return { rest: text };
+  const rest = (text.slice(0, match.index) + text.slice(match.index + match[0].length))
+    .replace(/\s+/g, " ")
+    .trim();
+  return { rest, account };
+}
+
+const TRANSFER =
+  /^(?:moved|move|transferred|transfer)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)\s+(?:from\s+)?@?([\p{L}\p{N}_-]+)\s+(?:to|into)\s+@?([\p{L}\p{N}_-]+)$/iu;
+
+/** `moved 2000 cbe to telebirr`: only when both are your accounts. */
+function readTransfer(text: string, options: ParseOptions): Parsed | undefined {
+  const match = TRANSFER.exec(text);
+  if (!match) return undefined;
+  const accounts = options.accounts ?? [];
+  const amount = parseAmount(match[1] ?? "");
+  const from = findAccount(match[2] ?? "", accounts);
+  const to = findAccount(match[3] ?? "", accounts);
+  if (amount === null || amount <= 0 || !from || !to || from.id === to.id) return undefined;
+  return {
+    kind: "transfer",
+    amount,
+    from: from.id,
+    to: to.id,
+    fromName: from.name,
+    toName: to.name,
+    date: logicalDate(options.nowMs),
+  };
 }
 
 /** Verbs that make an undated line a task rather than a loose note. */
@@ -327,17 +388,33 @@ const isMoney = (parsed: Parsed): parsed is MoneyItem =>
   parsed.kind === "expense" || parsed.kind === "income";
 
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
-  const parsed = parseOne(raw, options);
-  if (isMoney(parsed)) return finishMoney(parsed, options);
+  const transfer = readTransfer(raw.trim().replace(/\s+/g, " "), options);
+  if (transfer) return transfer;
+  const parsed = parseMoneyLine(raw, options);
+  if (isMoney(parsed)) return parsed;
   // `lunch 120, taxi 40`: several entries when every piece is money. A comma
   // before a digit is a thousands separator (`rent 1,200`), not a split.
   const pieces = raw.split(/\s*,\s*(?=\D)/).filter((piece) => piece.trim());
   if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
-    const items = pieces.map((piece) => parseOne(piece, options));
-    if (items.every(isMoney))
-      return { kind: "money", items: items.map((item) => finishMoney(item, options)) };
+    const items = pieces.map((piece) => parseMoneyLine(piece, options));
+    if (items.every(isMoney)) return { kind: "money", items };
   }
   return parsed;
+}
+
+/** One line, with its `@account` taken out first and money settled after. */
+function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
+  const accounts = options.accounts ?? [];
+  const { rest, account } = readAccount(raw, accounts);
+  const parsed = parseOne(rest, options);
+  if (!isMoney(parsed)) return account ? parseOne(raw, options) : parsed;
+  const item = finishMoney(parsed, options);
+  const chosen =
+    account ??
+    (accounts.length > 0
+      ? accounts.find((a) => (item.kind === "income" ? a.pays_in === 1 : a.kind === "cash"))
+      : undefined);
+  return chosen ? { ...item, account: chosen.id, accountName: chosen.name } : item;
 }
 
 function parseOne(raw: string, options: ParseOptions): Parsed {

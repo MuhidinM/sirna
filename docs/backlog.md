@@ -134,3 +134,15 @@ Milestone 1 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | T-055 | [#113](https://github.com/MuhidinM/sirna/issues/113) | Edit categories and savings goals                              | R-MON-02, R-PRG-03 | S    | done   |
 | T-056 | [#114](https://github.com/MuhidinM/sirna/issues/114) | Capture reads income per job, several items and a category tag | R-CAP-02, R-MON-01 | M    | done   |
 | T-057 | [#115](https://github.com/MuhidinM/sirna/issues/115) | Show today's money on Today                                    | R-MON-01           | S    | done   |
+
+## M10 — Accounts, pay and bills
+
+Milestone 2 of [docs/proposals/money-and-planning.md](proposals/money-and-planning.md), with your answers (CBO, CBE, E-birr, telebirr, cash; pay into CBO on the 10th and 21st; rent; lending moved up).
+
+| ID    | Issue                                                | Task                                            | Reqs     | Size | Status |
+| ----- | ---------------------------------------------------- | ----------------------------------------------- | -------- | ---- | ------ |
+| T-058 | [#120](https://github.com/MuhidinM/sirna/issues/120) | Accounts with balances, transfers and reconcile | R-MON-03 | L    | done   |
+| T-059 | [#121](https://github.com/MuhidinM/sirna/issues/121) | Regular bills you mark paid with one tap        | R-MON-04 | M    | todo   |
+| T-060 | [#122](https://github.com/MuhidinM/sirna/issues/122) | Expected pay per job, with late pay flagged     | R-MON-05 | M    | todo   |
+| T-061 | [#123](https://github.com/MuhidinM/sirna/issues/123) | Keep track of money lent and owed               | R-MON-06 | M    | todo   |
+| T-062 | [#124](https://github.com/MuhidinM/sirna/issues/124) | Safe to spend and the emergency fund            | R-MON-07 | M    | todo   |

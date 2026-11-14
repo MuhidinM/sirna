@@ -47,6 +47,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Money page:** Money → Month shows in / out / saved / left and "about N a day"; Ledger: search "lunch", edit an amount, delete one and press Undo, Export CSV opens a download (T-054).
 - **Categories and goals:** Money → Categories: add Fuel, rename it, merge Other into Transport (the entries move). On a goal press Edit, set a date: the line says what it takes a month (T-055).
 - **Money capture:** capture `got 18k job a` → "Income · 18,000 ETB · Job A" and Money → Month lists Job A under Money in; `lunch 120, taxi 40` → two entries; `benzine 500 #fuel` (after adding Fuel) lands in Fuel; fix "bajaj" to Transport in the Ledger, then `bajaj 50` lands in Transport (T-056).
+- **Accounts:** Money → Accounts: Set CBO to what the bank shows; capture `lunch 120 @telebirr` and `moved 2000 cbo to telebirr`: balances move, Month in/out ignore the transfer; Check CBO with a lower figure: "unrecorded spending" appears in the Ledger (T-058).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

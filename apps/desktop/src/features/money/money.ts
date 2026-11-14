@@ -43,15 +43,21 @@ export interface TxnRow {
   origin: string | null;
   /** The job income came from, when named. */
   source?: string | null;
+  /** The account's name. */
+  account_name?: string | null;
+  /** Set on both halves of a transfer between accounts. */
+  transfer_id?: string | null;
 }
 
 /** Entries between ?1 and ?2 (inclusive dates), newest first. */
 export const TXNS_SQL = `
   SELECT m.id, m.local_date, m.occurred_at, m.amount_minor, m.description, m.category_id,
-         c.name AS category, m.account, m.origin, a.name AS source
+         c.name AS category, m.account, m.origin, a.name AS source,
+         acc.name AS account_name, m.transfer_id
   FROM money_txns m
   LEFT JOIN money_categories c ON c.id = m.category_id
   LEFT JOIN area_items a ON a.id = m.area_id
+  LEFT JOIN money_accounts acc ON acc.id = m.account
   WHERE m.deleted_at IS NULL AND m.local_date >= ?1 AND m.local_date <= ?2
   ORDER BY m.local_date DESC, m.occurred_at DESC`;
 
@@ -68,7 +74,8 @@ export const HISTORY_SQL = `
   SELECT substr(m.local_date, 1, 7) AS month, m.category_id,
          COALESCE(sum(CASE WHEN m.amount_minor < 0 THEN -m.amount_minor END), 0) AS out_minor
   FROM money_txns m
-  WHERE m.deleted_at IS NULL AND m.local_date >= ?1 AND m.local_date < ?2
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL
+    AND m.local_date >= ?1 AND m.local_date < ?2
   GROUP BY month, m.category_id`;
 
 export interface HistoryRow {
@@ -152,6 +159,8 @@ export function monthSummary(input: {
   const sources = new Map<string, Santim>();
   const spent = new Map<string, { name: string; amount: Santim }>();
   for (const txn of input.txns) {
+    // Moving money between your own accounts is neither in nor out.
+    if (txn.transfer_id) continue;
     if (txn.amount_minor > 0) {
       income += txn.amount_minor;
       // By job when the capture named one (`got 18k job a`), else by category.
@@ -246,6 +255,8 @@ export interface TxnDraft {
   description: string;
   categoryId: string;
   date: string;
+  /** The account; "" keeps what it was (or cash for a new entry). */
+  account?: string;
 }
 
 export function checkTxn(draft: TxnDraft): string | null {
@@ -287,6 +298,7 @@ export function txnEditOps(row: TxnRow, draft: TxnDraft): Op[] {
         description: draft.description.trim(),
         category_id: draft.categoryId || null,
         local_date: draft.date,
+        ...(draft.account ? { account: draft.account } : {}),
       },
     },
   ];
@@ -311,6 +323,7 @@ export function txnRestoreOps(row: TxnRow): Op[] {
         occurred_at: row.occurred_at,
         account: row.account,
         origin: row.origin,
+        transfer_id: row.transfer_id ?? null,
       },
     },
   ];
@@ -358,6 +371,7 @@ export function txnAddOps(draft: TxnDraft, nowMs: number, id: string): Op[] {
         description: draft.description.trim(),
         category_id: draft.categoryId || null,
         origin: "money",
+        ...(draft.account ? { account: draft.account } : {}),
       },
     },
   ];
