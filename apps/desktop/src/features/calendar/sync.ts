@@ -7,13 +7,22 @@
 import { type Op, type Row } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
 import { type Query, replanDay, shiftDate } from "../plan/dayplan";
-import { FeedError, type Occurrence, parseFeed, syncOps, windowOf, WINDOW_SQL } from "./ics";
+import {
+  FeedError,
+  type Occurrence,
+  parseFeed,
+  syncOps,
+  WINDOW_AHEAD_DAYS,
+  windowOf,
+  WINDOW_SQL,
+} from "./ics";
 
 export const SYNC_EVERY_MS = 15 * 60 * 1000;
 export const SYNC_KEY = "calendar.sync";
 export const SYNC_SQL = `SELECT value_json FROM core_settings WHERE key = '${SYNC_KEY}'`;
 
-export type SyncCode = "ok" | "no-link" | "bad_link" | "link_revoked" | "bad_payload" | "offline";
+export type SyncCode =
+  "ok" | "no-link" | "bad_link" | "link_revoked" | "bad_payload" | "parse_error" | "offline";
 
 export interface SyncStatus {
   at: number;
@@ -24,7 +33,15 @@ export interface SyncStatus {
   held: boolean;
 }
 
-const CODES: SyncCode[] = ["ok", "no-link", "bad_link", "link_revoked", "bad_payload", "offline"];
+const CODES: SyncCode[] = [
+  "ok",
+  "no-link",
+  "bad_link",
+  "link_revoked",
+  "bad_payload",
+  "parse_error",
+  "offline",
+];
 
 export function readStatus(valueJson: string | null | undefined): SyncStatus | null {
   try {
@@ -50,28 +67,35 @@ export function statusText(status: SyncStatus | null): string {
     case "ok":
       return status.held
         ? `Synced, but the calendar suddenly has far fewer events, so nothing was removed. Check the address, or sync again to accept it.`
-        : `Synced: ${status.count} event${status.count === 1 ? "" : "s"} in the next two weeks.`;
+        : `Synced: ${status.count} event${status.count === 1 ? "" : "s"} from yesterday to ${WINDOW_AHEAD_DAYS} days ahead.`;
     case "no-link":
       return "No calendar address saved. Add your Google Calendar secret iCal address above.";
     case "bad_link":
       return "That address isn't a Google Calendar iCal address (it should start with https://calendar.google.com/).";
     case "link_revoked":
-      return "Google refused the address. It may have been reset: copy the secret address again from Google Calendar settings.";
+      return 'Google refused the address (not found or not allowed). Use the "Secret address in iCal format" (it contains /private-), not the public one. If you reset it in Google, copy it again.';
     case "bad_payload":
       return "The address gave something that isn't a calendar. Check you copied the secret address in iCal format.";
+    case "parse_error":
+      return "The calendar arrived but Sirna couldn't read it. Your plan keeps the last events; this is a Sirna bug, not your address.";
     case "offline":
       return "Couldn't reach Google Calendar. Sirna will try again in 15 minutes; your plan keeps the last events.";
   }
 }
 
-/** A brief CHECK line when the calendar needs you (not for a passing outage). */
+/** The brief's CHECK line, one per reason (none for a passing outage). */
+const CHECKS: Partial<Record<SyncCode, string>> = {
+  link_revoked: "Calendar: Google refused the address. Use the secret iCal address (Settings).",
+  bad_link: "Calendar: that isn't a Google Calendar iCal address (Settings).",
+  bad_payload: "Calendar: the address gave a web page, not a calendar (Settings).",
+  parse_error: "Calendar: Sirna couldn't read your calendar; it keeps the last events.",
+};
+
 export function calendarCheck(status: SyncStatus | null): string | null {
   if (!status) return null;
-  if (status.code === "link_revoked" || status.code === "bad_link" || status.code === "bad_payload")
-    return "Calendar sync stopped: the iCal address needs replacing in Settings.";
   if (status.code === "ok" && status.held)
-    return "Your calendar suddenly has far fewer events; check it in Settings.";
-  return null;
+    return "Calendar: suddenly far fewer events; check it in Settings.";
+  return CHECKS[status.code] ?? null;
 }
 
 export function isDue(status: SyncStatus | null, nowMs: number): boolean {
@@ -110,7 +134,13 @@ export async function syncCalendar(deps: SyncDeps, allowShrink = false): Promise
   let changed = false;
   try {
     const feed = await deps.fetchFeed();
-    const fresh = parseFeed(feed, from, to);
+    let fresh: Occurrence[];
+    try {
+      fresh = parseFeed(feed, from, to);
+    } catch (error) {
+      // A feed that isn't a calendar is the address's fault; anything else is ours.
+      throw error instanceof FeedError ? error : new FeedError("parse_error");
+    }
     const existing = await deps.query<Occurrence & Row>(WINDOW_SQL, [from, to]);
     const plan = syncOps(fresh, existing, allowShrink);
     changed = plan.changed;
