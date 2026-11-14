@@ -119,6 +119,6 @@ Small fixes found by the six-angle review, before the money work. [docs/proposal
 | ID    | Issue                                                | Task                                                           | Reqs      | Size | Status |
 | ----- | ---------------------------------------------------- | -------------------------------------------------------------- | --------- | ---- | ------ |
 | T-049 | [#102](https://github.com/MuhidinM/sirna/issues/102) | Explain calendar sync failures in words and sync a month ahead | R-CAL-01  | S    | done   |
-| T-050 | [#103](https://github.com/MuhidinM/sirna/issues/103) | Keep a task's deadline when it moves to another day            | R-CAP-05  | M    | todo   |
+| T-050 | [#103](https://github.com/MuhidinM/sirna/issues/103) | Keep a task's deadline when it moves to another day            | R-CAP-05  | M    | done   |
 | T-051 | [#104](https://github.com/MuhidinM/sirna/issues/104) | Keep the order of a split task's steps                         | R-PLAN-03 | S    | todo   |
 | T-052 | [#105](https://github.com/MuhidinM/sirna/issues/105) | Test that every table is in the write allowlist                | —         | S    | todo   |

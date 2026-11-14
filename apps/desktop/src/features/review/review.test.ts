@@ -54,7 +54,7 @@ describe("carries", () => {
         op: "update",
         table: "task_items",
         id: "t1",
-        values: { due_date: "2026-11-12", due_at: null, remind_at: null, carries: 3 },
+        values: { planned_date: "2026-11-12", remind_at: null, carries: 3 },
       },
     ]);
   });

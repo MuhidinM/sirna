@@ -52,7 +52,10 @@ export const OPEN_TASKS_SQL = `
            WHERE f.task_id = t.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)) END
            AS remaining_min
   FROM task_items t
-  WHERE t.deleted_at IS NULL AND t.status = 'todo' ORDER BY t.created_at`;
+  WHERE t.deleted_at IS NULL AND t.status = 'todo'
+    -- A task moved to a later day waits for that day (T-050).
+    AND (t.planned_date IS NULL OR t.planned_date <= ?)
+  ORDER BY t.created_at`;
 
 export const CHOSEN_TOP_SQL =
   "SELECT task_id FROM task_daily_top WHERE logical_date = ? AND chosen_by = 'user' ORDER BY position";
@@ -110,7 +113,7 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       due_date: string | null;
       created_at: number;
       remaining_min: number | null;
-    }>(OPEN_TASKS_SQL),
+    }>(OPEN_TASKS_SQL, [date]),
     query<{ task_id: string }>(CHOSEN_TOP_SQL, [date]),
     query<{ id: string; start_at: number; end_at: number }>(KEPT_BLOCKS_SQL, [date]),
     query<{ value_json: string }>(REST_DAY_SQL),

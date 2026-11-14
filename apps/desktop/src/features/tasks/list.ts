@@ -21,6 +21,8 @@ export interface TaskListRow {
   status: string;
   notes: string | null;
   due_date: string | null;
+  planned_date: string | null;
+  deadline_stale: number;
   estimate_min: number | null;
   area_id: string | null;
   area_name: string | null;
@@ -35,7 +37,8 @@ export interface TaskListRow {
 
 /** ?1 status list as JSON; done and dropped show the last 60 days. */
 export const TASKS_SQL = `
-SELECT t.id, t.title, t.status, t.notes, t.due_date, t.estimate_min, t.area_id,
+SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.deadline_stale,
+       t.estimate_min, t.area_id,
        a.name AS area_name, a.color AS area_color, t.project_id, p.title AS project_title,
        t.waiting_on, t.follow_up_date, t.completed_at, t.updated_at
 FROM task_items t
@@ -120,7 +123,9 @@ const orNull = (text: string) => (text.trim() ? text.trim() : null);
 
 /**
  * The update for an edited task. A changed due date clears an old reminder
- * time (it belonged to the old date); waiting fields only stay while waiting.
+ * time (it belonged to the old date) and the planned day, so the task sits on
+ * the date you just typed; saving the form confirms the deadline (T-050).
+ * Waiting fields only stay while waiting.
  */
 export function taskEditOps(row: TaskListRow, draft: TaskDraft, nowMs: number): Op[] {
   const hours = draft.estimateHours.trim();
@@ -135,10 +140,12 @@ export function taskEditOps(row: TaskListRow, draft: TaskDraft, nowMs: number): 
     waiting_on: waiting ? orNull(draft.waitingOn) : null,
     follow_up_date: waiting ? orNull(draft.followUp) : null,
     notes: orNull(draft.notes),
+    deadline_stale: 0,
   };
   if ((orNull(draft.due) ?? null) !== row.due_date) {
     values.due_at = null;
     values.remind_at = null;
+    values.planned_date = null;
   }
   if (draft.status !== "todo") values.started_at = null;
   // Finished stays finished on a title fix; a status change sets or clears the time.

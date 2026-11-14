@@ -12,7 +12,7 @@ export interface ChangedCounts {
 
 /**
  * ?1 = start of yesterday's logical day (UTC ms), ?2 = today's logical date.
- * Moved = tasks whose due date changed (carried, rescheduled), each once.
+ * Moved = tasks whose day or deadline changed (carried, rescheduled), each once.
  */
 export const CHANGED_SQL = `
   SELECT
@@ -22,8 +22,10 @@ export const CHANGED_SQL = `
       WHERE deleted_at IS NULL AND status = 'done' AND completed_at >= ?1) AS done,
     (SELECT count(DISTINCT entity_id) FROM core_activity
       WHERE entity_type = 'task_items' AND action = 'update' AND at >= ?1
-        AND json_extract(after_json, '$.due_date') IS NOT NULL
-        AND json_extract(before_json, '$.due_date') IS NOT json_extract(after_json, '$.due_date')) AS moved,
+        AND ((json_extract(after_json, '$.due_date') IS NOT NULL
+              AND json_extract(before_json, '$.due_date') IS NOT json_extract(after_json, '$.due_date'))
+          OR (json_extract(after_json, '$.planned_date') IS NOT NULL
+              AND json_extract(before_json, '$.planned_date') IS NOT json_extract(after_json, '$.planned_date')))) AS moved,
     (SELECT count(*) FROM task_items
       WHERE deleted_at IS NULL AND status = 'waiting' AND follow_up_date <= ?2) AS follow_ups`;
 

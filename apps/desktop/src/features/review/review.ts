@@ -19,11 +19,11 @@ export function nextDate(date: string): string {
 export const REVIEW_SQL =
   "SELECT status, energy, spent_none, mind FROM day_reviews WHERE logical_date = ?";
 
-/** Open tasks due today or earlier: what "All the rest to tomorrow" moves. */
+/** Open tasks on today's list or earlier: what "All the rest to tomorrow" moves. */
 export const OPEN_DUE_SQL = `
   SELECT id, title, carries, due_date FROM task_items
-  WHERE deleted_at IS NULL AND status = 'todo' AND due_date <= ?1
-  ORDER BY due_date, created_at`;
+  WHERE deleted_at IS NULL AND status = 'todo' AND COALESCE(planned_date, due_date) <= ?1
+  ORDER BY COALESCE(planned_date, due_date), created_at`;
 
 /** Expenses typed today, newest first. */
 export const SPENT_LIST_SQL = `
@@ -52,13 +52,17 @@ export function asksToShrink(carries: number): boolean {
   return carries >= 2;
 }
 
-/** Moves open tasks to tomorrow, counting the carry, and drops their time. */
+/**
+ * Moves open tasks to tomorrow's list, counting the carry. Only the planned
+ * day changes: the deadline stays what it was (T-050). Today's reminder time
+ * has passed, so it is dropped.
+ */
 export function carryOps(tasks: { id: string; carries: number }[], tomorrow: string): Op[] {
   return tasks.map((task) => ({
     op: "update",
     table: "task_items",
     id: task.id,
-    values: { due_date: tomorrow, due_at: null, remind_at: null, carries: task.carries + 1 },
+    values: { planned_date: tomorrow, remind_at: null, carries: task.carries + 1 },
   }));
 }
 

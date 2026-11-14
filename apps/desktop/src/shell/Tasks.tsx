@@ -250,7 +250,18 @@ function TaskItem({
         )}
         {row.project_title && <span className="meta">{row.project_title}</span>}
         {row.estimate_min && <span className="meta">{hours(row.estimate_min)}</span>}
+        {row.planned_date && row.planned_date !== row.due_date && (
+          <span className="meta">on {row.planned_date}</span>
+        )}
         {row.due_date && <span className="meta">due {row.due_date}</span>}
+        {row.deadline_stale === 1 && row.due_date && (
+          <span
+            className="meta warn-text"
+            title="An old move may have changed this date. Open the task and save the real deadline."
+          >
+            check deadline
+          </span>
+        )}
         {row.waiting_on && (
           <span className="meta">
             on {row.waiting_on}
