@@ -41,14 +41,17 @@ export interface TxnRow {
   category: string | null;
   account: string;
   origin: string | null;
+  /** The job income came from, when named. */
+  source?: string | null;
 }
 
 /** Entries between ?1 and ?2 (inclusive dates), newest first. */
 export const TXNS_SQL = `
   SELECT m.id, m.local_date, m.occurred_at, m.amount_minor, m.description, m.category_id,
-         c.name AS category, m.account, m.origin
+         c.name AS category, m.account, m.origin, a.name AS source
   FROM money_txns m
   LEFT JOIN money_categories c ON c.id = m.category_id
+  LEFT JOIN area_items a ON a.id = m.area_id
   WHERE m.deleted_at IS NULL AND m.local_date >= ?1 AND m.local_date <= ?2
   ORDER BY m.local_date DESC, m.occurred_at DESC`;
 
@@ -151,7 +154,8 @@ export function monthSummary(input: {
   for (const txn of input.txns) {
     if (txn.amount_minor > 0) {
       income += txn.amount_minor;
-      const name = txn.category ?? "Other income";
+      // By job when the capture named one (`got 18k job a`), else by category.
+      const name = txn.source ?? txn.category ?? "Other income";
       sources.set(name, (sources.get(name) ?? 0) + txn.amount_minor);
     } else {
       out += -txn.amount_minor;
@@ -251,9 +255,29 @@ export function checkTxn(draft: TxnDraft): string | null {
   return null;
 }
 
-/** The update for an edited entry: the sign follows in or out. */
+/** Learned categories for the capture box: description (lowercase) → category. */
+export const LEARNED_SQL = "SELECT id, category_id FROM money_learned WHERE deleted_at IS NULL";
+
+export const learnKey = (description: string) => description.trim().toLowerCase();
+
+/**
+ * The update for an edited entry: the sign follows in or out. A new category
+ * is remembered for that description, so the next capture gets it right.
+ */
 export function txnEditOps(row: TxnRow, draft: TxnDraft): Op[] {
+  const learned: Op[] =
+    draft.categoryId && draft.categoryId !== (row.category_id ?? "")
+      ? [
+          {
+            op: "upsert",
+            table: "money_learned",
+            id: learnKey(draft.description),
+            values: { category_id: draft.categoryId },
+          },
+        ]
+      : [];
   return [
+    ...learned,
     {
       op: "update",
       table: "money_txns",

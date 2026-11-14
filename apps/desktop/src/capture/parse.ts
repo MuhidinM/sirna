@@ -20,14 +20,9 @@ export type Parsed =
       area?: string;
       waitingOn?: string;
     }
-  | {
-      kind: "expense" | "income";
-      description: string;
-      amount: Santim;
-      categoryId: string;
-      date: string;
-      area?: string;
-    }
+  | MoneyItem
+  /** Several entries on one line: `lunch 120, taxi 40`. */
+  | { kind: "money"; items: MoneyItem[] }
   | { kind: "note" | "feedback" | "inbox"; body: string; area?: string }
   | {
       kind: "idea";
@@ -52,11 +47,31 @@ export type Parsed =
     }
   | { kind: "focus" };
 
+export interface MoneyItem {
+  kind: "expense" | "income";
+  description: string;
+  amount: Santim;
+  categoryId: string;
+  /** The category's name, when the capture box knows your categories. */
+  categoryName?: string;
+  date: string;
+  area?: string;
+  /** Income from a job you named (`got 18k job a`): the job's area. */
+  jobId?: string;
+  jobName?: string;
+}
+
 export interface ParseOptions {
   nowMs: number;
   clockStyle?: ClockStyle;
   /** Goal names (lowercase), so `saved 500 laptop` is read as saving only when a goal fits. */
   goals?: string[];
+  /** Your categories, so `#fuel` on a money line picks one (T-056). */
+  categories?: { id: string; name: string; kind: "expense" | "income" }[];
+  /** Description (lowercase) → the category you corrected it to in the ledger. */
+  learned?: Record<string, string>;
+  /** Your jobs (work areas), so income names where it came from. */
+  jobs?: { id: string; name: string }[];
 }
 
 /** Verbs that make an undated line a task rather than a loose note. */
@@ -255,7 +270,77 @@ function readSaving(text: string, goals: string[]): Parsed | undefined {
   return { kind: "saving", amount: out ? -amount : amount, ...(words ? { goal: words } : {}) };
 }
 
+const squash = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** A `#tag` that names one of your categories: the whole name, or its first word. */
+function categoryFromTag(
+  tag: string,
+  categories: NonNullable<ParseOptions["categories"]>,
+): NonNullable<ParseOptions["categories"]>[number] | undefined {
+  const key = squash(tag);
+  if (!key) return undefined;
+  return (
+    categories.find((category) => squash(category.name) === key) ??
+    categories.find((category) => squash(category.name.split(/\s+/)[0] ?? "") === key)
+  );
+}
+
+/** A job named in the words (`job a`, `Job B`), longest name first. */
+function jobIn(words: string, jobs: NonNullable<ParseOptions["jobs"]>) {
+  const text = ` ${words.toLowerCase().replace(/\s+/g, " ")} `;
+  return [...jobs]
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((job) => job.name.trim() && text.includes(` ${job.name.trim().toLowerCase()} `));
+}
+
+/**
+ * Settles a money line's category and job (T-056): a `#tag` naming a
+ * category wins, then a category you corrected before, then the keyword
+ * guess. Income names its job when the words do.
+ */
+function finishMoney(item: MoneyItem, options: ParseOptions): MoneyItem {
+  const categories = options.categories ?? [];
+  const result: MoneyItem = { ...item };
+  const tagged = item.area ? categoryFromTag(item.area, categories) : undefined;
+  if (tagged) {
+    result.categoryId = tagged.id;
+    delete result.area;
+  } else {
+    const learned = options.learned?.[item.description.trim().toLowerCase()];
+    if (learned && (categories.length === 0 || categories.some((c) => c.id === learned)))
+      result.categoryId = learned;
+  }
+  if (item.kind === "income") {
+    const job = jobIn(item.description, options.jobs ?? []);
+    if (job) {
+      result.jobId = job.id;
+      result.jobName = job.name;
+      if (!tagged && result.categoryId === "cat_income") result.categoryId = "cat_salary";
+    }
+  }
+  const name = categories.find((category) => category.id === result.categoryId)?.name;
+  if (name) result.categoryName = name;
+  return result;
+}
+
+const isMoney = (parsed: Parsed): parsed is MoneyItem =>
+  parsed.kind === "expense" || parsed.kind === "income";
+
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
+  const parsed = parseOne(raw, options);
+  if (isMoney(parsed)) return finishMoney(parsed, options);
+  // `lunch 120, taxi 40`: several entries when every piece is money. A comma
+  // before a digit is a thousands separator (`rent 1,200`), not a split.
+  const pieces = raw.split(/\s*,\s*(?=\D)/).filter((piece) => piece.trim());
+  if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
+    const items = pieces.map((piece) => parseOne(piece, options));
+    if (items.every(isMoney))
+      return { kind: "money", items: items.map((item) => finishMoney(item, options)) };
+  }
+  return parsed;
+}
+
+function parseOne(raw: string, options: ParseOptions): Parsed {
   const { nowMs, clockStyle = "western" } = options;
   const text = raw.trim().replace(/\s+/g, " ");
   const lower = text.toLowerCase();
@@ -300,6 +385,32 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
       return withArea(readTask(untagged, nowMs, clockStyle), area);
     default:
       break;
+  }
+
+  // Income: "got 18k job a", "received 5000 freelance", "earned 3000 tutoring".
+  const got = /^(?:got paid|got|received|earned)\s+(.+)$/i.exec(untagged);
+  if (got?.[1]) {
+    const money = readMoney(got[1], true);
+    // "got 3 tickets" isn't pay: the amount must look like money (100 birr or
+    // more, or marked with k, birr or ETB) or the words must say pay or a job.
+    const looksPaid =
+      money &&
+      (money.amount >= 10_000 ||
+        /\d\s*(?:k|etb|birr|br)\b|\b(?:etb|birr|br)\s*\d/i.test(got[1]) ||
+        INCOME_WORDS.some(([pattern]) => pattern.test(money.label)) ||
+        jobIn(money.label, options.jobs ?? []) !== undefined);
+    if (money && looksPaid) {
+      return withArea(
+        {
+          kind: "income",
+          description: money.label,
+          amount: money.amount,
+          categoryId: guessCategory(money.label, true),
+          date: logicalDate(nowMs),
+        },
+        area,
+      );
+    }
   }
 
   // Income: "+25000 salary" or "salary 25000".

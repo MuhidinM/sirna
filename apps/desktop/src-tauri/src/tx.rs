@@ -148,10 +148,20 @@ pub const TABLES: &[TableSpec] = &[
             "description",
             "category_id",
             "origin",
+            "area_id",
         ],
         has_created_at: true,
         soft_delete: true,
         has_user_edited_at: true,
+    },
+    // Categories corrected in the ledger, remembered per description (T-056).
+    TableSpec {
+        name: "money_learned",
+        id_column: "id",
+        columns: &["category_id"],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
     },
     // Categories you manage on the Money page (T-055). Hiding is a soft delete.
     TableSpec {
