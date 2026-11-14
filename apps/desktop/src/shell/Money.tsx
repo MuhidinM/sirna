@@ -31,6 +31,24 @@ import {
 } from "../features/money/money";
 import { shiftDate } from "../features/plan/dayplan";
 import {
+  type AccountRow,
+  ACCOUNTS_SQL,
+  addAccountOps,
+  balanceOf,
+  checkAccountName,
+  checkTransfer,
+  DAY_MOVED_SQL,
+  hideAccountOps,
+  payAccount,
+  reconcileOps,
+  reconcileText,
+  renameAccountOps,
+  setPayAccountOps,
+  spendAccount,
+  totalBalance,
+  transferOps,
+} from "../features/money/accounts";
+import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
   CATEGORY_TEMPLATES_SQL,
@@ -182,12 +200,14 @@ const emptyDraft = (today: string): TxnDraft => ({
 function TxnForm({
   initial,
   categories,
+  accounts,
   submitLabel,
   onSave,
   onCancel,
 }: {
   initial: TxnDraft;
   categories: Category[];
+  accounts: AccountRow[];
   submitLabel: string;
   onSave: (draft: TxnDraft) => Promise<unknown>;
   onCancel?: () => void;
@@ -206,7 +226,12 @@ function TxnForm({
       className="txn-form"
       onSubmit={(event) => {
         event.preventDefault();
-        const full = { ...draft, amount: parseAmount(amountText) ?? 0 };
+        const full = {
+          ...draft,
+          amount: parseAmount(amountText) ?? 0,
+          account:
+            draft.account || (draft.kind === "in" ? payAccount(accounts) : spendAccount(accounts)),
+        };
         const problem = checkTxn(full);
         if (problem) {
           setError(problem);
@@ -259,6 +284,21 @@ function TxnForm({
           </select>
         </label>
         <label className="field">
+          <span>Account</span>
+          <select
+            value={
+              draft.account || (draft.kind === "in" ? payAccount(accounts) : spendAccount(accounts))
+            }
+            onChange={(e) => set({ account: e.target.value })}
+          >
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
           <span>Date</span>
           <input type="date" value={draft.date} onChange={(e) => set({ date: e.target.value })} />
         </label>
@@ -284,16 +324,22 @@ const draftOf = (row: TxnRow): TxnDraft => ({
   description: row.description,
   categoryId: row.category_id ?? "",
   date: row.local_date,
+  account: row.account,
 });
 
 function LedgerRow({
   row,
   categories,
+  accounts,
+  halves,
   onDeleted,
 }: {
   row: TxnRow;
   categories: Category[];
-  onDeleted: (row: TxnRow) => void;
+  accounts: AccountRow[];
+  /** Both halves when this is a transfer; deleting one deletes both. */
+  halves: TxnRow[];
+  onDeleted: (rows: TxnRow[]) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -303,6 +349,7 @@ function LedgerRow({
         <TxnForm
           initial={draftOf(row)}
           categories={categories}
+          accounts={accounts}
           submitLabel="Save"
           onSave={(draft) =>
             transact("user", txnEditOps(row, draft), `money:${row.id}`).then(() =>
@@ -318,17 +365,18 @@ function LedgerRow({
       <span>
         {row.description}
         {row.category && <span className="meta"> · {row.category}</span>}
+        {row.account_name && <span className="meta"> · {row.account_name}</span>}
       </span>
       <span className="row task-meta">
         <span className={row.amount_minor > 0 ? "money-in" : undefined}>
           {row.amount_minor > 0 ? "+" : "−"}
           {formatAmount(Math.abs(row.amount_minor))}
         </span>
-        <Button onClick={() => setEditing(true)}>Edit</Button>
+        {!row.transfer_id && <Button onClick={() => setEditing(true)}>Edit</Button>}
         <Button
           onClick={() =>
-            void transact("user", txnDeleteOps(row), `money:${row.id}`)
-              .then(() => onDeleted(row))
+            void transact("user", halves.flatMap(txnDeleteOps), `money:${row.id}`)
+              .then(() => onDeleted(halves))
               .catch((failure: unknown) => setError(`Couldn't delete: ${message(failure)}`))
           }
         >
@@ -347,9 +395,12 @@ function LedgerRow({
 function LedgerView({ month, today }: { month: string; today: string }) {
   const { txns } = useMonth(month, today);
   const categories = useLiveQuery<Category>(CATEGORIES_SQL);
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const [filter, setFilter] = useState<LedgerFilter>({ text: "", categoryId: "", kind: "" });
   const [adding, setAdding] = useState(false);
-  const [deleted, setDeleted] = useState<TxnRow | null>(null);
+  const [deleted, setDeleted] = useState<TxnRow[] | null>(null);
+  const halvesOf = (row: TxnRow) =>
+    row.transfer_id ? txns.rows.filter((other) => other.transfer_id === row.transfer_id) : [row];
   const [note, setNote] = useState("");
   const shown = filterLedger(txns.rows, filter);
   const set = (part: Partial<LedgerFilter>) => setFilter((old) => ({ ...old, ...part }));
@@ -402,6 +453,7 @@ function LedgerView({ month, today }: { month: string; today: string }) {
         <TxnForm
           initial={emptyDraft(month === monthOf(today).from ? today : monthOf(month).to)}
           categories={categories.rows}
+          accounts={accounts.rows}
           submitLabel="Add"
           onSave={(draft) =>
             transact("user", txnAddOps(draft, systemClock.now(), ulid()), "money").then(() =>
@@ -410,14 +462,16 @@ function LedgerView({ month, today }: { month: string; today: string }) {
           }
         />
       )}
-      {deleted && (
+      {deleted?.[0] && (
         <p className="row" role="status">
-          Deleted {deleted.description} ({formatAmount(Math.abs(deleted.amount_minor))}).
+          Deleted {deleted[0].description} ({formatAmount(Math.abs(deleted[0].amount_minor))}).
           <Button
             onClick={() =>
-              void transact("user", txnRestoreOps(deleted), `money:${deleted.id}`).then(() =>
-                setDeleted(null),
-              )
+              void transact(
+                "user",
+                deleted.flatMap(txnRestoreOps),
+                `money:${deleted[0]?.id ?? ""}`,
+              ).then(() => setDeleted(null))
             }
           >
             Undo
@@ -454,6 +508,8 @@ function LedgerView({ month, today }: { month: string; today: string }) {
                 key={row.id}
                 row={row}
                 categories={categories.rows}
+                accounts={accounts.rows}
+                halves={halvesOf(row)}
                 onDeleted={setDeleted}
               />
             ))}
@@ -644,11 +700,264 @@ export function TodayMoney({
   );
 }
 
+const TAB_NAMES = {
+  month: "Month",
+  ledger: "Ledger",
+  accounts: "Accounts",
+  categories: "Categories",
+} as const;
+
+function AccountItem({
+  account,
+  all,
+  today,
+}: {
+  account: AccountRow;
+  all: AccountRow[];
+  today: string;
+}) {
+  const [name, setName] = useState(account.name);
+  const [typed, setTyped] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const balance = balanceOf(account);
+  const write = (ops: Op[], done?: string) =>
+    transact("user", ops, `account:${account.id}`)
+      .then(() => {
+        if (done) setNote(done);
+      })
+      .catch((failure: unknown) => setNote(`Couldn't change it: ${message(failure)}`));
+  const reconcile = () => {
+    const minor = parseAmount(typed.replace(/^\s*-/, ""));
+    if (minor === null) {
+      setNote("The balance your bank or app shows, like 12,400.");
+      return;
+    }
+    const signed = typed.trim().startsWith("-") ? -minor : minor;
+    void query<{ minor: number }>(DAY_MOVED_SQL, [account.id, today]).then(([moved]) => {
+      const text = reconcileText(account, signed);
+      const ops = reconcileOps(
+        account,
+        signed,
+        today,
+        moved?.minor ?? 0,
+        systemClock.now(),
+        ulid(),
+      );
+      setTyped("");
+      if (ops.length === 0) setNote(text);
+      else void write(ops, text);
+    });
+  };
+  return (
+    <li className="task">
+      <span className="row task-meta">
+        <input
+          className="category-name"
+          aria-label={`Name of ${account.name}`}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        {name.trim() !== account.name && (
+          <Button
+            onClick={() => {
+              const problem = checkAccountName(name, all, account.id);
+              if (problem) setNote(problem);
+              else void write(renameAccountOps(account.id, name));
+            }}
+          >
+            Rename
+          </Button>
+        )}
+        <strong>{balance === null ? "Balance not set" : formatAmount(balance)}</strong>
+        {account.pays_in === 1 && <span className="meta">pay lands here</span>}
+      </span>
+      <span className="row task-meta">
+        <input
+          className="category-name"
+          inputMode="decimal"
+          aria-label={`Balance of ${account.name} now`}
+          placeholder={balance === null ? "Balance now" : "Bank shows…"}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+        />
+        <Button onClick={reconcile} disabled={!typed.trim()}>
+          {balance === null ? "Set" : "Check"}
+        </Button>
+        {account.pays_in !== 1 && (
+          <Button
+            onClick={() => void write(setPayAccountOps(account.id, all), "Pay will land here.")}
+          >
+            Pay lands here
+          </Button>
+        )}
+        <Button onClick={() => void write(hideAccountOps(account.id))}>Hide</Button>
+      </span>
+      {note && (
+        <p className="meta" role="status">
+          {note}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: string }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <form
+      className="row task-filters"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const minor = parseAmount(amount) ?? 0;
+        const problem = checkTransfer(from, to, minor);
+        const source = accounts.find((account) => account.id === from);
+        const target = accounts.find((account) => account.id === to);
+        if (problem || !source || !target) {
+          setNote(problem ?? "Pick both accounts.");
+          return;
+        }
+        void transact(
+          "user",
+          transferOps({
+            from: source,
+            to: target,
+            amount: minor,
+            date: today,
+            nowMs: systemClock.now(),
+            ids: [ulid(), ulid()],
+            transferId: ulid(),
+          }),
+          "transfer",
+        )
+          .then(() => {
+            setNote(`Moved ${formatAmount(minor)} from ${source.name} to ${target.name}.`);
+            setAmount("");
+          })
+          .catch((failure: unknown) => setNote(`Couldn't move it: ${message(failure)}`));
+      }}
+    >
+      <span>Move</span>
+      <input
+        inputMode="decimal"
+        aria-label="Amount to move"
+        placeholder="2,000"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+      />
+      <select aria-label="From" value={from} onChange={(e) => setFrom(e.target.value)}>
+        <option value="">from…</option>
+        {accounts.map((account) => (
+          <option key={account.id} value={account.id}>
+            {account.name}
+          </option>
+        ))}
+      </select>
+      <select aria-label="To" value={to} onChange={(e) => setTo(e.target.value)}>
+        <option value="">to…</option>
+        {accounts.map((account) => (
+          <option key={account.id} value={account.id}>
+            {account.name}
+          </option>
+        ))}
+      </select>
+      <Button type="submit" primary>
+        Move
+      </Button>
+      {note && (
+        <span className="meta" role="status">
+          {note}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/** Accounts (T-058): balances, checking them against the bank, moving money. */
+function AccountsView({ today }: { today: string }) {
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<AccountRow["kind"]>("bank");
+  const [note, setNote] = useState<string | null>(null);
+  const { total, unknown } = totalBalance(accounts.rows);
+  return (
+    <>
+      <p>
+        <strong>{formatAmount(total)}</strong> in your accounts
+        {unknown > 0 && (
+          <span className="meta">
+            {" "}
+            · {unknown} without a balance yet: type what each one shows now
+          </span>
+        )}
+      </p>
+      <section className="card" aria-label="Accounts">
+        <ul className="task-list">
+          {accounts.rows.map((account) => (
+            <AccountItem key={account.id} account={account} all={accounts.rows} today={today} />
+          ))}
+        </ul>
+        <p className="meta">
+          A balance is what you typed plus everything recorded since. When the bank shows something
+          else, type it under Check: the difference is booked as unrecorded spending or income.
+        </p>
+      </section>
+      <TransferForm accounts={accounts.rows} today={today} />
+      <form
+        className="row task-filters"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const problem = checkAccountName(name, accounts.rows);
+          if (problem) {
+            setNote(problem);
+            return;
+          }
+          void transact("user", addAccountOps(name, kind, accounts.rows), "account")
+            .then(() => {
+              setNote(`Added ${name.trim()}.`);
+              setName("");
+            })
+            .catch((failure: unknown) => setNote(`Couldn't add it: ${message(failure)}`));
+        }}
+      >
+        <input
+          aria-label="New account"
+          placeholder="New account, e.g. Awash"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <select
+          aria-label="Kind of account"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as AccountRow["kind"])}
+        >
+          <option value="bank">Bank</option>
+          <option value="mobile">Mobile money</option>
+          <option value="cash">Cash</option>
+          <option value="other">Other (equb…)</option>
+        </select>
+        <Button type="submit">Add account</Button>
+        {note && (
+          <span className="meta" role="status">
+            {note}
+          </span>
+        )}
+      </form>
+      <p className="meta">
+        In the capture box: <code>lunch 120 @telebirr</code> spends from telebirr;{" "}
+        <code>moved 2000 cbe to telebirr</code> moves money between accounts.
+      </p>
+    </>
+  );
+}
+
 /** Money (proposal 1.1): the month at a glance, and every entry to find, fix or export. */
 export function Money() {
   const [today] = useState(() => logicalDate(systemClock.now()));
   const [month, setMonth] = useState(() => monthOf(today).from);
-  const [tab, setTab] = useState<"month" | "ledger" | "categories">("month");
+  const [tab, setTab] = useState<keyof typeof TAB_NAMES>("month");
   const isCurrent = month === monthOf(today).from;
   return (
     <main className="review money">
@@ -669,7 +978,7 @@ export function Money() {
         </div>
       </header>
       <div className="row" role="tablist" aria-label="View">
-        {(["month", "ledger", "categories"] as const).map((name) => (
+        {(Object.keys(TAB_NAMES) as (keyof typeof TAB_NAMES)[]).map((name) => (
           <button
             key={name}
             type="button"
@@ -678,12 +987,13 @@ export function Money() {
             className={tab === name ? "step current" : "step"}
             onClick={() => setTab(name)}
           >
-            {name === "month" ? "Month" : name === "ledger" ? "Ledger" : "Categories"}
+            {TAB_NAMES[name]}
           </button>
         ))}
       </div>
       {tab === "month" && <MonthView month={month} today={today} />}
       {tab === "ledger" && <LedgerView month={month} today={today} />}
+      {tab === "accounts" && <AccountsView today={today} />}
       {tab === "categories" && <CategoriesView />}
     </main>
   );

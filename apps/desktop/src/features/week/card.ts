@@ -151,14 +151,14 @@ export const SPEND_SQL = `
            AS past_minor
   FROM money_txns m
   LEFT JOIN money_categories c ON c.id = m.category_id
-  WHERE m.deleted_at IS NULL AND m.amount_minor < 0 AND m.local_date >= ?2 AND m.local_date < ?3
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL AND m.amount_minor < 0 AND m.local_date >= ?2 AND m.local_date < ?3
   GROUP BY COALESCE(c.name, 'Other')
   HAVING week_minor > 0 OR past_minor > 0
   ORDER BY week_minor DESC, past_minor DESC`;
 
 /** The first expense in the 4 weeks before (?1 = this Monday, ?2 = 4 weeks earlier). */
 export const SPEND_SINCE_SQL = `SELECT min(local_date) AS since FROM money_txns
-  WHERE deleted_at IS NULL AND amount_minor < 0 AND local_date >= ?2 AND local_date < ?1`;
+  WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor < 0 AND local_date >= ?2 AND local_date < ?1`;
 
 /** Weeks of history behind the average: 0 to 4, from the first expense in the window. */
 export function historyWeeks(since: string | null, thisMonday: string): number {

@@ -28,7 +28,7 @@ export const OPEN_DUE_SQL = `
 /** Expenses typed today, newest first. */
 export const SPENT_LIST_SQL = `
   SELECT id, description, amount_minor FROM money_txns
-  WHERE deleted_at IS NULL AND local_date = ?1 AND amount_minor < 0
+  WHERE deleted_at IS NULL AND transfer_id IS NULL AND local_date = ?1 AND amount_minor < 0
   ORDER BY occurred_at DESC`;
 
 /**
@@ -37,7 +37,7 @@ export const SPENT_LIST_SQL = `
  */
 export const CHIPS_SQL = `
   SELECT description, amount_minor, category_id, count(*) AS uses FROM money_txns
-  WHERE deleted_at IS NULL AND amount_minor < 0 AND local_date >= ?1
+  WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor < 0 AND local_date >= ?1
   GROUP BY lower(description), amount_minor
   HAVING count(*) >= 3
   ORDER BY uses DESC, description

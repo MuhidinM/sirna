@@ -20,6 +20,7 @@ export type WritableTable =
   | "money_templates"
   | "money_categories"
   | "money_learned"
+  | "money_accounts"
   | "area_items"
   | "routine_blocks"
   | "day_blocks"

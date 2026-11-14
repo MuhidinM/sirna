@@ -45,7 +45,7 @@ let clockStyle: ClockStyle = "western";
 /** Savings goal names, so `saved 500 laptop` reads as saving only when a goal fits. */
 let goalNames: string[] = [];
 /** Categories, corrections and jobs, so money lines land right (T-056). */
-let moneyContext: Pick<ParseOptions, "categories" | "learned" | "jobs"> = {};
+let moneyContext: Pick<ParseOptions, "categories" | "learned" | "jobs" | "accounts"> = {};
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
@@ -85,12 +85,16 @@ void Promise.all([
   query<{ id: string; name: string }>(
     "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
   ),
+  query<{ id: string; name: string; kind: string; pays_in: number }>(
+    "SELECT id, name, kind, pays_in FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
+  ),
 ])
-  .then(([categories, learned, jobs]) => {
+  .then(([categories, learned, jobs, accounts]) => {
     moneyContext = {
       categories,
       learned: Object.fromEntries(learned.map((row) => [row.id, row.category_id])),
       jobs,
+      accounts,
     };
   })
   .catch(() => undefined);

@@ -149,10 +149,27 @@ pub const TABLES: &[TableSpec] = &[
             "category_id",
             "origin",
             "area_id",
+            "transfer_id",
         ],
         has_created_at: true,
         soft_delete: true,
         has_user_edited_at: true,
+    },
+    // Accounts (T-058): balances are computed from opening + entries.
+    TableSpec {
+        name: "money_accounts",
+        id_column: "id",
+        columns: &[
+            "name",
+            "kind",
+            "opening_minor",
+            "opening_date",
+            "pays_in",
+            "sort_order",
+        ],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
     },
     // Categories corrected in the ledger, remembered per description (T-056).
     TableSpec {

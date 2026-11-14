@@ -3,6 +3,7 @@ import { type Op } from "../kernel/db";
 import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
+import { transferOps } from "../features/money/accounts";
 import { type MoneyItem, type Parsed } from "./parse";
 import { weekdayName } from "./when";
 
@@ -43,10 +44,17 @@ function moneyOp(item: MoneyItem, nowMs: number, id: string): Op {
       category_id: item.categoryId,
       // Income from a job you named: the Money page groups by it.
       area_id: item.jobId ?? null,
+      ...(item.account ? { account: item.account } : {}),
       origin: "capture",
     },
   };
 }
+
+/** " · telebirr" when it isn't the usual account (cash for spending). */
+const accountOf = (item: MoneyItem) =>
+  item.accountName && !(item.kind === "expense" && item.account === "cash")
+    ? ` · ${item.accountName}`
+    : "";
 
 const categoryOf = (item: MoneyItem) =>
   item.categoryName ?? CATEGORY_NAMES[item.categoryId] ?? "Other";
@@ -94,6 +102,17 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
       return [moneyOp(parsed, nowMs, newId())];
     case "money":
       return parsed.items.map((item) => moneyOp(item, nowMs, newId()));
+    case "transfer":
+      return transferOps({
+        from: { id: parsed.from, name: parsed.fromName },
+        to: { id: parsed.to, name: parsed.toName },
+        amount: parsed.amount,
+        date: parsed.date,
+        nowMs,
+        ids: [newId(), newId()],
+        transferId: newId(),
+        origin: "capture",
+      });
     case "idea":
       return [
         {
@@ -197,10 +216,12 @@ export function echo(
         : "";
       return `Task${when}${size}${area}`;
     }
+    case "transfer":
+      return `Moved ${formatAmount(parsed.amount)} · ${parsed.fromName} → ${parsed.toName}`;
     case "expense":
-      return `${formatAmount(parsed.amount)} · ${categoryOf(parsed)}${area}`;
+      return `${formatAmount(parsed.amount)} · ${categoryOf(parsed)}${accountOf(parsed)}${area}`;
     case "income":
-      return `Income · ${formatAmount(parsed.amount)} · ${parsed.jobName ?? categoryOf(parsed)}${area}`;
+      return `Income · ${formatAmount(parsed.amount)} · ${parsed.jobName ?? categoryOf(parsed)}${accountOf(parsed)}${area}`;
     case "money": {
       const out = parsed.items.filter((item) => item.kind === "expense");
       const total = out.reduce((sum, item) => sum + item.amount, 0);
