@@ -32,6 +32,8 @@ pub const TABLES: &[TableSpec] = &[
             "first_step",
             "status",
             "due_date",
+            "planned_date",
+            "deadline_stale",
             "due_at",
             "remind_at",
             "estimate_min",

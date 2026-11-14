@@ -35,6 +35,8 @@ interface TaskRow extends Record<string, string | number | null> {
   due_at: number | null;
   estimate_min: number | null;
   area_id: string | null;
+  planned_date: string | null;
+  deadline_stale: number;
 }
 
 /** A task this long can be split into steps (plan §7.3, the AI's suggestion). */
@@ -48,9 +50,10 @@ export function SplitTask({
   task,
   onClose,
 }: {
-  task: Pick<TaskRow, "id" | "title" | "estimate_min" | "area_id" | "due_date"> & {
-    project_id?: string | null;
-  };
+  task: Pick<TaskRow, "id" | "title" | "estimate_min" | "area_id" | "due_date"> &
+    Partial<Pick<TaskRow, "planned_date" | "deadline_stale">> & {
+      project_id?: string | null;
+    };
   onClose: () => void;
 }) {
   const [state, setState] = useState<SplitReply | "asking" | string>("asking");

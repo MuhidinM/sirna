@@ -17,9 +17,11 @@ export function todayParams(nowMs: number): [string, number] {
 
 /** Open tasks due today or earlier that aren't in the top 3. */
 export const DUE_SQL = `
-  SELECT id, title, 'todo' AS status, due_date, due_at, estimate_min, area_id FROM task_items
-  WHERE deleted_at IS NULL AND status = 'todo' AND due_date <= ?1
-  ORDER BY due_date, CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at
+  SELECT t.id, t.title, 'todo' AS status, CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date, t.due_at, t.estimate_min,
+         t.area_id, t.planned_date, t.deadline_stale
+  FROM task_items t
+  WHERE t.deleted_at IS NULL AND t.status = 'todo' AND COALESCE(t.planned_date, t.due_date) <= ?1
+  ORDER BY CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END, CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END, t.due_at
   LIMIT 20`;
 
 /** Things waiting on someone else. */
