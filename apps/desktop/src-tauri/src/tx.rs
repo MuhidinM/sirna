@@ -34,6 +34,8 @@ pub const TABLES: &[TableSpec] = &[
             "due_date",
             "planned_date",
             "deadline_stale",
+            "parent_id",
+            "step_no",
             "due_at",
             "remind_at",
             "estimate_min",

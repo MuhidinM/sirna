@@ -12,6 +12,7 @@ import {
   COUNTS_SQL,
   filterTasks,
   statusOps,
+  stepLabel,
   type TaskDraft,
   taskDraftOf,
   taskEditOps,
@@ -242,7 +243,12 @@ function TaskItem({
           disabled={view === "dropped"}
           onChange={() => move(row.status === "done" ? "todo" : "done")}
         />
-        <span className={row.status === "done" ? "done" : undefined}>{row.title}</span>
+        <span className={row.status === "done" ? "done" : undefined}>
+          {stepLabel(row.step_no, row.step_total) && (
+            <span className="meta">{stepLabel(row.step_no, row.step_total)} </span>
+          )}
+          {row.title}
+        </span>
       </label>
       <span className="row task-meta">
         {row.area_name && (

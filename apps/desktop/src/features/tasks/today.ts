@@ -18,9 +18,16 @@ export function todayParams(nowMs: number): [string, number] {
 /** Open tasks due today or earlier that aren't in the top 3. */
 export const DUE_SQL = `
   SELECT t.id, t.title, 'todo' AS status, CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date, t.due_at, t.estimate_min,
-         t.area_id, t.planned_date, t.deadline_stale
+         t.area_id, t.planned_date, t.deadline_stale, t.step_no,
+         (SELECT count(*) FROM task_items AS step
+          WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total
   FROM task_items t
   WHERE t.deleted_at IS NULL AND t.status = 'todo' AND COALESCE(t.planned_date, t.due_date) <= ?1
+    -- A later step waits for the steps before it (T-051).
+    AND NOT EXISTS (
+      SELECT 1 FROM task_items AS before_step
+      WHERE before_step.parent_id = t.parent_id AND before_step.step_no < t.step_no
+        AND before_step.status IN ('todo', 'waiting') AND before_step.deleted_at IS NULL)
   ORDER BY CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END, CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END, t.due_at
   LIMIT 20`;
 
