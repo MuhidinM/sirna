@@ -28,6 +28,7 @@ import {
   txnRestoreOps,
   type TxnRow,
   TXNS_SQL,
+  usualByCategory,
 } from "../features/money/money";
 import { shiftDate } from "../features/plan/dayplan";
 import {
@@ -74,6 +75,18 @@ import {
   type PersonBalance,
 } from "../features/money/loans";
 import {
+  EMERGENCY_MONTHS,
+  EMERGENCY_TITLE,
+  emergencyTarget,
+  essentialMonth,
+  GOAL_MONTH_SQL,
+  isEmergency,
+  monthsCovered,
+  safeLine,
+  safeToSpend,
+} from "../features/money/safe";
+import { addGoalOps, type GoalRow, GOALS_SQL } from "../features/savings/savings";
+import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
   CATEGORY_TEMPLATES_SQL,
@@ -114,6 +127,139 @@ function useMonth(month: string, today: string) {
     today: asOf,
   });
   return { txns, summary, current: to >= today, loading: txns.loading || history.loading };
+}
+
+/** Safe to spend for the month `today` is in (T-062). */
+export function useSafe(today: string) {
+  const { from, to, days } = monthOf(today);
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
+  const saved = useLiveQuery<{ goal_id: string; minor: number }>(GOAL_MONTH_SQL, [from, to]);
+  const { items, loading } = useDue(today);
+  const safe = safeToSpend({
+    accounts: accounts.rows,
+    goals: goals.rows,
+    savedThisMonth: Object.fromEntries(saved.rows.map((row) => [row.goal_id, row.minor])),
+    due: items,
+    today,
+    daysInMonth: days,
+  });
+  return {
+    safe,
+    goals: goals.rows,
+    loading: loading || accounts.loading || goals.loading || saved.loading,
+  };
+}
+
+function SafeCard({ today }: { today: string }) {
+  const { safe, loading } = useSafe(today);
+  const [open, setOpen] = useState(false);
+  if (loading) return null;
+  if (!safe.known)
+    return (
+      <p className="meta">
+        Set what one of your accounts shows (Accounts tab) and Sirna can tell you what is safe to
+        spend each day, after bills, pay still to come and your goals.
+      </p>
+    );
+  return (
+    <section className="card" aria-labelledby="safe">
+      <h2 id="safe">Safe to spend</h2>
+      <p className={safe.total <= 0 ? "warn-text" : undefined}>
+        <strong>{safeLine(safe)}</strong>
+        <span className="meta"> · {safe.daysLeft} days left</span>
+      </p>
+      <Button onClick={() => setOpen((shown) => !shown)}>{open ? "Hide the sum" : "How?"}</Button>
+      {open && (
+        <ul className="plain-list">
+          {safe.lines.map((line) => (
+            <li key={line.label} className="row money-line">
+              <span>{line.label}</span>
+              <span>
+                {line.amount < 0 ? "−" : "+"}
+                {formatAmount(Math.abs(line.amount))}
+              </span>
+            </li>
+          ))}
+          <li className="row money-line">
+            <strong>Safe to spend</strong>
+            <strong>{formatAmount(safe.total)}</strong>
+          </li>
+        </ul>
+      )}
+      {safe.unknownAccounts > 0 && (
+        <p className="meta">
+          {safe.unknownAccounts} account{safe.unknownAccounts === 1 ? "" : "s"} without a balance
+          yet aren&apos;t counted.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function EmergencyCard({ today }: { today: string }) {
+  const { goals, loading } = useSafe(today);
+  const history = useLiveQuery<HistoryRow & Record<string, string | number | null>>(
+    HISTORY_SQL,
+    historyParams(today),
+  );
+  const [note, setNote] = useState<string | null>(null);
+  if (loading || history.loading) return null;
+  const month = essentialMonth(usualByCategory(history.rows));
+  const fund = goals.find((goal) => isEmergency(goal) && goal.status !== "done");
+  if (fund) {
+    const covered = monthsCovered(fund.saved_minor, month);
+    return (
+      <p>
+        Emergency fund:{" "}
+        <strong>
+          {covered === null
+            ? formatAmount(Math.max(0, fund.saved_minor))
+            : `covers ${covered} months`}
+        </strong>
+        <span className="meta">
+          {" "}
+          of essentials · aim for {EMERGENCY_MONTHS}
+          {month !== null ? ` (${formatAmount(month)} a month)` : ""}
+        </span>
+      </p>
+    );
+  }
+  return (
+    <p className="row">
+      <span className="meta">
+        No emergency fund yet. {EMERGENCY_MONTHS} months of essentials
+        {month !== null
+          ? ` is about ${formatAmount(emergencyTarget(month))}`
+          : " (known after a month of entries)"}
+        .
+      </span>
+      {month !== null && (
+        <Button
+          onClick={() =>
+            void transact(
+              "user",
+              addGoalOps(
+                { title: EMERGENCY_TITLE, target: String(emergencyTarget(month) / 100) },
+                today,
+                ulid(),
+              ),
+              "savings",
+            )
+              .then(() => setNote("Started. Put money aside in it under Savings."))
+              .catch((failure: unknown) => setNote(`Couldn't start it: ${message(failure)}`))
+          }
+        >
+          Start one
+        </Button>
+      )}
+      {note && (
+        <span className="meta" role="status">
+          {note}
+        </span>
+      )}
+    </p>
+  );
 }
 
 function MonthView({ month, today }: { month: string; today: string }) {
@@ -160,6 +306,8 @@ function MonthView({ month, today }: { month: string; today: string }) {
           Day {summary.day} of {summary.days}. Left = in − out − saved this month.
         </p>
       )}
+      {current && <SafeCard today={today} />}
+      {current && <EmergencyCard today={today} />}
 
       {summary.sources.length > 0 && (
         <section className="card" aria-labelledby="money-in">
@@ -716,11 +864,17 @@ export function TodayMoney({
   onOpen?: (() => void) | undefined;
 }) {
   const { summary, loading } = useMonth(monthOf(today).from, today);
-  if (loading) return null;
+  const { safe, loading: safeLoading } = useSafe(today);
+  if (loading || safeLoading) return null;
+  const short = (minor: number) => formatAmount(minor).replace(/ ETB$/, "");
   return (
     <>
       <p className="row money-today">
-        <span>{moneyLine(summary, spentToday)}</span>
+        <span>
+          {safe.known
+            ? `Spent ${short(spentToday)} today · ${safeLine(safe)}`
+            : moneyLine(summary, spentToday)}
+        </span>
         {onOpen && <Button onClick={onOpen}>Money</Button>}
       </p>
       <TodayDue today={today} />
