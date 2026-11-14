@@ -23,7 +23,8 @@ import { BRIEF } from "../features/ai/touchpoints";
 import { calendarCheck, readStatus, SYNC_KEY } from "../features/calendar/sync";
 import { dueLines } from "../features/money/regulars";
 import { useInsights } from "./Insights";
-import { useDue } from "./Money";
+import { followUpLines } from "../features/money/loans";
+import { useDue, useLoans } from "./Money";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -87,6 +88,7 @@ export function Brief({
   const found = useInsights(today);
   const checks = useChecks();
   const due = useDue(today);
+  const loans = useLoans();
   const [reopened, setReopened] = useState(false);
   const ready =
     !settings.loading &&
@@ -95,6 +97,7 @@ export function Brief({
     !risky.loading &&
     found !== null &&
     !due.loading &&
+    !loans.loading &&
     checks !== undefined;
 
   useEffect(() => {
@@ -125,7 +128,7 @@ export function Brief({
     changed: changed.rows[0],
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
-    due: dueLines(due.items),
+    due: [...dueLines(due.items), ...followUpLines(loans.people, today)],
     calendar: calendarCheck(
       readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),
     ),

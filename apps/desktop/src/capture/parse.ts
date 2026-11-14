@@ -23,6 +23,16 @@ export type Parsed =
   | MoneyItem
   /** Several entries on one line: `lunch 120, taxi 40`. */
   | { kind: "money"; items: MoneyItem[] }
+  /** Money lent or owed (T-061): `lent 1000 abel`, `abel paid back 400`. */
+  | {
+      kind: "loan";
+      loanKind: "lent" | "borrowed" | "paid_me" | "i_paid";
+      person: string;
+      amount: Santim;
+      date: string;
+      account?: string;
+      accountName?: string;
+    }
   /** Between your own accounts: `moved 2000 cbe to telebirr`. */
   | {
       kind: "transfer";
@@ -114,6 +124,90 @@ function readAccount(text: string, accounts: AccountOption[]) {
 
 const TRANSFER =
   /^(?:moved|move|transferred|transfer)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)\s+(?:from\s+)?@?([\p{L}\p{N}_-]+)\s+(?:to|into)\s+@?([\p{L}\p{N}_-]+)$/iu;
+
+const LOAN_AMOUNT = String.raw`((?:etb\s*)?\d[\d.,]*k?(?:\s?(?:etb|birr|br))?)`;
+const LOAN_PERSON = String.raw`([\p{L}][\p{L}'-]*(?:\s[\p{L}][\p{L}'-]*)?)`;
+const LOAN_FORMS: [
+  RegExp,
+  "lent" | "borrowed" | "paid_me" | "i_paid",
+  "amount-first" | "person-first",
+][] = [
+  [
+    new RegExp(
+      String.raw`^(?:lent|loaned|gave a loan of)\s+${LOAN_AMOUNT}\s+(?:to\s+)?${LOAN_PERSON}$`,
+      "iu",
+    ),
+    "lent",
+    "amount-first",
+  ],
+  [
+    new RegExp(String.raw`^(?:lent|loaned)\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    "lent",
+    "person-first",
+  ],
+  [
+    new RegExp(String.raw`^borrowed\s+${LOAN_AMOUNT}\s+(?:from\s+)?${LOAN_PERSON}$`, "iu"),
+    "borrowed",
+    "amount-first",
+  ],
+  [
+    new RegExp(String.raw`^borrowed\s+(?:from\s+)?${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    "borrowed",
+    "person-first",
+  ],
+  [
+    new RegExp(
+      String.raw`^${LOAN_PERSON}\s+(?:paid (?:me )?back|paid me|returned|gave back)\s+${LOAN_AMOUNT}$`,
+      "iu",
+    ),
+    "paid_me",
+    "person-first",
+  ],
+  [
+    new RegExp(String.raw`^got\s+${LOAN_AMOUNT}\s+back\s+from\s+${LOAN_PERSON}$`, "iu"),
+    "paid_me",
+    "amount-first",
+  ],
+  [
+    new RegExp(String.raw`^(?:paid back|repaid|returned)\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    "i_paid",
+    "person-first",
+  ],
+  [
+    new RegExp(String.raw`^paid\s+${LOAN_PERSON}\s+back\s+${LOAN_AMOUNT}$`, "iu"),
+    "i_paid",
+    "person-first",
+  ],
+  [
+    new RegExp(String.raw`^(?:paid back|repaid)\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`, "iu"),
+    "i_paid",
+    "amount-first",
+  ],
+];
+
+/** `lent 1000 abel`, `borrowed 500 from sara`, `abel paid back 400`, `paid back sara 500`. */
+function readLoan(text: string, options: ParseOptions): Parsed | undefined {
+  const { rest, account } = readAccount(text, options.accounts ?? []);
+  for (const [pattern, loanKind, order] of LOAN_FORMS) {
+    const match = pattern.exec(rest);
+    if (!match) continue;
+    const [amountText, person] =
+      order === "amount-first" ? [match[1], match[2]] : [match[2], match[1]];
+    const amount = parseAmount(amountText ?? "");
+    if (amount === null || amount <= 0 || !person) continue;
+    const fallback = (options.accounts ?? []).find((a) => a.kind === "cash");
+    const chosen = account ?? fallback;
+    return {
+      kind: "loan",
+      loanKind,
+      person: person.trim(),
+      amount,
+      date: logicalDate(options.nowMs),
+      ...(chosen ? { account: chosen.id, accountName: chosen.name } : {}),
+    };
+  }
+  return undefined;
+}
 
 /** `moved 2000 cbe to telebirr`: only when both are your accounts. */
 function readTransfer(text: string, options: ParseOptions): Parsed | undefined {
@@ -390,6 +484,8 @@ const isMoney = (parsed: Parsed): parsed is MoneyItem =>
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const transfer = readTransfer(raw.trim().replace(/\s+/g, " "), options);
   if (transfer) return transfer;
+  const loan = readLoan(raw.trim().replace(/\s+/g, " "), options);
+  if (loan) return loan;
   const parsed = parseMoneyLine(raw, options);
   if (isMoney(parsed)) return parsed;
   // `lunch 120, taxi 40`: several entries when every piece is money. A comma

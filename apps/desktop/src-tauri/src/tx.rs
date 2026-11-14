@@ -191,6 +191,23 @@ pub const TABLES: &[TableSpec] = &[
         soft_delete: true,
         has_user_edited_at: false,
     },
+    // Money lent and owed (T-061): one row per event.
+    TableSpec {
+        name: "money_loans",
+        id_column: "id",
+        columns: &[
+            "person",
+            "kind",
+            "amount_minor",
+            "local_date",
+            "account",
+            "note",
+            "follow_up_date",
+        ],
+        has_created_at: true,
+        soft_delete: true,
+        has_user_edited_at: false,
+    },
     // Categories corrected in the ledger, remembered per description (T-056).
     TableSpec {
         name: "money_learned",
