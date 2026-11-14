@@ -118,7 +118,7 @@ export function App() {
   else if (screen === "dashboard") page = <Dashboard />;
   else if (screen === "notes")
     page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
-  else page = <Today />;
+  else page = <Today onOpenMoney={() => go("money")} />;
   return (
     <div className="app-shell">
       <Nav current={screen} onGo={go} />
