@@ -23,6 +23,8 @@ export interface TaskListRow {
   due_date: string | null;
   planned_date: string | null;
   deadline_stale: number;
+  step_no: number | null;
+  step_total: number | null;
   estimate_min: number | null;
   area_id: string | null;
   area_name: string | null;
@@ -35,9 +37,19 @@ export interface TaskListRow {
   updated_at: number;
 }
 
+/** "2/5" for the second of five steps of a split task; empty otherwise. */
+export function stepLabel(
+  stepNo: number | null | undefined,
+  total: number | null | undefined,
+): string {
+  return stepNo && total && total > 1 ? `${stepNo}/${total}` : "";
+}
+
 /** ?1 status list as JSON; done and dropped show the last 60 days. */
 export const TASKS_SQL = `
 SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.deadline_stale,
+       t.step_no, (SELECT count(*) FROM task_items AS step
+                   WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total,
        t.estimate_min, t.area_id,
        a.name AS area_name, a.color AS area_color, t.project_id, p.title AS project_title,
        t.waiting_on, t.follow_up_date, t.completed_at, t.updated_at

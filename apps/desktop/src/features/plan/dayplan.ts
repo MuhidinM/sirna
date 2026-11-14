@@ -57,6 +57,11 @@ export const OPEN_TASKS_SQL = `
   WHERE t.deleted_at IS NULL AND t.status = 'todo'
     -- A task moved to a later day waits for that day (T-050).
     AND (t.planned_date IS NULL OR t.planned_date <= ?)
+    -- A later step of a split task waits for the steps before it (T-051).
+    AND NOT EXISTS (
+      SELECT 1 FROM task_items AS before_step
+      WHERE before_step.parent_id = t.parent_id AND before_step.step_no < t.step_no
+        AND before_step.status IN ('todo', 'waiting') AND before_step.deleted_at IS NULL)
   ORDER BY t.created_at`;
 
 export const CHOSEN_TOP_SQL =

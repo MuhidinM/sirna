@@ -9,6 +9,7 @@ import { splitOps } from "../features/ai/facts";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
+import { stepLabel } from "../features/tasks/list";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan } from "../features/plan/dayplan";
 import { formatAmount } from "../kernel/money";
@@ -37,6 +38,8 @@ interface TaskRow extends Record<string, string | number | null> {
   area_id: string | null;
   planned_date: string | null;
   deadline_stale: number;
+  step_no: number | null;
+  step_total: number | null;
 }
 
 /** A task this long can be split into steps (plan §7.3, the AI's suggestion). */
@@ -155,7 +158,12 @@ function TaskLine({ task, today }: { task: TaskRow; today: string }) {
     <li className="task">
       <label>
         <input type="checkbox" checked={task.status === "done"} onChange={() => toggle(task)} />
-        <span className={task.status === "done" ? "done" : undefined}>{task.title}</span>
+        <span className={task.status === "done" ? "done" : undefined}>
+          {stepLabel(task.step_no, task.step_total) && (
+            <span className="meta">{stepLabel(task.step_no, task.step_total)} </span>
+          )}
+          {task.title}
+        </span>
       </label>
       <span className="meta">
         {task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h · ` : ""}

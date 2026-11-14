@@ -161,7 +161,7 @@ export function splitOps(
   newId: () => string,
 ): Op[] {
   return [
-    ...steps.map((step): Op => ({
+    ...steps.map((step, index): Op => ({
       op: "insert",
       table: "task_items",
       id: newId(),
@@ -176,6 +176,9 @@ export function splitOps(
         project_id: task.project_id ?? null,
         estimate_min: step.minutes,
         origin: `split:${task.id}`,
+        // In order: step 2 is offered once step 1 is done (T-051).
+        parent_id: task.id,
+        step_no: index + 1,
       },
     })),
     { op: "update", table: "task_items", id: task.id, values: { status: "dropped" } },

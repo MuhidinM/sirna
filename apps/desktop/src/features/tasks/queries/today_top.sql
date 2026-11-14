@@ -4,16 +4,23 @@
 -- A task's day is its planned_date when set, else its deadline (T-050).
 -- A deadline an old carry may have written (deadline_stale) is not shown or
 -- ranked as a deadline until you confirm it.
+-- A later step of a split task waits until the steps before it are done (T-051).
 -- Rust reads the first three columns by position: keep id, title, status first.
 -- ?1 = logical date (YYYY-MM-DD), ?2 = start of that logical day (UTC epoch ms).
 -- Shared by the tray (Rust, include_str!) and the Today screen (TypeScript, ?raw).
 SELECT t.id, t.title, t.status, CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date, t.due_at, t.estimate_min,
-       t.area_id, t.planned_date, t.deadline_stale
+       t.area_id, t.planned_date, t.deadline_stale, t.step_no,
+       (SELECT count(*) FROM task_items AS step
+          WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total
 FROM task_items AS t
 LEFT JOIN task_daily_top AS top ON top.task_id = t.id AND top.logical_date = ?1
 WHERE t.deleted_at IS NULL
   AND (
-    (t.status = 'todo' AND (top.position IS NOT NULL OR COALESCE(t.planned_date, t.due_date) <= ?1))
+    (t.status = 'todo' AND (top.position IS NOT NULL OR COALESCE(t.planned_date, t.due_date) <= ?1)
+      AND NOT EXISTS (
+      SELECT 1 FROM task_items AS before_step
+      WHERE before_step.parent_id = t.parent_id AND before_step.step_no < t.step_no
+        AND before_step.status IN ('todo', 'waiting') AND before_step.deleted_at IS NULL))
     OR (t.status = 'done' AND t.completed_at >= ?2
         AND (top.position IS NOT NULL OR COALESCE(t.planned_date, t.due_date) <= ?1))
   )

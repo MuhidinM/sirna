@@ -333,6 +333,8 @@ describe("splitting a big task", () => {
           project_id: null,
           estimate_min: 30,
           origin: "split:big",
+          parent_id: "big",
+          step_no: 1,
         },
       },
       {
@@ -349,6 +351,8 @@ describe("splitting a big task", () => {
           project_id: null,
           estimate_min: 150,
           origin: "split:big",
+          parent_id: "big",
+          step_no: 2,
         },
       },
       { op: "update", table: "task_items", id: "big", values: { status: "dropped" } },
