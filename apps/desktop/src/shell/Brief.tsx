@@ -21,7 +21,9 @@ import { briefFacts } from "../features/ai/facts";
 import { isStrict, STRICT_SQL } from "../features/ai/strict";
 import { BRIEF } from "../features/ai/touchpoints";
 import { calendarCheck, readStatus, SYNC_KEY } from "../features/calendar/sync";
+import { dueLines } from "../features/money/regulars";
 import { useInsights } from "./Insights";
+import { useDue } from "./Money";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -84,6 +86,7 @@ export function Brief({
   const risky = useLiveQuery<RiskRow & Record<string, string | number | null>>(AT_RISK_SQL);
   const found = useInsights(today);
   const checks = useChecks();
+  const due = useDue(today);
   const [reopened, setReopened] = useState(false);
   const ready =
     !settings.loading &&
@@ -91,6 +94,7 @@ export function Brief({
     !changed.loading &&
     !risky.loading &&
     found !== null &&
+    !due.loading &&
     checks !== undefined;
 
   useEffect(() => {
@@ -121,6 +125,7 @@ export function Brief({
     changed: changed.rows[0],
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
+    due: dueLines(due.items),
     calendar: calendarCheck(
       readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),
     ),
