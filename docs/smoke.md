@@ -41,6 +41,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Insights:** after two weeks of sessions, the Dashboard's Insights card names your best focus window; the brief shows one INSIGHT line; with no AI key the week card still shows a plain summary (T-042).
 - **Arrange and accent:** Dashboard → Arrange: drag Savings above the streak, set Insights to S, hide The year; Done arranging; quit and start Sirna: the layout is the same. Settings → Accent Teal → Save: buttons and bars turn teal, in both themes (T-043).
 - **Calendar:** Settings → paste the Google Calendar secret iCal address → Sync now: "Synced: N events". Add an event in Google Calendar today, Sync now: it shows on Today as a fixed block and focus blocks move around it. Paste a wrong address: Settings says why in words and the brief shows a CHECK line (T-044).
+- **Desktop widget:** Settings → Windows → tick Desktop widget: it appears top right at once with Now, the timer and the top 3. Drag it by its top edge; quit and start Sirna: it comes back in the same place. Pick a cheat sheet: it shows under the list. Start a focus session: the ring counts down. Open a full-screen video: the widget hides, and returns after. Untick: it closes with no restart (T-045).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

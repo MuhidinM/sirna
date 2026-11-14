@@ -210,6 +210,11 @@ pub struct Checks {
     pub autostart_off: bool,
 }
 
+/// A full-screen app, game or presentation is in front (the widget hides).
+pub fn fullscreen() -> bool {
+    platform::busy()
+}
+
 pub fn checks(app: &AppHandle) -> Checks {
     use tauri_plugin_autostart::ManagerExt;
     let registered = app.autolaunch().is_enabled().unwrap_or(false);

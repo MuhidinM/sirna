@@ -9,7 +9,7 @@ pub const CAPTURE_LABEL: &str = "capture";
 pub const SETUP_LABEL: &str = "setup";
 
 /// The theme's background, so a new window never flashes white.
-const BACKGROUND: Color = Color(0x12, 0x12, 0x12, 0xff);
+pub const BACKGROUND: Color = Color(0x12, 0x12, 0x12, 0xff);
 
 /// Building a window inside a sync command or an event handler deadlocks on
 /// Windows, so every caller (tray, single-instance, toasts, hotkey) goes

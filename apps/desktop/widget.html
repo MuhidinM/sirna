@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sirna widget</title>
+  </head>
+
+  <body>
+    <main id="widget" class="widget">
+      <header class="widget-head" data-tauri-drag-region>
+        <span class="widget-brand" data-tauri-drag-region>Sirna</span>
+        <button id="widget-open" class="widget-open" type="button" title="Open Sirna">Open</button>
+      </header>
+      <p id="widget-now" class="widget-now"></p>
+      <section id="widget-timer" class="widget-timer" hidden>
+        <svg viewBox="0 0 44 44" class="widget-ring" aria-hidden="true">
+          <circle cx="22" cy="22" r="19" class="widget-ring-track" />
+          <circle id="widget-ring" cx="22" cy="22" r="19" class="widget-ring-fill" />
+        </svg>
+        <div>
+          <p id="widget-clock" class="widget-clock"></p>
+          <p id="widget-label" class="widget-meta"></p>
+        </div>
+      </section>
+      <ol id="widget-top" class="widget-top" aria-label="Top 3"></ol>
+      <section id="widget-note" class="widget-note" hidden>
+        <h2 id="widget-note-title"></h2>
+        <ul id="widget-note-lines"></ul>
+      </section>
+    </main>
+    <script type="module" src="/src/widget/main.ts"></script>
+  </body>
+</html>

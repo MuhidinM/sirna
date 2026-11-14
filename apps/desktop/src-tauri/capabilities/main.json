@@ -28,6 +28,7 @@
     "allow-ai-send",
     "allow-ai-models",
     "allow-ai-usage",
-    "allow-calendar-fetch"
+    "allow-calendar-fetch",
+    "allow-widget-apply"
   ]
 }

@@ -22,6 +22,7 @@ mod startup;
 mod tasks;
 mod tray;
 mod tx;
+mod widget;
 mod windows;
 
 use tauri::{Listener, Manager, RunEvent};
@@ -103,6 +104,8 @@ pub fn run() {
             // The morning brief: opens at the first unlock after wake time.
             let logon = std::env::args().any(|arg| arg == AUTOSTART_ARG);
             session::start(app.handle().clone(), logon);
+            // The desktop widget, if you turned it on.
+            widget::apply(app.handle());
             if startup::should_open_main(std::env::args()) {
                 windows::spawn_open_main(app.handle().clone());
             }
@@ -130,6 +133,8 @@ pub fn run() {
             commands::secret_set,
             commands::ai_send,
             commands::calendar_fetch,
+            commands::open_main,
+            commands::widget_apply,
             commands::ai_models,
             commands::ai_usage,
             commands::hotkey_current,

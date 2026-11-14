@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 
-import { transact } from "../kernel/db";
+import { type Op, transact } from "../kernel/db";
+import { CHEATS_SQL, WIDGET_ENABLED_KEY, WIDGET_NOTE_KEY, WIDGET_SQL } from "../widget/view";
 import {
   checkCap,
   cleanSecret,
@@ -256,6 +257,76 @@ function Autostart() {
   );
 }
 
+/**
+ * The desktop mini widget (plan §3.16): off by default, since it keeps one
+ * webview alive. Shown or closed at once, no restart.
+ */
+function DesktopWidget() {
+  const rows = useLiveQuery<{ key: string; value_json: string }>(WIDGET_SQL);
+  const cheats = useLiveQuery<{ id: string; title: string | null }>(CHEATS_SQL);
+  const [note, setNote] = useState("");
+  // One change at a time, so the window always ends up matching the switch.
+  const [busy, setBusy] = useState(false);
+  const value = (key: string) => rows.rows.find((row) => row.key === key)?.value_json;
+  const on = value(WIDGET_ENABLED_KEY) === "true";
+  let pinned = "";
+  try {
+    const parsed: unknown = JSON.parse(value(WIDGET_NOTE_KEY) ?? '""');
+    if (typeof parsed === "string") pinned = parsed;
+  } catch {
+    pinned = "";
+  }
+  const save = (ops: Op[], done: string) => {
+    setBusy(true);
+    return transact("user", ops, "widget")
+      .then(() => invoke("widget_apply"))
+      .then(() => setNote(done))
+      .catch((error: unknown) => setNote(`Couldn't change it: ${message(error)}`))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="setting">
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={rows.loading || busy}
+          onChange={(event) => {
+            const enabled = event.target.checked;
+            void save(
+              [setting(WIDGET_ENABLED_KEY, enabled)],
+              enabled ? "On: drag it by its top edge to place it" : "Off",
+            );
+          }}
+        />
+        Desktop widget: Now, the timer and the top 3
+      </label>
+      <p className="meta">
+        A small window on the desktop that hides while a full-screen app is in front. While it is on
+        it keeps one webview open, about 160 MB of memory; off, it uses none.
+      </p>
+      <label className="field">
+        <span>Cheat sheet under it</span>
+        <select
+          value={pinned}
+          disabled={!on || busy}
+          onChange={(event) => void save([setting(WIDGET_NOTE_KEY, event.target.value)], "Saved")}
+        >
+          <option value="">None</option>
+          {cheats.rows.map((cheat) => (
+            <option key={cheat.id} value={cheat.id}>
+              {cheat.title ?? "Untitled"}
+            </option>
+          ))}
+        </select>
+      </label>
+      <span className="meta" role="status">
+        {note}
+      </span>
+    </div>
+  );
+}
+
 interface AiUsage {
   has_key: boolean;
   model: string | null;
@@ -448,6 +519,7 @@ export function Settings() {
       <section className="card">
         <h2>Windows</h2>
         <Autostart />
+        <DesktopWidget />
       </section>
     </main>
   );
