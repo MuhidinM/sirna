@@ -14,10 +14,11 @@ export interface GoalRow {
   start_date: string;
   status: "active" | "done" | "paused";
   saved_minor: number;
+  target_date: string | null;
 }
 
 export const GOALS_SQL = `
-  SELECT g.id, g.title, g.target_minor, g.start_date, g.status,
+  SELECT g.id, g.title, g.target_minor, g.start_date, g.status, g.target_date,
          COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
                    WHERE e.goal_id = g.id AND e.deleted_at IS NULL), 0) AS saved_minor
   FROM savings_goals g
@@ -155,3 +156,67 @@ export function matchGoal(
 /** This week's saving, for the Sunday question. ?1 = this Monday, ?2 = next Monday. */
 export const WEEK_SAVED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor FROM savings_entries
   WHERE deleted_at IS NULL AND local_date >= ?1 AND local_date < ?2`;
+
+// --- Editing a goal and its pace (proposal 1.4) -----------------------------------
+
+export interface GoalEdit {
+  title: string;
+  target: string;
+  /** YYYY-MM-DD or "" for no date. */
+  targetDate: string;
+}
+
+export function checkGoalEdit(edit: GoalEdit, today: string): string | null {
+  const problem = checkGoal(edit);
+  if (problem) return problem;
+  if (edit.targetDate && !/^\d{4}-\d{2}-\d{2}$/.test(edit.targetDate))
+    return "A date like 2027-06-30.";
+  if (edit.targetDate && edit.targetDate < today) return "Pick a date from today on.";
+  return null;
+}
+
+export function goalEditOps(id: string, edit: GoalEdit): Op[] {
+  return [
+    {
+      op: "update",
+      table: "savings_goals",
+      id,
+      values: {
+        title: edit.title.trim(),
+        target_minor: parseAmount(edit.target.trim()) ?? 0,
+        target_date: edit.targetDate || null,
+      },
+    },
+  ];
+}
+
+const monthIndex = (date: string) => {
+  const [y = 0, m = 1] = date.split("-").map(Number);
+  return y * 12 + (m - 1);
+};
+
+export interface GoalPace {
+  /** Still to save. */
+  left: number;
+  /** A month to make the date, rounded up to whole birr; null without a date. */
+  needPerMonth: number | null;
+  /** Saved a month since the goal started, rounded down to whole birr. */
+  averagePerMonth: number;
+  /** Months counted, this month included. */
+  monthsLeft: number | null;
+}
+
+/**
+ * What a goal takes a month to make its date, against what you have saved a
+ * month so far. Calendar months, this one included, so a date this month
+ * means "all of it now". Rounded so nothing is overstated.
+ */
+export function goalPace(goal: GoalRow, today: string): GoalPace {
+  const left = Math.max(0, goal.target_minor - Math.max(0, goal.saved_minor));
+  const monthsSince = Math.max(1, monthIndex(today) - monthIndex(goal.start_date) + 1);
+  const averagePerMonth = Math.floor(Math.max(0, goal.saved_minor) / monthsSince / 100) * 100;
+  if (!goal.target_date) return { left, needPerMonth: null, averagePerMonth, monthsLeft: null };
+  const monthsLeft = Math.max(1, monthIndex(goal.target_date) - monthIndex(today) + 1);
+  const needPerMonth = Math.ceil(left / monthsLeft / 100) * 100;
+  return { left, needPerMonth, averagePerMonth, monthsLeft };
+}

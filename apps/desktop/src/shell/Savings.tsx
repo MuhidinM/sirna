@@ -9,7 +9,11 @@ import {
   addGoalOps,
   assignOps,
   checkGoal,
+  checkGoalEdit,
   checkTakeOut,
+  type GoalEdit,
+  goalEditOps,
+  goalPace,
   entryOps,
   type GoalDraft,
   type GoalRow,
@@ -26,9 +30,82 @@ import { useLiveQuery } from "./useLiveQuery";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** "1,250 a month to make June · you save about 900" (proposal 1.4). */
+function paceText(goal: GoalRow, today: string): string {
+  const pace = goalPace(goal, today);
+  if (pace.left === 0) return "Reached.";
+  const saving = `you save about ${formatAmount(pace.averagePerMonth)} a month`;
+  if (pace.needPerMonth === null) return `No date set · ${saving}.`;
+  const by = new Intl.DateTimeFormat("en-GB", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(Date.parse(`${goal.target_date}T00:00:00Z`));
+  const behind = pace.averagePerMonth < pace.needPerMonth;
+  return `${formatAmount(pace.needPerMonth)} a month to make ${by} · ${saving}${behind ? ", behind" : ""}.`;
+}
+
+function GoalEditForm({ goal, onDone }: { goal: GoalRow; onDone: () => void }) {
+  const [edit, setEdit] = useState<GoalEdit>({
+    title: goal.title,
+    target: String(goal.target_minor / 100),
+    targetDate: goal.target_date ?? "",
+  });
+  const [error, setError] = useState<string | null>(null);
+  const set = (part: Partial<GoalEdit>) => setEdit((old) => ({ ...old, ...part }));
+  return (
+    <form
+      className="row new-goal"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const problem = checkGoalEdit(edit, logicalDate(systemClock.now()));
+        if (problem) {
+          setError(problem);
+          return;
+        }
+        transact("user", goalEditOps(goal.id, edit), `savings:${goal.id}`)
+          .then(onDone)
+          .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+      }}
+    >
+      <label className="field">
+        <span>Name</span>
+        <input value={edit.title} onChange={(e) => set({ title: e.target.value })} />
+      </label>
+      <label className="field">
+        <span>Target (ETB)</span>
+        <input
+          inputMode="decimal"
+          value={edit.target}
+          onChange={(e) => set({ target: e.target.value })}
+        />
+      </label>
+      <label className="field">
+        <span>Reach it by (optional)</span>
+        <input
+          type="date"
+          value={edit.targetDate}
+          onChange={(e) => set({ targetDate: e.target.value })}
+        />
+      </label>
+      <Button type="submit" primary>
+        Save
+      </Button>
+      <Button onClick={onDone}>Cancel</Button>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
 function GoalCard({ goal }: { goal: GoalRow }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [editing, setEditing] = useState(false);
+  const today = logicalDate(systemClock.now());
   const share = shareSaved(goal);
   const stage = stageOf(share);
   const move = (sign: 1 | -1) => {
@@ -65,6 +142,8 @@ function GoalCard({ goal }: { goal: GoalRow }) {
             · {Math.round(share * 100)}% · {STAGE_NAMES[stage]}
           </span>
         </span>
+        <span className="meta">{paceText(goal, today)}</span>
+        {editing && <GoalEditForm goal={goal} onDone={() => setEditing(false)} />}
         <div className="row">
           <input
             inputMode="decimal"
@@ -78,6 +157,7 @@ function GoalCard({ goal }: { goal: GoalRow }) {
           />
           <Button onClick={() => move(1)}>Put aside</Button>
           <Button onClick={() => move(-1)}>Take out</Button>
+          {!editing && <Button onClick={() => setEditing(true)}>Edit</Button>}
           {stage === 5 && (
             <Button
               primary

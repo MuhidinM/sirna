@@ -45,6 +45,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Deadline kept:** add `t: send CV by 30 nov`; in the night review press All the rest to tomorrow: on Tasks it shows "on <tomorrow> · due 30 nov", and it is gone from today's list. Old carried tasks show "check deadline" until you open and save them (T-050).
 - **Steps in order:** split a 3-hour task with AI on Today: only "1/N" shows on Today and in the plan; tick it done and "2/N" appears (T-051).
 - **Money page:** Money → Month shows in / out / saved / left and "about N a day"; Ledger: search "lunch", edit an amount, delete one and press Undo, Export CSV opens a download (T-054).
+- **Categories and goals:** Money → Categories: add Fuel, rename it, merge Other into Transport (the entries move). On a goal press Edit, set a date: the line says what it takes a month (T-055).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

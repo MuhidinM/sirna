@@ -1129,3 +1129,18 @@ input[type="number"] {
   flex-wrap: nowrap;
   align-items: center;
 }
+
+.category-name,
+.money .task-meta select {
+  min-width: 12rem;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-2);
+  font: inherit;
+}
+
+.money .task-meta select {
+  min-width: 9rem;
+}

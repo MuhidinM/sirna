@@ -8,6 +8,9 @@ import { openTestDb } from "../../test/sqlite";
 import {
   addGoalOps,
   checkGoal,
+  checkGoalEdit,
+  goalEditOps,
+  goalPace,
   entryOps,
   type GoalRow,
   GOALS_SQL,
@@ -67,6 +70,7 @@ describe("goals and entries", () => {
         target_minor: 10_000_000,
         start_date: "2026-11-12",
         status: "active",
+        target_date: null,
         saved_minor: 4_300_000,
       },
     ]);
@@ -193,5 +197,60 @@ describe("review fixes", () => {
     apply(db, entryOps(null, 50_000, NOW, "2026-11-12", "e1", "capture"));
     apply(db, assignOps(["e1"], "g1"));
     expect(goals(db)[0]?.saved_minor).toBe(50_000);
+  });
+});
+
+describe("editing a goal and its pace (T-055)", () => {
+  const goal = (over: Partial<GoalRow>): GoalRow => ({
+    id: "g",
+    title: "Laptop",
+    target_minor: 6_000_000,
+    start_date: "2026-09-10",
+    status: "active",
+    saved_minor: 1_500_000,
+    target_date: "2027-06-30",
+    ...over,
+  });
+
+  it("says what it takes a month to make the date, against what you save", () => {
+    // 45,000 left over Nov … Jun (8 months) = 5,625 a month; 15,000 over Sep … Nov = 5,000.
+    expect(goalPace(goal({}), "2026-11-14")).toEqual({
+      left: 4_500_000,
+      needPerMonth: 562_500,
+      averagePerMonth: 500_000,
+      monthsLeft: 8,
+    });
+    // Rounded up to whole birr for what you need, down for what you did.
+    expect(
+      goalPace(goal({ target_minor: 1_000_001, saved_minor: 0 }), "2026-11-14").needPerMonth,
+    ).toBe(125_100);
+    expect(goalPace(goal({ target_date: "2026-11-30" }), "2026-11-14").needPerMonth).toBe(
+      4_500_000,
+    );
+    expect(goalPace(goal({ target_date: null }), "2026-11-14").needPerMonth).toBeNull();
+    expect(goalPace(goal({ saved_minor: -500 }), "2026-11-14")).toMatchObject({
+      left: 6_000_000,
+      averagePerMonth: 0,
+    });
+  });
+
+  it("checks and writes an edit", () => {
+    const edit = { title: " New laptop ", target: "70k", targetDate: "2027-06-30" };
+    expect(checkGoalEdit(edit, "2026-11-14")).toBeNull();
+    expect(checkGoalEdit({ ...edit, targetDate: "2026-01-01" }, "2026-11-14")).toMatch(
+      /from today/,
+    );
+    expect(checkGoalEdit({ ...edit, target: "lots" }, "2026-11-14")).toMatch(/Target/);
+    expect(goalEditOps("g", edit)).toEqual([
+      {
+        op: "update",
+        table: "savings_goals",
+        id: "g",
+        values: { title: "New laptop", target_minor: 7_000_000, target_date: "2027-06-30" },
+      },
+    ]);
+    expect(goalEditOps("g", { ...edit, targetDate: "" })[0]).toMatchObject({
+      values: { target_date: null },
+    });
   });
 });
