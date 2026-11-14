@@ -10,11 +10,16 @@ const page = (name: string) => fileURLToPath(new URL(`./${name}.html`, import.me
 export default defineConfig(() => ({
   plugins: [react()],
 
-  // Three pages: the main window (React), and the capture box and focus set-up sheet
-  // (plain TypeScript, kept small).
+  // Four pages: the main window (React), and the capture box, focus set-up sheet and
+  // desktop widget (plain TypeScript, kept small).
   build: {
     rollupOptions: {
-      input: { main: page("index"), capture: page("capture"), setup: page("setup") },
+      input: {
+        main: page("index"),
+        capture: page("capture"),
+        setup: page("setup"),
+        widget: page("widget"),
+      },
     },
   },
 

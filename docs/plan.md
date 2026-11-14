@@ -394,7 +394,7 @@ Three kinds, cheapest first:
 |---|---|---|---|
 | **In-app widgets** | The dashboard is a grid of cards (focus tiles, streak, year chart, savings plant, a cheat sheet, area bars). Drag to reorder, hide, resize S/M/L. Layout saved in settings. | None extra | M5 |
 | **Tray widget** | The native tray menu already shows Now, the timer and the top 3 with no webview (§4.1). | None | M2 |
-| **Desktop mini widget** | A small frameless window you place on the desktop: Now + timer ring + top 3, optional cheat sheet below. Not always-on-top by default; hides when an app is full-screen. | One webview while shown (~60–100 MB, unmeasured) | M7, **off by default**; turned on in Settings after M0's numbers are known |
+| **Desktop mini widget** | A small frameless window you place on the desktop: Now + timer ring + top 3, optional cheat sheet below. Not always-on-top by default; hides when an app is full-screen. | One webview while shown (160 MB measured, T-045) | M7, **off by default**; turned on in Settings after M0's numbers are known |
 | Windows 11 Widgets board (Win+W) | A Sirna card in Windows' own widget panel | Needs a packaged (MSIX) app and a COM widget provider. **Unverified with Tauri.** | Cut list |
 
 The desktop widget reads the same views as Today (`v_today`) and refreshes on `data-changed`. It is a second window, so it is destroyed when switched off and measured like `main` (§10).

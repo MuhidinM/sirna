@@ -252,6 +252,18 @@ mod tests {
     }
 }
 
+/// Opens (or brings up) the main window; the widget's Open button.
+#[tauri::command]
+pub fn open_main(app: AppHandle) {
+    crate::windows::spawn_open_main(app);
+}
+
+/// Opens or closes the desktop widget to match its setting (Settings switch).
+#[tauri::command]
+pub fn widget_apply(app: AppHandle) {
+    crate::widget::apply(&app);
+}
+
 /// Reads through a connection that cannot write.
 #[tauri::command]
 pub fn db_query(

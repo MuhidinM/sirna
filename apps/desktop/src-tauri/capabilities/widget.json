@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "widget",
+  "description": "The desktop widget: read today's plan and the timer, be dragged, open the main window. No db_tx, no secrets.",
+  "windows": ["widget"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "allow-db-query",
+    "allow-focus-status",
+    "allow-open-main"
+  ]
+}
