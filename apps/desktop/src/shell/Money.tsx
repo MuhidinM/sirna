@@ -16,6 +16,7 @@ import {
   type LedgerFilter,
   monthLabel,
   monthOf,
+  moneyLine,
   monthSummary,
   previousMonthStart,
   SAVED_SQL,
@@ -450,6 +451,29 @@ function LedgerView({ month, today }: { month: string; today: string }) {
         </section>
       ))}
     </>
+  );
+}
+
+/**
+ * Today's money in one line (proposal 1.6): spent today, left this month and
+ * about how much a day. The same numbers as the Money page.
+ */
+export function TodayMoney({
+  today,
+  spentToday,
+  onOpen,
+}: {
+  today: string;
+  spentToday: number;
+  onOpen?: (() => void) | undefined;
+}) {
+  const { summary, loading } = useMonth(monthOf(today).from, today);
+  if (loading) return null;
+  return (
+    <p className="row money-today">
+      <span>{moneyLine(summary, spentToday)}</span>
+      {onOpen && <Button onClick={onOpen}>Money</Button>}
+    </p>
   );
 }
 

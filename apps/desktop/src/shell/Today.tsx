@@ -12,7 +12,6 @@ import { ulid } from "../kernel/ulid";
 import { stepLabel } from "../features/tasks/list";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan } from "../features/plan/dayplan";
-import { formatAmount } from "../kernel/money";
 import {
   DUE_SQL,
   INBOX_SQL,
@@ -23,6 +22,7 @@ import {
 } from "../features/tasks/today";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import { Brief } from "./Brief";
+import { TodayMoney } from "./Money";
 import { FocusPanel, useFocus } from "./Focus";
 import { NowCards, Timeline } from "./Timeline";
 import { Button } from "./ui";
@@ -218,7 +218,7 @@ function useMinute(): number {
   return minute;
 }
 
-export function Today() {
+export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
 
@@ -325,8 +325,8 @@ export function Today() {
       </section>
 
       <section aria-labelledby="money">
-        <h2 id="money">Spent today</h2>
-        <p className="figure">{formatAmount(spent.rows[0]?.spent ?? 0)}</p>
+        <h2 id="money">Money</h2>
+        <TodayMoney today={today} spentToday={spent.rows[0]?.spent ?? 0} onOpen={onOpenMoney} />
       </section>
 
       {inbox.rows.length > 0 && (
