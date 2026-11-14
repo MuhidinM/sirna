@@ -44,6 +44,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Desktop widget:** Settings → Windows → tick Desktop widget: it appears top right at once with Now, the timer and the top 3. Drag it by its top edge; quit and start Sirna: it comes back in the same place. Pick a cheat sheet: it shows under the list. Start a focus session: the ring counts down. Open a full-screen video: the widget hides, and returns after. Untick: it closes with no restart (T-045).
 - **Deadline kept:** add `t: send CV by 30 nov`; in the night review press All the rest to tomorrow: on Tasks it shows "on <tomorrow> · due 30 nov", and it is gone from today's list. Old carried tasks show "check deadline" until you open and save them (T-050).
 - **Steps in order:** split a 3-hour task with AI on Today: only "1/N" shows on Today and in the plan; tick it done and "2/N" appears (T-051).
+- **Money page:** Money → Month shows in / out / saved / left and "about N a day"; Ledger: search "lunch", edit an amount, delete one and press Undo, Export CSV opens a download (T-054).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

@@ -13,6 +13,7 @@ import {
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { useCalendarSync } from "./shell/Calendar";
 import { Kits } from "./shell/Kits";
+import { Money } from "./shell/Money";
 import { Nav, type Page } from "./shell/Nav";
 import { Dashboard } from "./shell/Dashboard";
 import { Notes } from "./shell/Notes";
@@ -110,6 +111,7 @@ export function App() {
   else if (screen === "review") page = <Review onClose={home} />;
   else if (screen === "kits") page = <Kits onClose={home} />;
   else if (screen === "settings") page = <Settings />;
+  else if (screen === "money") page = <Money />;
   else if (screen === "projects") page = <Projects />;
   else if (screen === "tasks") page = <Tasks />;
   else if (screen === "weekcard") page = <WeekCard />;

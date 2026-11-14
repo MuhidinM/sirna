@@ -3,6 +3,7 @@ export type Page =
   | "today"
   | "tasks"
   | "projects"
+  | "money"
   | "weekcard"
   | "dashboard"
   | "notes"
@@ -15,6 +16,7 @@ export const PAGES: { page: Page; label: string }[] = [
   { page: "today", label: "Today" },
   { page: "tasks", label: "Tasks" },
   { page: "projects", label: "Projects" },
+  { page: "money", label: "Money" },
   { page: "weekcard", label: "This week" },
   { page: "dashboard", label: "Dashboard" },
   { page: "notes", label: "Cheat sheets" },

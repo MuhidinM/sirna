@@ -1081,3 +1081,51 @@ input[type="number"] {
     grid-column: span 6;
   }
 }
+
+/* Money (proposal 1.1). */
+.money .tiles {
+  margin-top: var(--space-4);
+}
+
+.money .card {
+  margin-bottom: var(--space-4);
+}
+
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.money-line {
+  justify-content: space-between;
+}
+
+.money-in {
+  color: var(--success);
+}
+
+.ledger-day h3 {
+  margin: var(--space-4) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.txn-form {
+  margin: var(--space-2) 0 var(--space-4);
+}
+
+.txn-form input,
+.txn-form select {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  font: inherit;
+}
+
+.ledger-day .task {
+  flex-wrap: nowrap;
+  align-items: center;
+}
