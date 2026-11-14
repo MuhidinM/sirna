@@ -670,6 +670,78 @@ mod tests {
         conn
     }
 
+    /// Tables the webview may never write through `db_tx`: Rust owns them
+    /// (the capture store, the audit log, the timer, AI calls, toasts, usage)
+    /// or they are seeded by a migration. A new table must go in `TABLES` or
+    /// here, on purpose (T-052).
+    const RUST_OWNED: &[&str] = &[
+        "core_migrations",
+        "core_raw_items",
+        "core_activity",
+        "core_ai_calls",
+        "core_notifications",
+        "core_usage",
+        "focus_sessions",
+        "money_categories",
+    ];
+
+    #[test]
+    fn every_table_is_writable_or_listed_as_rust_owned() {
+        let conn = conn();
+        let mut statement = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table'
+                 AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .expect("prepare");
+        let tables: Vec<String> = statement
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        let unlisted: Vec<&String> = tables
+            .iter()
+            .filter(|name| {
+                !TABLES.iter().any(|spec| spec.name == name.as_str())
+                    && !RUST_OWNED.contains(&name.as_str())
+            })
+            .collect();
+        assert!(
+            unlisted.is_empty(),
+            "add a TableSpec in tx.rs (or list it in RUST_OWNED): {unlisted:?}"
+        );
+        // And nothing listed that no migration creates.
+        for spec in TABLES {
+            assert!(
+                tables.contains(&spec.name.to_string()),
+                "no table {}",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_allowlisted_column_exists() {
+        let conn = conn();
+        for spec in TABLES {
+            let statement = conn
+                .prepare(&format!("SELECT * FROM {} LIMIT 0", spec.name))
+                .expect("prepare");
+            let names: Vec<String> = statement
+                .column_names()
+                .map(|name| name.to_string())
+                .collect();
+            for column in spec.columns {
+                assert!(
+                    names.contains(&column.to_string()),
+                    "{}.{column} is allowlisted but not in the schema",
+                    spec.name
+                );
+            }
+            drop(statement);
+        }
+    }
+
     fn values(value: Value) -> Map<String, Value> {
         match value {
             Value::Object(map) => map,
