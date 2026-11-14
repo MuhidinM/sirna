@@ -98,7 +98,7 @@ describe("echo", () => {
     ["idea: sell old monitor", "Idea"],
     ["pin: git stash pop #coding", "Pinned to cheat sheet · #coding"],
     ["dentist maybe sometime", "Saved · will ask tonight"],
-    ["+25000 salary", "Income 25,000 ETB"],
+    ["+25000 salary", "Income · 25,000 ETB · Salary"],
   ])("%j → %j", (text, line) => {
     expect(echo(parseCapture(text, { nowMs }), nowMs)).toBe(line);
   });

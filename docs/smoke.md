@@ -46,6 +46,7 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Steps in order:** split a 3-hour task with AI on Today: only "1/N" shows on Today and in the plan; tick it done and "2/N" appears (T-051).
 - **Money page:** Money → Month shows in / out / saved / left and "about N a day"; Ledger: search "lunch", edit an amount, delete one and press Undo, Export CSV opens a download (T-054).
 - **Categories and goals:** Money → Categories: add Fuel, rename it, merge Other into Transport (the entries move). On a goal press Edit, set a date: the line says what it takes a month (T-055).
+- **Money capture:** capture `got 18k job a` → "Income · 18,000 ETB · Job A" and Money → Month lists Job A under Money in; `lunch 120, taxi 40` → two entries; `benzine 500 #fuel` (after adding Fuel) lands in Fuel; fix "bajaj" to Transport in the Ledger, then `bajaj 50` lands in Transport (T-056).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
 ## Restore a backup (T-032)

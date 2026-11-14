@@ -132,5 +132,5 @@ Milestone 1 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | ----- | ---------------------------------------------------- | -------------------------------------------------------------- | ------------------ | ---- | ------ |
 | T-054 | [#112](https://github.com/MuhidinM/sirna/issues/112) | A Money page: the month at a glance and an editable ledger     | R-MON-01           | M    | done   |
 | T-055 | [#113](https://github.com/MuhidinM/sirna/issues/113) | Edit categories and savings goals                              | R-MON-02, R-PRG-03 | S    | done   |
-| T-056 | [#114](https://github.com/MuhidinM/sirna/issues/114) | Capture reads income per job, several items and a category tag | R-CAP-02, R-MON-01 | M    | todo   |
+| T-056 | [#114](https://github.com/MuhidinM/sirna/issues/114) | Capture reads income per job, several items and a category tag | R-CAP-02, R-MON-01 | M    | done   |
 | T-057 | [#115](https://github.com/MuhidinM/sirna/issues/115) | Show today's money on Today                                    | R-MON-01           | S    | done   |

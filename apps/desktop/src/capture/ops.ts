@@ -3,7 +3,7 @@ import { type Op } from "../kernel/db";
 import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
-import { type Parsed } from "./parse";
+import { type MoneyItem, type Parsed } from "./parse";
 import { weekdayName } from "./when";
 
 export interface OpsContext {
@@ -29,6 +29,27 @@ const CATEGORY_NAMES: Record<string, string> = {
   cat_salary: "Salary",
   cat_income: "Other income",
 };
+
+function moneyOp(item: MoneyItem, nowMs: number, id: string): Op {
+  return {
+    op: "insert",
+    table: "money_txns",
+    id,
+    values: {
+      occurred_at: nowMs,
+      local_date: item.date,
+      amount_minor: item.kind === "expense" ? -item.amount : item.amount,
+      description: item.description,
+      category_id: item.categoryId,
+      // Income from a job you named: the Money page groups by it.
+      area_id: item.jobId ?? null,
+      origin: "capture",
+    },
+  };
+}
+
+const categoryOf = (item: MoneyItem) =>
+  item.categoryName ?? CATEGORY_NAMES[item.categoryId] ?? "Other";
 
 /** The project an idea capture becomes, before its week is known. */
 export function ideaInput(parsed: Extract<Parsed, { kind: "idea" }>) {
@@ -70,21 +91,9 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
       ];
     case "expense":
     case "income":
-      return [
-        {
-          op: "insert",
-          table: "money_txns",
-          id: newId(),
-          values: {
-            occurred_at: nowMs,
-            local_date: parsed.date,
-            amount_minor: parsed.kind === "expense" ? -parsed.amount : parsed.amount,
-            description: parsed.description,
-            category_id: parsed.categoryId,
-            origin: "capture",
-          },
-        },
-      ];
+      return [moneyOp(parsed, nowMs, newId())];
+    case "money":
+      return parsed.items.map((item) => moneyOp(item, nowMs, newId()));
     case "idea":
       return [
         {
@@ -189,9 +198,17 @@ export function echo(
       return `Task${when}${size}${area}`;
     }
     case "expense":
-      return `${formatAmount(parsed.amount)} · ${CATEGORY_NAMES[parsed.categoryId] ?? "Other"}${area}`;
+      return `${formatAmount(parsed.amount)} · ${categoryOf(parsed)}${area}`;
     case "income":
-      return `Income ${formatAmount(parsed.amount)}${area}`;
+      return `Income · ${formatAmount(parsed.amount)} · ${parsed.jobName ?? categoryOf(parsed)}${area}`;
+    case "money": {
+      const out = parsed.items.filter((item) => item.kind === "expense");
+      const total = out.reduce((sum, item) => sum + item.amount, 0);
+      const parts = parsed.items.map(
+        (item) => `${item.description} ${formatAmount(item.amount, "").trim()}`,
+      );
+      return `${parsed.items.length} entries · ${parts.join(", ")}${out.length ? ` · ${formatAmount(total)} out` : ""}`;
+    }
     case "note":
       return `Note${area}`;
     case "idea":

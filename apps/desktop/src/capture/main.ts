@@ -14,7 +14,8 @@ import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/pr
 import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
 import { echo as echoLine, ideaInput, toOps } from "./ops";
-import { type Parsed, parseCapture, PARSER_ID } from "./parse";
+import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
+import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { type ClockStyle } from "./when";
 
 import { applyAccent, applyTheme, cachedAccent, cachedTheme } from "../theme/theme";
@@ -43,6 +44,8 @@ const output = element<HTMLOutputElement>("#capture-echo");
 let clockStyle: ClockStyle = "western";
 /** Savings goal names, so `saved 500 laptop` reads as saving only when a goal fits. */
 let goalNames: string[] = [];
+/** Categories, corrections and jobs, so money lines land right (T-056). */
+let moneyContext: Pick<ParseOptions, "categories" | "learned" | "jobs"> = {};
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
@@ -76,11 +79,31 @@ void query<{ title: string }>(
   })
   .catch(() => undefined);
 
+void Promise.all([
+  query<{ id: string; name: string; kind: "expense" | "income" }>(CATEGORIES_SQL),
+  query<{ id: string; category_id: string }>(LEARNED_SQL),
+  query<{ id: string; name: string }>(
+    "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
+  ),
+])
+  .then(([categories, learned, jobs]) => {
+    moneyContext = {
+      categories,
+      learned: Object.fromEntries(learned.map((row) => [row.id, row.category_id])),
+      jobs,
+    };
+  })
+  .catch(() => undefined);
+
 function refresh() {
   const text = input.value.trim();
   const nowMs = systemClock.now();
   options = text
-    ? readings(parseCapture(text, { nowMs, clockStyle, goals: goalNames }), text, nowMs)
+    ? readings(
+        parseCapture(text, { nowMs, clockStyle, goals: goalNames, ...moneyContext }),
+        text,
+        nowMs,
+      )
     : [];
   picked = 0;
   showChip();
@@ -134,7 +157,9 @@ form.addEventListener("submit", (event) => {
     return;
   }
   const nowMs = systemClock.now();
-  const parsed = options[picked] ?? parseCapture(rawText, { nowMs, clockStyle, goals: goalNames });
+  const parsed =
+    options[picked] ??
+    parseCapture(rawText, { nowMs, clockStyle, goals: goalNames, ...moneyContext });
   const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
   input.disabled = true;
   busy = true;
