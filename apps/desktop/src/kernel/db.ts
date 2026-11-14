@@ -21,6 +21,7 @@ export type WritableTable =
   | "money_categories"
   | "money_learned"
   | "money_accounts"
+  | "money_regulars"
   | "area_items"
   | "routine_blocks"
   | "day_blocks"

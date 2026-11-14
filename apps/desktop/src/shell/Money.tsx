@@ -49,6 +49,21 @@ import {
   transferOps,
 } from "../features/money/accounts";
 import {
+  checkRegular,
+  type DueItem,
+  dueItems,
+  dueLines,
+  type RegularDraft,
+  regularOps,
+  type RegularRow,
+  REGULARS_SQL,
+  regularText,
+  REGULAR_TXNS_SQL,
+  type RegularTxn,
+  removeRegularOps,
+  settleOps,
+} from "../features/money/regulars";
+import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
   CATEGORY_TEMPLATES_SQL,
@@ -693,19 +708,342 @@ export function TodayMoney({
   const { summary, loading } = useMonth(monthOf(today).from, today);
   if (loading) return null;
   return (
-    <p className="row money-today">
-      <span>{moneyLine(summary, spentToday)}</span>
-      {onOpen && <Button onClick={onOpen}>Money</Button>}
-    </p>
+    <>
+      <p className="row money-today">
+        <span>{moneyLine(summary, spentToday)}</span>
+        {onOpen && <Button onClick={onOpen}>Money</Button>}
+      </p>
+      <TodayDue today={today} />
+    </>
   );
 }
 
 const TAB_NAMES = {
   month: "Month",
   ledger: "Ledger",
+  regulars: "Pay and bills",
   accounts: "Accounts",
   categories: "Categories",
 } as const;
+
+const JOBS_SQL =
+  "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL ORDER BY name";
+
+/** This month's regulars and where each stands (T-059, T-060). */
+export function useDue(today: string) {
+  const { from, to } = monthOf(today);
+  const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
+  const txns = useLiveQuery<RegularTxn & Record<string, string | number | null>>(REGULAR_TXNS_SQL, [
+    from,
+    to,
+  ]);
+  return {
+    items: dueItems(regulars.rows, txns.rows, from, to, today),
+    regulars: regulars.rows,
+    loading: regulars.loading || txns.loading,
+  };
+}
+
+/** One tap records the payment (or the pay that came), for what is left. */
+export function SettleButton({ item, today }: { item: DueItem; today: string }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <Button
+        onClick={() =>
+          void transact(
+            "user",
+            settleOps(item, today, systemClock.now(), ulid()),
+            `regular:${item.regular.id}`,
+          ).catch((failure: unknown) => setError(`Couldn't record it: ${message(failure)}`))
+        }
+      >
+        {item.regular.kind === "bill" ? "Paid" : "Received"}
+      </Button>
+      {error && (
+        <span role="alert" className="error">
+          {error}
+        </span>
+      )}
+    </>
+  );
+}
+
+const STATE_TEXT: Record<DueItem["state"], string> = {
+  paid: "done",
+  due: "due",
+  late: "late",
+  upcoming: "coming",
+};
+
+function DueRow({ item, today }: { item: DueItem; today: string }) {
+  const pay = item.regular.kind === "pay";
+  return (
+    <li className="task">
+      <span>
+        {pay ? (item.regular.job ?? item.regular.name) : item.regular.name}
+        <span className="meta">
+          {" "}
+          · {item.date} · {formatAmount(item.regular.amount_minor)}
+          {item.done > 0 && item.left > 0
+            ? ` · ${formatAmount(item.left)} still to ${pay ? "come" : "pay"}`
+            : ""}
+        </span>
+      </span>
+      <span className="row task-meta">
+        <span
+          className={
+            item.state === "late" ? "warn-text" : item.state === "paid" ? "money-in" : "meta"
+          }
+        >
+          {STATE_TEXT[item.state]}
+        </span>
+        {item.state !== "paid" && <SettleButton item={item} today={today} />}
+      </span>
+    </li>
+  );
+}
+
+const emptyRegular = (kind: RegularDraft["kind"], account: string): RegularDraft => ({
+  kind,
+  name: "",
+  amount: 0,
+  ruleText: "monthly 1",
+  categoryId: "",
+  account,
+  areaId: "",
+});
+
+function RegularForm() {
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const categories = useLiveQuery<Category>(CATEGORIES_SQL);
+  const jobs = useLiveQuery<{ id: string; name: string }>(JOBS_SQL);
+  const [draft, setDraft] = useState<RegularDraft>(emptyRegular("bill", ""));
+  const [amountText, setAmountText] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const set = (part: Partial<RegularDraft>) => setDraft((old) => ({ ...old, ...part }));
+  const account =
+    draft.account ||
+    (draft.kind === "pay" ? payAccount(accounts.rows) : spendAccount(accounts.rows));
+  return (
+    <form
+      className="txn-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const full = { ...draft, account, amount: parseAmount(amountText) ?? 0 };
+        const problem = checkRegular(full);
+        if (problem) {
+          setNote(problem);
+          return;
+        }
+        void transact("user", regularOps(full, ulid()), "regular")
+          .then(() => {
+            setNote(`Added ${full.name.trim()}. It shows above when it falls due.`);
+            setDraft(emptyRegular(draft.kind, ""));
+            setAmountText("");
+          })
+          .catch((failure: unknown) => setNote(`Couldn't add it: ${message(failure)}`));
+      }}
+    >
+      <div className="row">
+        <label className="field">
+          <span>Kind</span>
+          <select
+            value={draft.kind}
+            onChange={(e) => setDraft(emptyRegular(e.target.value as RegularDraft["kind"], ""))}
+          >
+            <option value="bill">A bill I pay</option>
+            <option value="pay">Pay I receive</option>
+          </select>
+        </label>
+        {draft.kind === "pay" ? (
+          <label className="field">
+            <span>Job</span>
+            <select
+              value={draft.areaId}
+              onChange={(e) => {
+                const job = jobs.rows.find((row) => row.id === e.target.value);
+                set({ areaId: e.target.value, name: job ? `${job.name} pay` : draft.name });
+              }}
+            >
+              <option value="">Pick a job…</option>
+              {jobs.rows.map((job) => (
+                <option key={job.id} value={job.id}>
+                  {job.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <label className="field">
+            <span>Name</span>
+            <input
+              value={draft.name}
+              placeholder="Rent"
+              onChange={(e) => set({ name: e.target.value })}
+            />
+          </label>
+        )}
+        <label className="field">
+          <span>Amount (ETB)</span>
+          <input
+            inputMode="decimal"
+            value={amountText}
+            placeholder={draft.kind === "pay" ? "18,000" : "6,000"}
+            onChange={(e) => setAmountText(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>When</span>
+          <input
+            value={draft.ruleText}
+            placeholder="monthly 10"
+            onChange={(e) => set({ ruleText: e.target.value })}
+          />
+        </label>
+        {draft.kind === "bill" && (
+          <label className="field">
+            <span>Category</span>
+            <select value={draft.categoryId} onChange={(e) => set({ categoryId: e.target.value })}>
+              <option value="">None</option>
+              {categories.rows
+                .filter((category) => category.kind === "expense")
+                .map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+        <label className="field">
+          <span>{draft.kind === "pay" ? "Lands in" : "Paid from"}</span>
+          <select value={account} onChange={(e) => set({ account: e.target.value })}>
+            {accounts.rows.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="row">
+        <Button type="submit" primary>
+          Add
+        </Button>
+        <span className="meta">
+          When: <code>monthly 10</code>, <code>monthly last</code>, <code>every mon</code>,{" "}
+          <code>every weekday</code>.
+        </span>
+      </div>
+      {note && (
+        <p className="meta" role="status">
+          {note}
+        </p>
+      )}
+    </form>
+  );
+}
+
+/** Regulars (T-059, T-060): pay you expect and bills you pay, this month. */
+function RegularsView({ today }: { today: string }) {
+  const { items, regulars, loading } = useDue(today);
+  const [error, setError] = useState<string | null>(null);
+  if (loading) return null;
+  const pay = items.filter((item) => item.regular.kind === "pay");
+  const bills = items.filter((item) => item.regular.kind === "bill");
+  const expected = pay.reduce((sum, item) => sum + item.regular.amount_minor, 0);
+  const received = pay.reduce((sum, item) => sum + item.done, 0);
+  return (
+    <>
+      <section className="card" aria-labelledby="regular-pay">
+        <h2 id="regular-pay">Pay this month</h2>
+        {pay.length === 0 ? (
+          <p className="meta">
+            Add each job&apos;s pay below (yours: the 10th and the 21st, into CBO). Income you
+            capture as <code>got 18k job a</code> counts toward it.
+          </p>
+        ) : (
+          <>
+            <p>
+              {formatAmount(received)} of {formatAmount(expected)} received
+            </p>
+            <ul className="task-list">
+              {pay.map((item) => (
+                <DueRow key={`${item.regular.id}${item.date}`} item={item} today={today} />
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+      <section className="card" aria-labelledby="regular-bills">
+        <h2 id="regular-bills">Bills this month</h2>
+        {bills.length === 0 ? (
+          <p className="meta">No bills yet. Add rent and the others below.</p>
+        ) : (
+          <ul className="task-list">
+            {bills.map((item) => (
+              <DueRow key={`${item.regular.id}${item.date}`} item={item} today={today} />
+            ))}
+          </ul>
+        )}
+      </section>
+      <RegularForm />
+      {regulars.length > 0 && (
+        <section className="card" aria-labelledby="regular-all">
+          <h2 id="regular-all">All regulars</h2>
+          <ul className="task-list">
+            {regulars.map((row) => (
+              <li key={row.id} className="task">
+                <span>
+                  {row.kind === "pay" ? (row.job ?? row.name) : row.name}
+                  <span className="meta"> · {regularText(row)}</span>
+                </span>
+                <Button
+                  onClick={() =>
+                    void transact("user", removeRegularOps(row.id), `regular:${row.id}`).catch(
+                      (failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
+        </section>
+      )}
+    </>
+  );
+}
+
+/** Today: bills due or late, and pay that is late, each with its button. */
+export function TodayDue({ today }: { today: string }) {
+  const { items, loading } = useDue(today);
+  if (loading) return null;
+  const open = items.filter((item) =>
+    item.regular.kind === "bill"
+      ? item.state === "due" || item.state === "late"
+      : item.state === "late",
+  );
+  if (open.length === 0) return null;
+  const lines = dueLines(open);
+  return (
+    <ul className="task-list">
+      {open.map((item, index) => (
+        <li key={`${item.regular.id}${item.date}`} className="task">
+          <span className={item.state === "late" ? "warn-text" : undefined}>{lines[index]}</span>
+          <SettleButton item={item} today={today} />
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function AccountItem({
   account,
@@ -993,6 +1331,7 @@ export function Money() {
       </div>
       {tab === "month" && <MonthView month={month} today={today} />}
       {tab === "ledger" && <LedgerView month={month} today={today} />}
+      {tab === "regulars" && <RegularsView today={today} />}
       {tab === "accounts" && <AccountsView today={today} />}
       {tab === "categories" && <CategoriesView />}
     </main>

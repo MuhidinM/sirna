@@ -142,7 +142,7 @@ Milestone 2 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | ID    | Issue                                                | Task                                            | Reqs     | Size | Status |
 | ----- | ---------------------------------------------------- | ----------------------------------------------- | -------- | ---- | ------ |
 | T-058 | [#120](https://github.com/MuhidinM/sirna/issues/120) | Accounts with balances, transfers and reconcile | R-MON-03 | L    | done   |
-| T-059 | [#121](https://github.com/MuhidinM/sirna/issues/121) | Regular bills you mark paid with one tap        | R-MON-04 | M    | todo   |
-| T-060 | [#122](https://github.com/MuhidinM/sirna/issues/122) | Expected pay per job, with late pay flagged     | R-MON-05 | M    | todo   |
+| T-059 | [#121](https://github.com/MuhidinM/sirna/issues/121) | Regular bills you mark paid with one tap        | R-MON-04 | M    | done   |
+| T-060 | [#122](https://github.com/MuhidinM/sirna/issues/122) | Expected pay per job, with late pay flagged     | R-MON-05 | M    | done   |
 | T-061 | [#123](https://github.com/MuhidinM/sirna/issues/123) | Keep track of money lent and owed               | R-MON-06 | M    | todo   |
 | T-062 | [#124](https://github.com/MuhidinM/sirna/issues/124) | Safe to spend and the emergency fund            | R-MON-07 | M    | todo   |

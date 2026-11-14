@@ -93,6 +93,22 @@ describe("buildBrief", () => {
     expect(lines[1]?.text).toBe("Job A · 08:00–12:00");
   });
 
+  it("shows up to two money lines: bills due and late pay (T-059, T-060)", () => {
+    const lines = buildBrief({
+      ...input,
+      due: [
+        "Rent 6,000 ETB due today",
+        "Job A pay is late: 18,000 ETB expected on 2026-11-10",
+        "Third",
+      ],
+    });
+    expect(render(lines).filter((line) => /Rent|Job A pay|Third/.test(line))).toEqual([
+      "MONEY | Rent 6,000 ETB due today",
+      "Job A pay is late: 18,000 ETB expected on 2026-11-10",
+    ]);
+    expect(lines.length).toBeLessThanOrEqual(MAX_LINES);
+  });
+
   it("leaves skipped blocks out", () => {
     const blocks = day.map((b) => (b.id === "q" ? { ...b, status: "skipped" } : b));
     const lines = buildBrief({ ...input, blocks });

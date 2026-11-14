@@ -44,6 +44,8 @@ export interface BriefInput {
   insight?: string | null;
   /** A calendar sync problem you need to fix (T-044). */
   calendar?: string | null;
+  /** Bills due or late and pay that is late (T-059, T-060). */
+  due?: string[];
 }
 
 export interface BriefLine {
@@ -107,6 +109,9 @@ export function buildBrief(input: BriefInput): BriefLine[] {
     });
 
   if (input.calendar) lines.push({ label: "CHECK", text: input.calendar, tone: "warn" });
+  (input.due ?? [])
+    .slice(0, 2)
+    .forEach((text, index) => lines.push({ label: index === 0 ? "MONEY" : "", text }));
 
   const live = input.blocks.filter((block) => block.status !== "skipped");
   const { now, next } = nowAndNext(live, input.nowMs);
