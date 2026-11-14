@@ -4,6 +4,7 @@ import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
 import { transferOps } from "../features/money/accounts";
+import { loanEchoText, loanOps } from "../features/money/loans";
 import { type MoneyItem, type Parsed } from "./parse";
 import { weekdayName } from "./when";
 
@@ -102,6 +103,17 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
       return [moneyOp(parsed, nowMs, newId())];
     case "money":
       return parsed.items.map((item) => moneyOp(item, nowMs, newId()));
+    case "loan":
+      return loanOps({
+        person: parsed.person,
+        kind: parsed.loanKind,
+        amount: parsed.amount,
+        date: parsed.date,
+        account: parsed.account ?? "cash",
+        nowMs,
+        id: newId(),
+        txnId: newId(),
+      });
     case "transfer":
       return transferOps({
         from: { id: parsed.from, name: parsed.fromName },
@@ -218,6 +230,10 @@ export function echo(
     }
     case "transfer":
       return `Moved ${formatAmount(parsed.amount)} · ${parsed.fromName} → ${parsed.toName}`;
+    case "loan":
+      return `${loanEchoText(parsed.loanKind, parsed.person, parsed.amount, null)}${
+        parsed.accountName && parsed.account !== "cash" ? ` · ${parsed.accountName}` : ""
+      }`;
     case "expense":
       return `${formatAmount(parsed.amount)} · ${categoryOf(parsed)}${accountOf(parsed)}${area}`;
     case "income":

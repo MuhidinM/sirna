@@ -64,6 +64,16 @@ import {
   settleOps,
 } from "../features/money/regulars";
 import {
+  balances,
+  checkLoan,
+  followUpOps,
+  type LoanEvent,
+  loanEchoText,
+  loanOps,
+  LOANS_SQL,
+  type PersonBalance,
+} from "../features/money/loans";
+import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
   CATEGORY_TEMPLATES_SQL,
@@ -722,9 +732,258 @@ const TAB_NAMES = {
   month: "Month",
   ledger: "Ledger",
   regulars: "Pay and bills",
+  loans: "Lent and owed",
   accounts: "Accounts",
   categories: "Categories",
 } as const;
+
+/** Lent and owed, per person (T-061). */
+export function useLoans() {
+  const events = useLiveQuery<LoanEvent & Record<string, string | number | null>>(LOANS_SQL);
+  return { people: balances(events.rows), loading: events.loading };
+}
+
+function PersonRow({
+  person,
+  accounts,
+  today,
+}: {
+  person: PersonBalance;
+  accounts: AccountRow[];
+  today: string;
+}) {
+  const [amount, setAmount] = useState("");
+  const [account, setAccount] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const theyOwe = person.owedToMe > 0;
+  const open = theyOwe ? person.owedToMe : person.iOwe;
+  const last = person.events[person.events.length - 1];
+  const settle = () => {
+    const minor = amount.trim() ? (parseAmount(amount) ?? 0) : open;
+    const problem = checkLoan(person.person, minor);
+    if (problem) {
+      setNote(problem);
+      return;
+    }
+    const kind = theyOwe ? "paid_me" : "i_paid";
+    void transact(
+      "user",
+      loanOps({
+        person: person.person,
+        kind,
+        amount: minor,
+        date: today,
+        account: account || spendAccount(accounts),
+        nowMs: systemClock.now(),
+        id: ulid(),
+        txnId: ulid(),
+      }),
+      "loan",
+    )
+      .then(() => {
+        setNote(loanEchoText(kind, person.person, minor, Math.max(0, open - minor)));
+        setAmount("");
+      })
+      .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+  };
+  return (
+    <li className="task">
+      <span>
+        {person.person}
+        <span className="meta">
+          {" "}
+          · {formatAmount(open)} since {person.since}
+          {person.followUp ? ` · ask on ${person.followUp}` : ""}
+        </span>
+      </span>
+      <span className="row task-meta">
+        <input
+          className="category-name"
+          inputMode="decimal"
+          aria-label={`Amount paid back, ${person.person}`}
+          placeholder={`all ${birr(open)}`}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        <select
+          aria-label="Account"
+          value={account || spendAccount(accounts)}
+          onChange={(e) => setAccount(e.target.value)}
+        >
+          {accounts.map((row) => (
+            <option key={row.id} value={row.id}>
+              {row.name}
+            </option>
+          ))}
+        </select>
+        <Button onClick={settle}>{theyOwe ? "Paid me back" : "I paid back"}</Button>
+        {last && (
+          <input
+            type="date"
+            aria-label={`Ask about it on, ${person.person}`}
+            title="Ask about it on"
+            value={person.followUp ?? ""}
+            onChange={(e) =>
+              void transact("user", followUpOps(last.id, e.target.value || null), "loan").catch(
+                (failure: unknown) => setNote(`Couldn't save: ${message(failure)}`),
+              )
+            }
+          />
+        )}
+      </span>
+      {note && (
+        <p className="meta" role="status">
+          {note}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function LoanForm({ accounts, today }: { accounts: AccountRow[]; today: string }) {
+  const [kind, setKind] = useState<"lent" | "borrowed">("lent");
+  const [person, setPerson] = useState("");
+  const [amount, setAmount] = useState("");
+  const [account, setAccount] = useState("");
+  const [followUp, setFollowUp] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <form
+      className="row task-filters"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const minor = parseAmount(amount) ?? 0;
+        const problem = checkLoan(person, minor);
+        if (problem) {
+          setNote(problem);
+          return;
+        }
+        void transact(
+          "user",
+          loanOps({
+            person,
+            kind,
+            amount: minor,
+            date: today,
+            account: account || spendAccount(accounts),
+            nowMs: systemClock.now(),
+            id: ulid(),
+            txnId: ulid(),
+            followUp: followUp || null,
+          }),
+          "loan",
+        )
+          .then(() => {
+            setNote(loanEchoText(kind, person.trim(), minor, null));
+            setPerson("");
+            setAmount("");
+            setFollowUp("");
+          })
+          .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+      }}
+    >
+      <select
+        aria-label="Lent or borrowed"
+        value={kind}
+        onChange={(e) => setKind(e.target.value as "lent" | "borrowed")}
+      >
+        <option value="lent">I lent</option>
+        <option value="borrowed">I borrowed</option>
+      </select>
+      <input
+        inputMode="decimal"
+        aria-label="Amount"
+        placeholder="1,000"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+      />
+      <input
+        aria-label={kind === "lent" ? "To whom" : "From whom"}
+        placeholder={kind === "lent" ? "to Abel" : "from Sara"}
+        value={person}
+        onChange={(e) => setPerson(e.target.value)}
+      />
+      <select
+        aria-label="Account"
+        value={account || spendAccount(accounts)}
+        onChange={(e) => setAccount(e.target.value)}
+      >
+        {accounts.map((row) => (
+          <option key={row.id} value={row.id}>
+            {row.name}
+          </option>
+        ))}
+      </select>
+      <label className="row">
+        <span className="meta">ask on</span>
+        <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} />
+      </label>
+      <Button type="submit" primary>
+        Save
+      </Button>
+      {note && (
+        <span className="meta" role="status">
+          {note}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/** Money → Lent and owed (T-061). */
+function LoansView({ today }: { today: string }) {
+  const { people, loading } = useLoans();
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  if (loading) return null;
+  const owedToMe = people.filter((person) => person.owedToMe > 0);
+  const iOwe = people.filter((person) => person.iOwe > 0);
+  const total = (list: PersonBalance[], key: "owedToMe" | "iOwe") =>
+    list.reduce((sum, person) => sum + person[key], 0);
+  return (
+    <>
+      <LoanForm accounts={accounts.rows} today={today} />
+      <section className="card" aria-labelledby="owed-to-me">
+        <h2 id="owed-to-me">Owed to you · {formatAmount(total(owedToMe, "owedToMe"))}</h2>
+        {owedToMe.length === 0 ? (
+          <p className="meta">Nobody owes you anything.</p>
+        ) : (
+          <ul className="task-list">
+            {owedToMe.map((person) => (
+              <PersonRow
+                key={person.person}
+                person={person}
+                accounts={accounts.rows}
+                today={today}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+      <section className="card" aria-labelledby="i-owe">
+        <h2 id="i-owe">You owe · {formatAmount(total(iOwe, "iOwe"))}</h2>
+        {iOwe.length === 0 ? (
+          <p className="meta">You don&apos;t owe anyone.</p>
+        ) : (
+          <ul className="task-list">
+            {iOwe.map((person) => (
+              <PersonRow
+                key={person.person}
+                person={person}
+                accounts={accounts.rows}
+                today={today}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+      <p className="meta">
+        In the capture box: <code>lent 1000 abel</code>, <code>borrowed 500 from sara</code>,{" "}
+        <code>abel paid back 400</code>, <code>paid back sara 500</code>. Lending moves money out of
+        an account but isn&apos;t spending; being paid back isn&apos;t income.
+      </p>
+    </>
+  );
+}
 
 const JOBS_SQL =
   "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL ORDER BY name";
@@ -1332,6 +1591,7 @@ export function Money() {
       {tab === "month" && <MonthView month={month} today={today} />}
       {tab === "ledger" && <LedgerView month={month} today={today} />}
       {tab === "regulars" && <RegularsView today={today} />}
+      {tab === "loans" && <LoansView today={today} />}
       {tab === "accounts" && <AccountsView today={today} />}
       {tab === "categories" && <CategoriesView />}
     </main>

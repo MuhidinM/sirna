@@ -39,7 +39,12 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
         matches!(op, Op::Insert { table, .. }
         if matches!(
             table.as_str(),
-            "task_items" | "note_items" | "money_txns" | "project_items" | "savings_entries"
+            "task_items"
+                | "note_items"
+                | "money_txns"
+                | "money_loans"
+                | "project_items"
+                | "savings_entries"
         ))
     })
 }
