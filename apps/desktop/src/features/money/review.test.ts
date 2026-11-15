@@ -36,8 +36,8 @@ const view = (items: ReturnType<typeof dueItems>) =>
 
 describe("pay that comes after its month ends", () => {
   it("settles last month's date, not this month's", () => {
-    const { from, to, shownFrom } = dueWindow("2026-11-14");
-    expect([from, shownFrom]).toEqual(["2026-10-22", "2026-11-01"]);
+    const { from, txnFrom, to, shownFrom } = dueWindow("2026-11-14");
+    expect([from, txnFrom, shownFrom]).toEqual(["2026-10-01", "2026-09-24", "2026-11-01"]);
     const items = dueItems(
       [regular({})],
       [txn({ area_id: "joba", amount_minor: 1_800_000, local_date: "2026-11-02" })],
@@ -56,6 +56,77 @@ describe("pay that comes after its month ends", () => {
     expect(view(items)).toEqual([
       ["r", "2026-10-30", "late", 1_800_000],
       ["r", "2026-11-30", "upcoming", 1_800_000],
+    ]);
+  });
+
+  it("counts an early payment just before the window, and late rent against its own month (leftovers review)", () => {
+    const internet = regular({
+      id: "net",
+      kind: "bill",
+      name: "Internet",
+      amount_minor: 120_000,
+      rule_json: JSON.stringify({ every: "month", day: 25 }),
+      category_id: "cat_phone",
+      area_id: null,
+    });
+    const paid = (date: string, what: string, minor: number) =>
+      txn({ amount_minor: -minor, local_date: date, description: what });
+    // November's paid 5 days early (Nov 20), December's on Dec 20: nothing is due.
+    let w = dueWindow("2026-12-24");
+    let items = dueItems(
+      [internet],
+      [paid("2026-11-20", "internet", 120_000), paid("2026-12-20", "internet", 120_000)],
+      w.from,
+      w.to,
+      "2026-12-24",
+      w.shownFrom,
+    );
+    expect(view(items)).toEqual([["net", "2026-12-25", "paid", 0]]);
+    expect(w.txnFrom <= "2026-11-20").toBe(true);
+
+    // November's rent paid late on Nov 25 doesn't pay December's.
+    const rent = regular({
+      id: "rent",
+      kind: "bill",
+      name: "Rent",
+      amount_minor: 600_000,
+      rule_json: JSON.stringify({ every: "month", day: 1 }),
+      category_id: "cat_housing",
+      area_id: null,
+    });
+    w = dueWindow("2026-12-01");
+    items = dueItems(
+      [rent],
+      [paid("2026-11-25", "rent", 600_000)],
+      w.from,
+      w.to,
+      "2026-12-01",
+      w.shownFrom,
+    );
+    expect(view(items)).toEqual([["rent", "2026-12-01", "due", 600_000]]);
+  });
+
+  it("hands a payment to same-day bills by name ignoring case, as bills.rs does", () => {
+    const bill = (id: string, name: string) =>
+      regular({
+        id,
+        kind: "bill",
+        name,
+        amount_minor: 20_000,
+        rule_json: JSON.stringify({ every: "month", day: 5 }),
+        category_id: "cat_utilities",
+        area_id: null,
+      });
+    const items = dueItems(
+      [bill("net", "Internet"), bill("iddir", "iddir")],
+      [txn({ amount_minor: -20_000, local_date: "2026-12-03", category_id: "cat_utilities" })],
+      "2026-12-01",
+      "2026-12-31",
+      "2026-12-04",
+    );
+    expect(view(items)).toEqual([
+      ["iddir", "2026-12-05", "paid", 0],
+      ["net", "2026-12-05", "upcoming", 20_000],
     ]);
   });
 

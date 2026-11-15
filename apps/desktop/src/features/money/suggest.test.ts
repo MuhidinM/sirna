@@ -39,17 +39,52 @@ describe("payments that look regular (T-072)", () => {
     const rows = db.prepare(SUGGEST_SQL).all("2026-09-01") as unknown as SuggestRow[];
     const suggestions = suggestRegulars(rows, [], []);
     expect(suggestions.map((s) => s.text)).toEqual([
-      "Rent 6,000 ETB around the 2nd looks regular.",
+      "Rent 6,000 ETB around the 1st looks regular.",
       "Internet 1,200 ETB around the 5th looks regular.",
     ]);
     // Already tracked as a bill, or said No to: not offered.
     expect(
       suggestRegulars(
         rows,
-        [{ kind: "bill", name: "Rent", amount_minor: 600_000 }],
+        [{ kind: "bill", name: "Rent", amount_minor: 600_000, category_id: "cat_housing" }],
         [suggestions[1]?.key ?? ""],
       ),
     ).toEqual([]);
+  });
+
+  it("leaves out payments a bill already counts, and ones days apart (leftovers review)", () => {
+    const db = openTestDb();
+    const add = db.prepare(
+      "INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, category_id, created_at, updated_at) VALUES (?, 'cbo', 0, ?, ?, ?, ?, 0, 0)",
+    );
+    let n = 0;
+    const spend = (date: string, minor: number, what: string, category: string) =>
+      add.run(`y${++n}`, date, -minor, what, category);
+    // The Rent bill already counts these: same category and amount, or its name in the words.
+    spend("2026-09-01", 600_000, "landlord", "cat_housing");
+    spend("2026-10-01", 600_000, "landlord", "cat_housing");
+    spend("2026-10-01", 700_000, "paid rent", "cat_housing");
+    spend("2026-11-01", 700_000, "paid rent", "cat_housing");
+    // Same amount twice, four days apart over a month end: not monthly.
+    spend("2026-10-29", 45_000, "haircut", "cat_other");
+    spend("2026-11-02", 45_000, "haircut", "cat_other");
+    spend("2026-10-03", 50_000, "gym", "cat_health");
+    spend("2026-11-03", 50_000, "gym", "cat_health");
+    const rows = db.prepare(SUGGEST_SQL).all("2026-09-01") as unknown as SuggestRow[];
+    expect(suggestRegulars(rows, [], []).map((s) => s.name)).toEqual([
+      "Paid rent",
+      "Landlord",
+      "Gym",
+    ]);
+    const rent = {
+      kind: "bill" as const,
+      name: "Rent",
+      amount_minor: 600_000,
+      category_id: "cat_housing",
+    };
+    expect(suggestRegulars(rows, [rent], []).map((s) => s.text)).toEqual([
+      "Gym 500 ETB around the 3rd looks regular.",
+    ]);
   });
 
   it("tracks one as a monthly bill, or never asks again", () => {

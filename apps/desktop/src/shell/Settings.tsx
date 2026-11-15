@@ -18,7 +18,7 @@ import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
-import { BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
+import { AI_CHANGED_EVENT, BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
 import { SYNC_SQL } from "../features/calendar/sync";
 import { logicalDate } from "../kernel/dates";
 
@@ -51,6 +51,7 @@ function SecretField({ name, label, help, placeholder }: (typeof SECRETS)[number
         setNote(done);
         // A new calendar address is tried at once, so the status says if it works.
         if (name === "ical_url") void syncNow();
+        window.dispatchEvent(new Event(AI_CHANGED_EVENT));
         return refresh();
       })
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
@@ -372,6 +373,7 @@ function AiSetup() {
     transact("user", ops, "settings")
       .then(() => {
         setNote(done);
+        window.dispatchEvent(new Event(AI_CHANGED_EVENT));
         return refresh();
       })
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
@@ -473,9 +475,14 @@ function StatusStrip() {
   const backup = useLiveQuery<{ value_json: string | null }>(BACKUP_LAST_SQL);
   const [ai, setAi] = useState<AiUsage | null>(null);
   useEffect(() => {
-    invoke<AiUsage>("ai_usage")
-      .then(setAi)
-      .catch(() => setAi(null));
+    const read = () =>
+      void invoke<AiUsage>("ai_usage")
+        .then(setAi)
+        .catch(() => setAi(null));
+    read();
+    // A key saved, or a model or limit picked, further down this page.
+    window.addEventListener(AI_CHANGED_EVENT, read);
+    return () => window.removeEventListener(AI_CHANGED_EVENT, read);
   }, []);
   if (sync.loading || backup.loading) return null;
   const lines = statusLines({

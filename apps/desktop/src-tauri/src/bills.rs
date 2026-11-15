@@ -15,8 +15,6 @@ use tauri::Manager;
 const REMINDED_KEY: &str = "bills.reminded";
 /// Money that goes up to this many days early still counts for the date.
 const EARLY_DAYS: i64 = 7;
-/// Late bills from the end of last month still take payments first.
-const LOOK_BACK_DAYS: i64 = 10;
 
 // --- Dates ------------------------------------------------------------------------
 
@@ -162,10 +160,22 @@ fn pays_bill(bill: &Bill, txn: &Txn) -> bool {
     bill.category_id.is_some() && txn.category_id == bill.category_id && -txn.amount == bill.amount
 }
 
-/// The window to load for `tomorrow`: from a little before its month, to it.
-pub fn window(tomorrow: &str) -> (String, String) {
+/// The window for `tomorrow`, as `dueWindow` in regulars.ts: occurrences from
+/// the start of the month before it (so late payments settle their own
+/// month), entries from a week before that (so early ones count), to it.
+/// Returns (occurrences from, entries from, to).
+pub fn window(tomorrow: &str) -> (String, String, String) {
     let month_start = format!("{}-01", &tomorrow[..7.min(tomorrow.len())]);
-    (shift(&month_start, -LOOK_BACK_DAYS), tomorrow.to_string())
+    let last_month = format!("{}-01", &shift(&month_start, -1)[..7]);
+    let entries_from = shift(&last_month, -EARLY_DAYS);
+    (last_month, entries_from, tomorrow.to_string())
+}
+
+/// Same-day bills in the same order as regulars.ts: by name ignoring case, then exactly.
+fn by_name(a: &str, b: &str) -> std::cmp::Ordering {
+    a.to_lowercase()
+        .cmp(&b.to_lowercase())
+        .then_with(|| a.cmp(b))
 }
 
 /// Bills due on `tomorrow` that aren't paid yet, with what is left of each.
@@ -178,7 +188,7 @@ pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String
         date: String,
         done: i64,
     }
-    let (from, to) = window(tomorrow);
+    let (from, _, to) = window(tomorrow);
     let mut items: Vec<Item> = Vec::new();
     for bill in bills {
         let Some(rule) = read_rule(&bill.rule_json) else {
@@ -204,7 +214,7 @@ pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String
     items.sort_by(|a, b| {
         a.date
             .cmp(&b.date)
-            .then_with(|| a.bill.name.cmp(&b.bill.name))
+            .then_with(|| by_name(&a.bill.name, &b.bill.name))
     });
     let open = |item: &Item| (item.bill.amount - item.done).max(0);
 
@@ -272,7 +282,8 @@ const TXNS_SQL: &str =
      FROM money_txns
      WHERE deleted_at IS NULL AND transfer_id IS NULL
        AND ((regular_id IS NOT NULL AND due_date >= ?1 AND due_date <= ?2)
-         OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))";
+         OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))
+     ORDER BY local_date, rowid";
 
 pub fn load(conn: &Connection, tomorrow: &str) -> rusqlite::Result<Vec<(String, i64)>> {
     let bills = conn
@@ -291,10 +302,10 @@ pub fn load(conn: &Connection, tomorrow: &str) -> rusqlite::Result<Vec<(String, 
     if bills.is_empty() {
         return Ok(Vec::new());
     }
-    let (from, to) = window(tomorrow);
+    let (_, entries_from, to) = window(tomorrow);
     let txns = conn
         .prepare(TXNS_SQL)?
-        .query_map(params![from, to], |row| {
+        .query_map(params![entries_from, to], |row| {
             Ok(Txn {
                 regular_id: row.get(0)?,
                 due_date: row.get(1)?,
@@ -433,12 +444,11 @@ mod tests {
 
     #[test]
     fn paid_ones_are_left_out() {
-        let bills = [bill(
-            "rent",
-            "Rent",
-            600_000,
-            r#"{"every":"month","day":1}"#,
-        )];
+        // Added in mid-November, so November's 1st isn't asked about.
+        let bills = [Bill {
+            since: "2026-11-15".into(),
+            ..bill("rent", "Rent", 600_000, r#"{"every":"month","day":1}"#)
+        }];
         // Marked as paying that date.
         let marked = Txn {
             regular_id: Some("rent".into()),
@@ -497,6 +507,49 @@ mod tests {
         assert_eq!(due_tomorrow(&[added], &txns, "2026-12-25"), []);
     }
 
+    /// The same cases as review.test.ts (leftovers review).
+    #[test]
+    fn early_payments_and_late_rent_land_on_the_right_month() {
+        let internet = bill("net", "Internet", 120_000, r#"{"every":"month","day":25}"#);
+        let txns = [
+            spend("2026-11-20", 120_000, "internet"),
+            spend("2026-12-20", 120_000, "internet"),
+        ];
+        assert_eq!(due_tomorrow(&[internet], &txns, "2026-12-25"), []);
+        let (_, entries_from, _) = window("2026-12-25");
+        assert!(entries_from.as_str() <= "2026-11-20");
+
+        let rent = bill("rent", "Rent", 600_000, r#"{"every":"month","day":1}"#);
+        assert_eq!(
+            due_tomorrow(
+                &[rent],
+                &[spend("2026-11-25", 600_000, "rent")],
+                "2026-12-01"
+            ),
+            [("Rent".to_string(), 600_000)]
+        );
+    }
+
+    #[test]
+    fn same_day_bills_take_payments_in_the_same_order_as_typescript() {
+        let mut iddir = bill("iddir", "iddir", 20_000, r#"{"every":"month","day":5}"#);
+        let mut net = bill("net", "Internet", 20_000, r#"{"every":"month","day":5}"#);
+        iddir.category_id = Some("cat_utilities".into());
+        net.category_id = Some("cat_utilities".into());
+        iddir.since = "2026-12-01".into();
+        net.since = "2026-12-01".into();
+        let unlabelled = Txn {
+            category_id: Some("cat_utilities".into()),
+            description: None,
+            ..spend("2026-12-03", 20_000, "")
+        };
+        // "iddir" sorts before "Internet" ignoring case, so it is the one paid.
+        assert_eq!(
+            due_tomorrow(&[net, iddir], &[unlabelled], "2026-12-05"),
+            [("Internet".to_string(), 20_000)]
+        );
+    }
+
     #[test]
     fn formats_birr_like_the_window() {
         assert_eq!(format_amount(600_000), "6,000 ETB");
@@ -516,7 +569,7 @@ mod tests {
         migrate::run(&mut conn, migrate::MIGRATIONS, 0).expect("migrate");
         conn.execute_batch(
             "INSERT INTO money_regulars (id, kind, name, amount_minor, rule_json, account, created_at, updated_at)
-               VALUES ('rent', 'bill', 'Rent', 600000, '{\"every\":\"month\",\"day\":1}', 'cbo', 0, 0),
+               VALUES ('rent', 'bill', 'Rent', 600000, '{\"every\":\"month\",\"day\":1}', 'cbo', 1794722400000, 0), -- added 2026-11-15
                       ('pay', 'pay', 'Job A', 1800000, '{\"every\":\"month\",\"day\":1}', 'cbo', 0, 0),
                       ('old', 'bill', 'Gym', 50000, '{\"every\":\"month\",\"day\":1}', 'cash', 0, 0);
              UPDATE money_regulars SET active = 0 WHERE id = 'old';",

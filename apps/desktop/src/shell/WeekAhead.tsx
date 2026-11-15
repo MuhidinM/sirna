@@ -37,13 +37,21 @@ export function WeekAhead({ today }: { today: string }) {
 
   const json = saved.rows[0]?.value_json;
   const plan = readPlan(json);
-  const write = (ops: Op[]) =>
+  /** True once saved; on a failure the error shows and what you typed stays. */
+  const write = (ops: Op[]): Promise<boolean> =>
     ops.length === 0
-      ? Promise.resolve()
-      : transact("user", ops, "week:plan").catch((failure: unknown) =>
-          setError(
-            `Couldn't save: ${failure instanceof Error ? failure.message : String(failure)}`,
-          ),
+      ? Promise.resolve(true)
+      : transact("user", ops, "week:plan").then(
+          () => {
+            setError(null);
+            return true;
+          },
+          (failure: unknown) => {
+            setError(
+              `Couldn't save: ${failure instanceof Error ? failure.message : String(failure)}`,
+            );
+            return false;
+          },
         );
   const showTriage = inbox.rows.length > 0 && !plan.skipped.includes("triage");
   const outcomesDone = plan.outcomes.length > 0 || plan.skipped.includes("outcomes");
@@ -92,7 +100,8 @@ export function WeekAhead({ today }: { today: string }) {
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void write(outcomeOps(json, monday, lines)).then(() => {
+            void write(outcomeOps(json, monday, lines)).then((saved) => {
+              if (!saved) return;
               setEditing(false);
               setDrafts(null);
             });

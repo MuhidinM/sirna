@@ -8,7 +8,7 @@ import { type Op } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
 import { formatAmount, type Santim } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
-import { monthOf } from "./money";
+import { monthOf, previousMonthStart } from "./money";
 
 // --- The repeat rule ------------------------------------------------------------
 
@@ -140,7 +140,8 @@ export const REGULAR_TXNS_SQL = `
   FROM money_txns
   WHERE deleted_at IS NULL AND transfer_id IS NULL
     AND ((regular_id IS NOT NULL AND due_date >= ?1 AND due_date <= ?2)
-      OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))`;
+      OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))
+  ORDER BY local_date, rowid`;
 
 export interface RegularTxn {
   regular_id: string | null;
@@ -171,14 +172,34 @@ export const EARLY_DAYS = 7;
 /** Late items from the end of last month are still shown this long into the next. */
 export const LOOK_BACK_DAYS = 10;
 
-/** The dates to load for a month: from a little before it, to its end. */
-export function dueWindow(today: string): { from: string; to: string; shownFrom: string } {
+/**
+ * The dates to work out a month: occurrences from the start of last month
+ * (so a late payment settles last month's date, not this month's), entries
+ * from a week before that (so an early payment for the first one counts),
+ * to the month's end. Only items from `shownFrom`, or still open within
+ * LOOK_BACK_DAYS before it, are shown.
+ */
+export function dueWindow(today: string): {
+  from: string;
+  txnFrom: string;
+  to: string;
+  shownFrom: string;
+} {
   const { from, to } = monthOf(today);
-  return { from: shiftDate(from, -LOOK_BACK_DAYS), to, shownFrom: from };
+  const occurrencesFrom = previousMonthStart(from);
+  return {
+    from: occurrencesFrom,
+    txnFrom: shiftDate(occurrencesFrom, -EARLY_DAYS),
+    to,
+    shownFrom: from,
+  };
 }
 
 /** An expense you typed that is this bill: its name in the words, or its category and amount. */
-function paysBill(regular: RegularRow, txn: RegularTxn): boolean {
+export function paysBill(
+  regular: Pick<RegularRow, "name" | "category_id" | "amount_minor">,
+  txn: Pick<RegularTxn, "amount_minor" | "description" | "category_id">,
+): boolean {
   if (txn.amount_minor >= 0) return false;
   const name = regular.name.trim().toLowerCase();
   const words = (txn.description ?? "").trim().toLowerCase();
@@ -221,8 +242,13 @@ export function dueItems(
       items.push({ regular, date, state: "upcoming", done, left: 0 });
     }
   }
+  // By name ignoring case, then exactly (code points, not locale), as bills.rs does.
+  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
   items.sort(
-    (a, b) => a.date.localeCompare(b.date) || a.regular.name.localeCompare(b.regular.name),
+    (a, b) =>
+      cmp(a.date, b.date) ||
+      cmp(a.regular.name.toLowerCase(), b.regular.name.toLowerCase()) ||
+      cmp(a.regular.name, b.regular.name),
   );
   const open = (item: DueItem) => Math.max(0, item.regular.amount_minor - item.done);
 
@@ -262,7 +288,11 @@ export function dueItems(
               : "upcoming";
       return { ...item, left, state };
     })
-    .filter((item) => item.date >= shownFrom || item.state !== "paid");
+    .filter(
+      (item) =>
+        item.date >= shownFrom ||
+        (item.state !== "paid" && item.date >= shiftDate(shownFrom, -LOOK_BACK_DAYS)),
+    );
 }
 
 /** The entry Paid or Received records: the full amount left, today, marked with the regular. */
