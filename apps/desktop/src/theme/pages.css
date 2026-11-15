@@ -1,0 +1,207 @@
+/* Page compositions (docs/design.md → Pages). Loaded after App.css. */
+
+/* Inner layouts follow the canvas's own width, not the window's. */
+.canvas,
+.panel {
+  container-type: inline-size;
+}
+
+/* --- Task rows (on the canvas and on panels) --------------------------------------------- */
+
+.task-rows,
+.canvas ul.task-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  min-height: 48px;
+  padding: 10px 4px;
+  border-bottom: 1.5px dashed var(--border);
+}
+
+.task:last-child {
+  border-bottom: 0;
+}
+
+.task label {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  cursor: pointer;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.task input {
+  margin: 0;
+}
+
+.task .done {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.canvas h2 {
+  font-size: var(--text-lg);
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+.canvas section:first-child > h2:first-child {
+  margin-top: 0;
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--canvas-2);
+  margin-bottom: var(--space-4);
+}
+
+.add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: 8px 4px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.add-row:hover {
+  color: var(--yellow);
+}
+
+.dot-pink,
+.dot-cream {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--pink);
+}
+
+.dot-cream {
+  background: var(--cream);
+}
+
+.list-rows .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- Today ---------------------------------------------------------------------------------- */
+
+.today-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+@container (max-width: 760px) {
+  .today-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.today-plan h2 {
+  margin-top: 0;
+}
+
+.week-outcomes ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+  counter-reset: outcome;
+}
+
+.week-outcomes li {
+  counter-increment: outcome;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-weight: 600;
+}
+
+.week-outcomes li::before {
+  content: counter(outcome);
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--pink);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+/* The morning brief, as a soft block on the canvas. */
+.canvas .brief,
+.brief {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: 20px;
+  background: var(--canvas-2);
+  border: 0;
+}
+
+.brief dl {
+  margin: 0 0 var(--space-3);
+}
+
+.brief-line {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: 4px 0;
+}
+
+.brief-line dt {
+  color: var(--canvas-ink-3);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding-top: 2px;
+}
+
+.brief-line dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 var(--space-4);
+  font-weight: 500;
+}
+
+.brief-line.warn dd {
+  color: var(--orange);
+}
+
+.brief-reopen {
+  margin-bottom: var(--space-4);
+}
+
+@container (max-width: 520px) {
+  .brief-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}

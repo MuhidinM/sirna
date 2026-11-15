@@ -60,6 +60,7 @@ fn main() {
         "brief_checks",
         "calendar_fetch",
         "open_main",
+        "open_capture",
         "widget_apply",
         "brief_ready",
         "capture_commit",

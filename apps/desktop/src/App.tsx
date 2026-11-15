@@ -3,13 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 
 import { query } from "./kernel/db";
-import {
-  accentFromSetting,
-  applyAccent,
-  applyTheme,
-  LOOK_SQL,
-  themeFromSetting,
-} from "./theme/theme";
+import { applyTheme, LOOK_SQL, themeFromSetting } from "./theme/theme";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { useCalendarSync } from "./shell/Calendar";
 import { Kits } from "./shell/Kits";
@@ -54,7 +48,6 @@ export function App() {
       .then((rows) => {
         const get = (key: string) => rows.find((row) => row.key === key)?.value_json;
         applyTheme(themeFromSetting(get("ui.theme")));
-        applyAccent(accentFromSetting(get("ui.accent")));
       })
       .catch(() => undefined);
   }, []);
@@ -119,7 +112,7 @@ export function App() {
   else if (screen === "dashboard") page = <Dashboard />;
   else if (screen === "notes")
     page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;
-  else page = <Today onOpenMoney={() => go("money")} />;
+  else page = <Today onOpenMoney={() => go("money")} onOpenPlan={() => go("weekcard")} />;
   return (
     <div className="app-shell">
       <Nav current={screen} onGo={go} />

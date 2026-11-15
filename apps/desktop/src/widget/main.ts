@@ -4,17 +4,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import "@fontsource-variable/bricolage-grotesque";
 import "../theme/tokens.css";
 import "./widget.css";
 import { systemClock } from "../kernel/clock";
 import { query } from "../kernel/db";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import { todayParams, todayTopSql } from "../features/tasks/today";
-import { applyAccent, applyTheme, cachedAccent, cachedTheme } from "../theme/theme";
+import { applyTheme, cachedTheme } from "../theme/theme";
 import { NOTE_SQL, timerSummary, type WidgetFocus, widgetView } from "./view";
 
 applyTheme(cachedTheme());
-applyAccent(cachedAccent());
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
 const now = $("widget-now");
@@ -128,7 +128,6 @@ void listen("focus-tick", quietly(loadFocus));
 // The theme or accent changed in the main window.
 window.addEventListener("storage", () => {
   applyTheme(cachedTheme());
-  applyAccent(cachedAccent());
 });
 quietly(loadData)();
 quietly(loadFocus)();

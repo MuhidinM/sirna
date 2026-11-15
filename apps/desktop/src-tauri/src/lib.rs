@@ -135,6 +135,7 @@ pub fn run() {
             commands::ai_send,
             commands::calendar_fetch,
             commands::open_main,
+            commands::open_capture,
             commands::widget_apply,
             commands::ai_models,
             commands::ai_usage,

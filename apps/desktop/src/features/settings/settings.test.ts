@@ -14,8 +14,7 @@ describe("readSettings", () => {
     expect(readSettings([])).toEqual({
       capMin: DEFAULT_CAP_MIN,
       dnd: true,
-      theme: "dark",
-      accent: "lime",
+      theme: "night",
     });
   });
 
@@ -24,10 +23,11 @@ describe("readSettings", () => {
       readSettings([
         { key: "focus.daily_cap_min", value_json: "180" },
         { key: "focus.dnd", value_json: '"off"' },
-        { key: "ui.theme", value_json: '"light"' },
-        { key: "ui.accent", value_json: '"teal"' },
+        { key: "ui.theme", value_json: '"forest"' },
       ]),
-    ).toEqual({ capMin: 180, dnd: false, theme: "light", accent: "teal" });
+    ).toEqual({ capMin: 180, dnd: false, theme: "forest" });
+    // The old light and dark choices read as Night.
+    expect(readSettings([{ key: "ui.theme", value_json: '"light"' }]).theme).toBe("night");
   });
 
   it("ignores broken values", () => {
@@ -36,7 +36,7 @@ describe("readSettings", () => {
         { key: "focus.daily_cap_min", value_json: "nope" },
         { key: "ui.theme", value_json: null },
       ]),
-    ).toEqual({ capMin: DEFAULT_CAP_MIN, dnd: true, theme: "dark", accent: "lime" });
+    ).toEqual({ capMin: DEFAULT_CAP_MIN, dnd: true, theme: "night" });
   });
 });
 
@@ -52,7 +52,7 @@ describe("checkCap", () => {
 
 describe("settingsOps", () => {
   it("writes JSON the Rust side reads", () => {
-    const ops = settingsOps({ capMin: 200, dnd: false, theme: "light", accent: "sky" });
+    const ops = settingsOps({ capMin: 200, dnd: false, theme: "forest" });
     expect(ops).toEqual([
       {
         op: "upsert",
@@ -61,8 +61,7 @@ describe("settingsOps", () => {
         values: { value_json: "200" },
       },
       { op: "upsert", table: "core_settings", id: "focus.dnd", values: { value_json: '"off"' } },
-      { op: "upsert", table: "core_settings", id: "ui.theme", values: { value_json: '"light"' } },
-      { op: "upsert", table: "core_settings", id: "ui.accent", values: { value_json: '"sky"' } },
+      { op: "upsert", table: "core_settings", id: "ui.theme", values: { value_json: '"forest"' } },
     ]);
   });
 });

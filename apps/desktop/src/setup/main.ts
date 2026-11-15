@@ -3,6 +3,7 @@
 // start is one key (Enter). Ticks never block the start.
 import { invoke } from "@tauri-apps/api/core";
 
+import "@fontsource-variable/bricolage-grotesque";
 import "../theme/tokens.css";
 import "./setup.css";
 import { actionsLine, confirmText, type SetupInfo, visibleChecklist } from "./sheet";
