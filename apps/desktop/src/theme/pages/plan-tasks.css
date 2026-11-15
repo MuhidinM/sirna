@@ -17,7 +17,7 @@
   gap: var(--space-3);
   width: 100%;
   min-height: 44px;
-  padding: 6px var(--space-3);
+  padding: var(--space-1) var(--space-3);
   border: 0;
   border-radius: var(--radius);
   background: transparent;
@@ -63,7 +63,7 @@
   place-items: center;
   min-width: 22px;
   height: 22px;
-  padding: 0 6px;
+  padding: 0 var(--space-2);
   border-radius: var(--pill);
   background: var(--pink);
   color: var(--canvas);
@@ -88,15 +88,6 @@
   color: var(--canvas-ink-3);
 }
 
-.tasks-canvas .tasks-search input {
-  min-height: 40px;
-}
-
-.tasks-canvas .canvas-head .btn-primary {
-  min-height: 40px;
-  padding: 0 var(--space-5);
-}
-
 .tasks-canvas .tasks-hint {
   max-width: 62ch;
   margin: 0 0 var(--space-5);
@@ -118,7 +109,7 @@
 .tasks-canvas .seg-item {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   color: var(--canvas-ink-2);
 }
 
@@ -135,7 +126,7 @@
   place-items: center;
   min-width: 20px;
   height: 20px;
-  padding: 0 6px;
+  padding: 0 var(--space-2);
   border-radius: var(--pill);
   background: var(--canvas-3);
   color: var(--canvas-ink-2);
@@ -149,14 +140,6 @@
   color: var(--canvas);
 }
 
-.tasks-canvas .tasks-area-select {
-  min-height: 40px;
-  border-radius: var(--pill);
-  padding: 0 var(--space-4);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
 /* --- Quick add ------------------------------------------------------------------------------ */
 
 .tasks-canvas .tasks-add {
@@ -167,7 +150,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 5px 5px 5px 6px;
+  padding: 5px 5px 5px var(--space-2);
   border-radius: var(--pill);
   background: var(--canvas-2);
   border: 1.5px dashed var(--canvas-line);
@@ -194,7 +177,7 @@
   min-width: 0;
   background: transparent;
   border: 0;
-  padding: 6px 4px;
+  padding: var(--space-2) var(--space-1);
   box-shadow: none;
 }
 
@@ -210,7 +193,7 @@
 .tasks-canvas .tasks-add-note {
   display: block;
   min-height: 1.2em;
-  margin: 6px 0 0 var(--space-4);
+  margin: var(--space-1) 0 0 var(--space-4);
   color: var(--canvas-ink-3);
 }
 
@@ -229,7 +212,7 @@
 .tasks-canvas .task-row {
   gap: var(--space-2) var(--space-4);
   min-height: 60px;
-  padding: 12px 8px;
+  padding: var(--space-3) var(--space-2);
   border-bottom: 1.5px dashed var(--canvas-line);
   border-radius: var(--radius);
   transition: background 0.12s var(--ease);
@@ -272,7 +255,7 @@
 
 .tasks-canvas .task-step {
   display: inline-block;
-  margin-right: 6px;
+  margin-right: var(--space-2);
   padding: 0 7px;
   border-radius: var(--pill);
   background: var(--canvas-2);
@@ -291,6 +274,12 @@
   font-size: var(--text-xs);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+.tasks-canvas .task-repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .tasks-canvas .task-facts > span + span::before {
@@ -313,7 +302,7 @@
   display: inline-flex;
   align-items: center;
   min-height: 24px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   border-radius: var(--pill);
   background: var(--cream);
   color: var(--cream-ink);
@@ -362,7 +351,7 @@
   color: var(--canvas-ink);
 }
 
-.tasks-canvas .task-actions .task-drop:hover {
+.tasks-canvas .task-row .task-actions .btn.task-drop {
   color: var(--danger);
 }
 
@@ -394,7 +383,7 @@
   gap: var(--space-4);
   margin: 0;
   padding: var(--space-5);
-  border-radius: 20px;
+  border-radius: var(--radius-tile);
   background: var(--cream);
   color: var(--cream-ink);
 }
@@ -411,7 +400,7 @@
 .tasks-canvas .task-edit .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   min-width: 0;
 }
@@ -429,7 +418,6 @@
   background: var(--canvas);
   border: 1px solid transparent;
   color: var(--canvas-ink);
-  padding: 8px 14px;
 }
 
 .tasks-canvas .task-edit input:focus-visible,
@@ -454,15 +442,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.tasks-canvas .task-edit-save {
-  background: var(--orange);
-  color: var(--canvas);
-}
-
-.tasks-canvas .task-edit-save:hover {
-  background: color-mix(in srgb, var(--orange) 88%, var(--canvas-ink));
 }
 
 .tasks-canvas .task-edit .btn-ghost {

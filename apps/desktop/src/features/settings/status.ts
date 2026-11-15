@@ -3,6 +3,7 @@
  * for Calendar, AI and Backups — fine, needs you, or not set up — with the
  * fix in words. Pure and tested.
  */
+import { showDate } from "../../kernel/dates";
 import { shiftDate } from "../plan/dayplan";
 import { readStatus, statusText } from "../calendar/sync";
 
@@ -91,9 +92,10 @@ export function statusLines(input: {
     lines.push({
       name: "Backups",
       ok: false,
-      text: `Last backup ${last}: check the backup folder still exists and has space.`,
+      text: `Last backup ${showDate(last, input.today)}: check the backup folder still exists and has space.`,
     });
-  else lines.push({ name: "Backups", ok: true, text: `Last backup ${last}.` });
+  else
+    lines.push({ name: "Backups", ok: true, text: `Last backup ${showDate(last, input.today)}.` });
 
   return lines;
 }

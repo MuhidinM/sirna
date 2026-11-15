@@ -23,7 +23,7 @@ body {
 .capture {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   box-sizing: border-box;
   height: var(--bar-h);
   padding: 0 var(--inset);
@@ -44,7 +44,7 @@ body {
   aspect-ratio: 1;
   border-radius: 50%;
   background: var(--pink);
-  color: #fff;
+  color: var(--canvas);
   font-size: 22px;
   font-weight: 600;
   line-height: 1;
@@ -68,7 +68,7 @@ body {
   background: transparent;
   border: none;
   outline: none;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
 }
 
 .capture-input::placeholder {
@@ -81,7 +81,7 @@ body {
   flex-shrink: 1;
   max-width: 58%;
   max-height: calc(var(--bar-h) - 2 * var(--inset) - 2px);
-  padding: 4px 14px;
+  padding: var(--space-1) 14px;
   box-sizing: border-box;
   border-radius: calc((var(--bar-h) - 2 * var(--inset)) / 2);
   line-height: 1.2;

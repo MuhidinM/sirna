@@ -378,7 +378,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
                 <span className="su-extra-title">Gym days</span>
                 <DayPicker value={gymDays} onChange={setGymDays} label="Gym days" />
                 <label className="su-field">
-                  <span>at</span>
+                  <span>At</span>
                   <input type="time" value={gymTime} onChange={(e) => setGymTime(e.target.value)} />
                 </label>
               </div>

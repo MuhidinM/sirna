@@ -78,7 +78,7 @@ export function FocusPanel({ status }: { status: FocusStatus }) {
           {label}
         </span>
         {status.in_row > 0 && !onBreak && (
-          <span className="focus-card-session">session {status.in_row + 1}</span>
+          <span className="focus-card-session">Session {status.in_row + 1}</span>
         )}
       </div>
       {status.title && status.title !== label && <p className="focus-card-title">{status.title}</p>}

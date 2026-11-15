@@ -1,4 +1,6 @@
+import { showDate } from "../kernel/dates";
 import { shiftDate, weekStart } from "../features/plan/dayplan";
+import { formatMinutes } from "../features/plan/now";
 import { IconChart } from "./icons";
 import { type Bar, BarChart, PanelHead } from "./kit";
 import { useLiveQuery } from "./useLiveQuery";
@@ -24,11 +26,8 @@ const FOCUSED_SQL = `
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const hours = (minutes: number) => {
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return h > 0 ? `${h}hr ${m}min` : `${m}min`;
-};
+/** "2 h 10 min", the app's one way to write a length of time. */
+const hours = (minutes: number) => formatMinutes(Math.round(minutes));
 
 /** This week's focus: planned (cap) against done (body), today highlighted. */
 export function FocusWeek({ today }: { today: string }) {
@@ -47,7 +46,7 @@ export function FocusWeek({ today }: { today: string }) {
       total: plan / 60,
       done: done / 60,
       highlight: day === today,
-      tipTitle: day === today ? "Today" : day,
+      tipTitle: day === today ? "Today" : showDate(day, today, { weekday: true }),
       tip: [
         { label: "Planned", value: hours(plan), tone: "yellow" },
         { label: "Focused", value: hours(done), tone: "cream" },
@@ -58,19 +57,15 @@ export function FocusWeek({ today }: { today: string }) {
     <section className="panel" aria-labelledby="focus-week">
       <PanelHead
         id="focus-week"
+        icon={<IconChart size={18} />}
         title="Weekly focus overview"
         sub={
           <>
             This week: <b>{hours(totalDone)}</b> focused
           </>
         }
-        action={
-          <span className="icon-btn" aria-hidden="true">
-            <IconChart size={18} />
-          </span>
-        }
       />
-      <BarChart bars={bars} unit="hr" ariaLabel={`Focus this week: ${hours(totalDone)} focused`} />
+      <BarChart bars={bars} unit="h" ariaLabel={`Focus this week: ${hours(totalDone)} focused`} />
     </section>
   );
 }

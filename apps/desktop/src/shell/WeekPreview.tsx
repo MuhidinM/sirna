@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
+import { showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { formatMinutes } from "../features/plan/now";
 import { type Query } from "../features/plan/dayplan";
@@ -16,12 +17,6 @@ import { EventCard, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
-const dayName = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
 const weekday = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" });
 const at = (minutes: number) =>
   `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -61,11 +56,13 @@ function LateRow({ task, today }: { task: LateTask; today: string }) {
         <b>{task.title}</b>
         <span className="meta">
           {" "}
-          · due {task.dueDate}
+          · due {showDate(task.dueDate, today)}
           {task.shortMin !== null && task.shortMin > 0
             ? ` · ${formatMinutes(task.shortMin)} short`
             : ""}
-          {task.finishes ? ` · done ${task.finishes} at this pace` : " · no time for it this week"}
+          {task.finishes
+            ? ` · done ${showDate(task.finishes, today)} at this pace`
+            : " · no time for it this week"}
         </span>
       </span>
       <span className="pw-actions">
@@ -112,16 +109,16 @@ export function WeekPreview({ today }: { today: string }) {
           const isToday = day.date === today;
           return (
             <li key={day.date} className={isToday ? "pw-day today" : "pw-day"}>
-              <strong className="visually-hidden">
-                {dayName.format(ms)}
+              <span className="visually-hidden">
+                {showDate(day.date, today, { weekday: true })}
                 {isToday ? ", today" : ""}
-              </strong>
+              </span>
               <div className="pw-day-head" aria-hidden="true">
                 <span className="pw-day-name">{weekday.format(ms)}</span>
                 <span className="pw-day-num">{Number(day.date.slice(8))}</span>
               </div>
               {day.blocks.length === 0 ? (
-                <p className="pw-day-empty">{day.light ? "light day" : "free time kept open"}</p>
+                <p className="pw-day-empty">{day.light ? "Light day" : "Free time kept open"}</p>
               ) : (
                 <div className="pw-day-cards">
                   {day.blocks.map((block, index) => (

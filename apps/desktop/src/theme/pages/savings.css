@@ -12,7 +12,7 @@
   display: block;
   padding: 0;
   border: 0;
-  border-radius: 22px;
+  border-radius: var(--radius-tile);
   overflow: hidden;
   background: #161d26;
   color: #e8ecef;
@@ -79,9 +79,9 @@
 
 .goal-top {
   position: absolute;
-  top: 18px;
-  left: 20px;
-  right: 18px;
+  top: var(--space-4);
+  left: var(--space-5);
+  right: var(--space-4);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -96,27 +96,21 @@
   color: #f3f5f6;
 }
 
-.goal-edit {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+/* The shared .icon-btn, made see-through so it sits on the night scene. */
+.icon-btn.goal-edit {
   border: 1px solid rgb(255 255 255 / 12%);
   background: rgb(255 255 255 / 8%);
-  color: #e8ecef;
-  cursor: pointer;
-  flex: none;
+  color: var(--cream);
 }
 
-.goal-edit:hover {
+.icon-btn.goal-edit:hover {
   background: rgb(255 255 255 / 16%);
 }
 
 .goal-amount {
   position: absolute;
-  right: 20px;
-  bottom: 16px;
+  right: var(--space-5);
+  bottom: var(--space-4);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -126,7 +120,7 @@
 .goal-amount strong {
   font-size: clamp(1.25rem, 2.6vw, 1.75rem);
   font-weight: 700;
-  color: #ecc979;
+  color: var(--yellow);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   text-shadow: 0 2px 10px rgb(0 0 0 / 50%);
@@ -141,13 +135,14 @@
 .goal-controls {
   display: grid;
   gap: var(--space-2);
-  padding: 14px 18px 16px;
-  border-top: 1px solid rgb(255 255 255 / 6%);
-  background: #141a22;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--panel-line);
+  background: var(--panel);
+  color: var(--ink);
 }
 
 .goal-controls .meta {
-  color: #a9b2ba;
+  color: var(--ink-2);
 }
 
 .goal-pace {
@@ -157,21 +152,11 @@
 .savings .goal-controls input,
 .savings .new-goal input {
   width: 9rem;
-  background: #1f2832;
-  border-color: rgb(255 255 255 / 8%);
-  color: #f3f5f6;
-}
-
-.goal-controls .btn-ghost {
-  color: #e8ecef;
-}
-
-.goal-controls .btn-ghost:hover {
-  background: rgb(255 255 255 / 10%);
 }
 
 .savings .new-goal {
-  margin-bottom: var(--space-4);
+  align-items: flex-end;
+  margin-bottom: 14px;
 }
 
 .savings .garden {
@@ -185,7 +170,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   width: 72px;
 }
 
@@ -198,20 +183,20 @@
 .savings .panel-sub code,
 .savings code {
   font-size: 0.8em;
-  padding: 1px 6px;
-  border-radius: 6px;
+  padding: 1px var(--space-2);
+  border-radius: var(--pill);
   background: var(--chip);
 }
 
 @media (max-width: 719px) {
   .goal-amount {
-    right: 14px;
-    bottom: 12px;
+    right: var(--space-3);
+    bottom: var(--space-3);
   }
 
   .goal-top {
-    left: 14px;
-    right: 12px;
+    left: var(--space-3);
+    right: var(--space-3);
   }
 }
 

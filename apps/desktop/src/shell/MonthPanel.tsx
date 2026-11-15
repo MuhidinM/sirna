@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { showDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
 import { occurrences, readRule } from "../features/money/regulars";
 import { IconArrowUpRight, IconBolt } from "./icons";
@@ -8,23 +9,32 @@ import { useLiveQuery } from "./useLiveQuery";
 
 type Show = "due" | "bills" | "pay";
 
-const SHOW: { value: Show; label: string; mark: string; legend: (n: number) => string }[] = [
+const SHOW: {
+  value: Show;
+  label: string;
+  mark: string;
+  none: string;
+  legend: (n: number) => string;
+}[] = [
   {
     value: "due",
     label: "Due",
     mark: "something is due",
+    none: "Nothing due or planned on this day.",
     legend: (n) => `${n} day${n === 1 ? "" : "s"} with a task due or planned`,
   },
   {
     value: "bills",
     label: "Bills",
     mark: "a bill is due",
+    none: "No bills due on this day.",
     legend: (n) => `${n} day${n === 1 ? "" : "s"} with a bill due`,
   },
   {
     value: "pay",
     label: "Pay",
     mark: "pay is expected",
+    none: "No pay expected on this day.",
     legend: (n) => `${n} pay day${n === 1 ? "" : "s"}`,
   },
 ];
@@ -39,13 +49,6 @@ const RULES_SQL = `
   SELECT kind, name, amount_minor, rule_json FROM money_regulars
   WHERE deleted_at IS NULL AND active = 1
   ORDER BY name`;
-
-const DAY = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
 
 /**
  * The month in cream circles (docs/design.md). Pink marks the days that need
@@ -149,7 +152,7 @@ export function MonthPanel({
       </p>
       {picked && (
         <div className="month-day-detail" role="status">
-          <strong>{DAY.format(Date.parse(`${picked}T00:00:00Z`))}</strong>
+          <strong>{showDate(picked, today, { weekday: true })}</strong>
           {pickedItems.length > 0 ? (
             <ul>
               {pickedItems.map((line, i) => (
@@ -157,9 +160,7 @@ export function MonthPanel({
               ))}
             </ul>
           ) : (
-            <span className="meta">
-              Nothing here in {current?.label.toLowerCase() ?? "this view"}.
-            </span>
+            <span className="meta">{current?.none}</span>
           )}
         </div>
       )}

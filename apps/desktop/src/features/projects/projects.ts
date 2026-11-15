@@ -195,7 +195,7 @@ export function checkDraft(draft: ProjectDraft): string | null {
       return `Estimate: hours from 0 to ${MAX_ESTIMATE_HOURS}.`;
   }
   const deadline = draft.deadline.trim();
-  if (deadline && !realDate(deadline)) return "Deadline: a date like 2026-12-20.";
+  if (deadline && !realDate(deadline)) return "Deadline: pick a real date.";
   return null;
 }
 

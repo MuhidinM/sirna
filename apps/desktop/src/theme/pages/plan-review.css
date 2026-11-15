@@ -27,7 +27,7 @@
 /* App.css gives every field a big top margin; here fields sit in cards. */
 .plan-review .field {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0 0 var(--space-3);
 }
 
@@ -47,8 +47,8 @@
   font-size: 0.92em;
   background: var(--canvas-2);
   color: var(--canvas-ink);
-  padding: 1px 6px;
-  border-radius: 6px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
   overflow-wrap: anywhere;
 }
 
@@ -79,9 +79,9 @@
   flex-wrap: wrap;
   gap: 2px;
   margin: 0;
-  padding: 4px;
+  padding: var(--space-1);
   list-style: none;
-  border-radius: 22px;
+  border-radius: var(--pill);
   background: var(--canvas-2);
   max-width: 100%;
 }
@@ -90,7 +90,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 5px 14px 5px 5px;
+  padding: 5px var(--space-4) 5px 5px;
   border: 0;
   border-radius: var(--pill);
   background: transparent;
@@ -146,8 +146,6 @@
 
 .rv-title {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-xl);
-  letter-spacing: -0.02em;
 }
 
 .rv-grid {
@@ -169,7 +167,7 @@
 .rv-blocks {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
-  gap: 10px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -232,7 +230,6 @@
 
 .rv-inline input {
   flex: 1 1 180px;
-  border-radius: var(--pill) !important;
 }
 
 .rv-add {
@@ -269,7 +266,7 @@
   justify-content: space-between;
   gap: var(--space-2) var(--space-3);
   min-height: 52px;
-  padding: 8px 4px;
+  padding: var(--space-2) var(--space-1);
   border-bottom: 1.5px dashed var(--canvas-line);
 }
 
@@ -290,14 +287,14 @@
   align-items: center;
   gap: 2px;
   padding: 3px;
-  border-radius: 20px;
+  border-radius: var(--pill);
   background: var(--canvas-2);
   max-width: 100%;
 }
 
 .plan-review .rv-pick {
   min-height: 28px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   background: transparent;
   color: var(--canvas-ink-2);
   font-size: var(--text-xs);
@@ -313,6 +310,10 @@
   color: var(--cream-ink);
 }
 
+.plan-review .rv-pick-drop {
+  color: var(--danger);
+}
+
 .plan-review .rv-pick-drop:hover {
   background: var(--pink);
   color: var(--canvas);
@@ -320,7 +321,7 @@
 
 .plan-review .rv-guess {
   min-height: 28px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   background: var(--purple);
   color: var(--on-loud);
   font-size: var(--text-xs);
@@ -437,11 +438,6 @@
   border-top: 1.5px dashed var(--canvas-line);
 }
 
-.rv-foot .btn {
-  min-height: 42px;
-  padding: 0 var(--space-5);
-}
-
 /* The short reply before the review closes. */
 .rv-reply {
   display: grid;
@@ -474,10 +470,6 @@
   max-width: 340px;
 }
 
-.pr-search input {
-  min-height: 40px;
-}
-
 .pr-status {
   display: flex;
   flex-wrap: wrap;
@@ -501,33 +493,15 @@
   margin-top: var(--space-2);
 }
 
-/* A cheat sheet: a tinted letter circle, then its lines. */
-.pr-cheat-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-
-.pr-cheat-head .grow {
-  flex: 1;
-  min-width: 0;
-}
-
-.pr-cheat-head h2 {
-  overflow-wrap: anywhere;
-}
-
-.pr-cheat-mark {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+/* A cheat sheet: its first letter in a circle of the area's colour, then its lines. */
+.pr-cheat .panel-icon {
   background: var(--tone);
   color: var(--tone-ink, var(--on-loud));
   font-weight: 700;
+}
+
+.pr-cheat .panel-head h2 {
+  overflow-wrap: anywhere;
 }
 
 .pr-lines {
@@ -588,9 +562,6 @@
 
 .plan-review .pr-kit-head h2 {
   color: inherit;
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 

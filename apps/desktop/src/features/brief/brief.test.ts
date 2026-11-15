@@ -64,10 +64,10 @@ const render = (lines: ReturnType<typeof buildBrief>) =>
 describe("buildBrief", () => {
   it("matches the golden brief", () => {
     expect(render(buildBrief(input))).toEqual([
-      "Wednesday 11 Nov | 06:05",
+      "Wed 11 Nov | 06:05",
       "NOW | Quran · 06:00–06:20",
       "TOP 3 | Send weekly report | due today",
-      "Apply: Backend dev | since 2026-11-09",
+      "Apply: Backend dev | since 9 Nov",
       "Portfolio site: About page",
       "TODAY | 06:00 Quran · 08–12 Job A · 13–17 Job B · 17:30 Gym · 19:00 Coding · +1",
       "LOAD | 2 h 10 min planned of 8 h free · light",
@@ -107,13 +107,13 @@ describe("buildBrief", () => {
       ...input,
       due: [
         "Rent 6,000 ETB due today",
-        "Job A pay is late: 18,000 ETB expected on 2026-11-10",
+        "Job A pay is late: 18,000 ETB expected on 10 Nov",
         "Third",
       ],
     });
     expect(render(lines).filter((line) => /Rent|Job A pay|Third/.test(line))).toEqual([
       "MONEY | Rent 6,000 ETB due today",
-      "Job A pay is late: 18,000 ETB expected on 2026-11-10",
+      "Job A pay is late: 18,000 ETB expected on 10 Nov",
     ]);
     expect(lines.length).toBeLessThanOrEqual(MAX_LINES);
   });

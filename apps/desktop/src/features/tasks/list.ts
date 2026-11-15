@@ -130,10 +130,10 @@ export function repeatText(json: string | null | undefined): string {
 
 export function checkTask(draft: TaskDraft): string | null {
   if (!draft.title.trim()) return "Give the task a name.";
-  if (draft.due && !realDate(draft.due)) return "Due: a date like 2026-11-20.";
+  if (draft.due && !realDate(draft.due)) return "Due: pick a real date.";
   if (draft.repeat.trim() && !parseRule(draft.repeat))
     return "Repeat: every fri, every weekday, daily, monthly 1 or monthly last.";
-  if (draft.followUp && !realDate(draft.followUp)) return "Follow up: a date like 2026-11-20.";
+  if (draft.followUp && !realDate(draft.followUp)) return "Follow up: pick a real date.";
   const hours = draft.estimateHours.trim();
   if (hours) {
     const value = Number(hours);

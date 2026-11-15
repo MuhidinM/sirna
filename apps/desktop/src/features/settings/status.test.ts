@@ -51,7 +51,7 @@ describe("the Settings status strip (T-075)", () => {
     expect(lines[0]?.text).toMatch(/Secret address in iCal format/);
     expect(lines[1]?.text).toMatch(/choose one under AI/);
     expect(lines[2]?.text).toBe(
-      "Last backup 2026-11-10: check the backup folder still exists and has space.",
+      "Last backup 10 Nov: check the backup folder still exists and has space.",
     );
     expect(
       statusLines({

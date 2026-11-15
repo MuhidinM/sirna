@@ -150,7 +150,7 @@ function BlockForm({
       }}
     >
       <div className="rt-form-head">
-        <h3>{editing ? "Change block" : "Add a block"}</h3>
+        <h2>{editing ? "Change block" : "Add a block"}</h2>
         {editing && <span className="meta">{dayName(editing.weekday)}</span>}
       </div>
       <div className="rt-fields">
@@ -226,18 +226,18 @@ function BlockForm({
         </p>
       )}
       <div className="rt-actions">
-        <Button type="submit" primary>
+        <Button type="submit" className="btn-orange">
           Save
         </Button>
         <Button onClick={onDone}>Cancel</Button>
         {editing && (
           <>
             <span className="rt-spacer" />
-            <Button className="btn-danger" onClick={() => onRemove(editing, "day")}>
+            <Button className="btn-ghost btn-danger" onClick={() => onRemove(editing, "day")}>
               Remove{series.length > 1 ? ` on ${dayName(editing.weekday)}` : ""}
             </Button>
             {series.length > 1 && (
-              <Button className="btn-danger" onClick={() => onRemove(editing, "series")}>
+              <Button className="btn-ghost btn-danger" onClick={() => onRemove(editing, "series")}>
                 Remove all
               </Button>
             )}
@@ -406,7 +406,7 @@ function AreaForm({
       }}
     >
       <div className="rt-form-head">
-        <h3>{editing ? `Change ${editing.name}` : "Add an area"}</h3>
+        <h2>{editing ? `Change ${editing.name}` : "Add an area"}</h2>
       </div>
       <div className="rt-fields">
         <label className="field rt-wide">
@@ -486,7 +486,7 @@ function AreaForm({
         </p>
       )}
       <div className="rt-actions">
-        <Button type="submit" primary>
+        <Button type="submit" className="btn-orange">
           Save
         </Button>
         <Button onClick={onDone}>Cancel</Button>
@@ -675,7 +675,7 @@ function TimesPanel() {
       {!rows.loading && (
         <div className="rt-time-grid">
           {fields.map(([key, label, value]) => (
-            <label key={key} className="rt-time">
+            <label key={key} className="field rt-time">
               <span>{label}</span>
               <input
                 type="time"

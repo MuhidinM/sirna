@@ -19,7 +19,7 @@ import { transactTheme, useTheme } from "./useTheme";
 import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
 import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
-import { IconBolt, IconExpand, IconPencil, IconSettings, IconSun } from "./icons";
+import { IconArrowRight, IconBolt, IconExpand, IconPencil, IconSettings, IconSun } from "./icons";
 import { PanelHead } from "./kit";
 import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -87,10 +87,14 @@ function SecretField({ name, label, help, placeholder }: (typeof SECRETS)[number
       </label>
       <p className="meta">{help}</p>
       <div className="row">
-        <Button type="submit" primary disabled={!cleanSecret(text)}>
+        <Button type="submit" disabled={!cleanSecret(text)}>
           {saved ? "Replace" : "Save"}
         </Button>
-        {saved && <Button onClick={() => void store("", "Removed")}>Remove</Button>}
+        {saved && (
+          <Button className="btn-ghost btn-danger" onClick={() => void store("", "Removed")}>
+            Remove
+          </Button>
+        )}
         <span className={saved && !note ? "set-state saved" : "set-state"} role="status">
           {note || status}
         </span>
@@ -136,7 +140,7 @@ function CaptureKey() {
         />
       </label>
       <div className="row">
-        <Button type="submit" primary disabled={!text.trim()}>
+        <Button type="submit" disabled={!text.trim()}>
           Use this key
         </Button>
         <Button onClick={() => void apply("")}>Back to default</Button>
@@ -217,9 +221,7 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
         </div>
       </fieldset>
       <div className="row">
-        <Button type="submit" primary>
-          Save
-        </Button>
+        <Button type="submit">Save</Button>
         <span className="meta set-note" role="status">
           {note}
         </span>
@@ -459,7 +461,8 @@ function AiSetup() {
 function WhatWasSent() {
   const calls = useLiveQuery<AiCall & Record<string, string | number | null>>(AI_LOG_SQL);
   if (calls.loading) return null;
-  if (calls.rows.length === 0) return <p className="meta">Nothing has been sent.</p>;
+  if (calls.rows.length === 0)
+    return <p className="empty">Nothing sent yet. Each AI request shows here for 30 days.</p>;
   const now = systemClock.now();
   return (
     <ul className="ai-log set-log">
@@ -517,14 +520,20 @@ function StatusStrip() {
           key={line.name}
           className={`panel set-stat ${line.ok === false ? "needs" : line.ok ? "fine" : "unset"}`}
         >
-          <span className="set-stat-head">
-            <span className="set-dot" aria-hidden="true" />
-            <strong>{line.name}</strong>
-          </span>{" "}
-          <span className="set-stat-text">
-            {line.ok === false ? "Needs you: " : ""}
-            {line.text}
-          </span>
+          <PanelHead
+            title={
+              <>
+                <span className="set-dot" aria-hidden="true" />
+                {line.name}
+              </>
+            }
+            sub={
+              <>
+                {line.ok === false ? "Needs you: " : ""}
+                {line.text}
+              </>
+            }
+          />
         </li>
       ))}
     </ul>
@@ -568,7 +577,6 @@ function Section({
   );
 }
 
-/** The sections as a list in the side column; a click scrolls the page to one. */
 /** The section list; on wide screens it stays in view and marks the section you are on. */
 function Jump() {
   const [active, setActive] = useState<string>(SECTIONS[0]?.id ?? "");
@@ -618,6 +626,7 @@ function Jump() {
               }
             >
               {section.title}
+              <IconArrowRight size={16} />
             </button>
           </li>
         ))}
@@ -656,7 +665,8 @@ export function Settings() {
               <CalendarStatus />
               <p className="meta set-aside">
                 Email: Sirna doesn&apos;t sign in to email, so there is no email password to store.
-                The &ldquo;Check email&rdquo; blocks only remind you; change their times in My week.
+                The &ldquo;Check email&rdquo; blocks only remind you; change their times in Plan,
+                Routine.
               </p>
             </Section>
 
@@ -670,7 +680,7 @@ export function Settings() {
                 <StrictMode />
               </div>
               <div className="setting">
-                <h3>What was sent</h3>
+                <h2 className="set-subhead">What was sent</h2>
                 <WhatWasSent />
               </div>
             </Section>

@@ -16,7 +16,7 @@ import {
   span,
   toggleHidden,
 } from "../features/dashboard/layout";
-import { logicalDate } from "../kernel/dates";
+import { logicalDate, showDate } from "../kernel/dates";
 import {
   AWAY_HISTORY_SQL,
   type AwayChange,
@@ -40,7 +40,16 @@ import {
 import { weekStart } from "../features/plan/dayplan";
 import { hoursLabel } from "../features/projects/capacity";
 import { AREA_WEEK_SQL, type AreaWeek, share } from "../features/week/card";
-import { IconBolt, IconChart, IconCheck, IconClock, IconPencil, IconPlay } from "./icons";
+import {
+  IconArrowLeft,
+  IconArrowRight,
+  IconBolt,
+  IconChart,
+  IconCheck,
+  IconClock,
+  IconPencil,
+  IconPlay,
+} from "./icons";
 import { InsightList } from "./Insights";
 import { type Bar as ChartBar, BarChart, PanelHead } from "./kit";
 import { Savings } from "./Savings";
@@ -69,19 +78,6 @@ function Flame({ lit }: { lit: boolean }) {
     </svg>
   );
 }
-
-const dayLabel = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
-
-const shortDate = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
 
 const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" });
 
@@ -136,8 +132,8 @@ function YearChart({
                 tabIndex={-1}
                 className={`year-cell shade-${cell.shade}${cell.outline ? " outline" : ""}${cell.future ? " future" : ""}${cell.date === today ? " today" : ""}${cell.date === picked ? " picked" : ""}`}
                 disabled={cell.future}
-                title={`${dayLabel.format(new Date(`${cell.date}T00:00:00Z`))}: ${cell.minutes ? hoursLabel(cell.minutes) : "no focus"}`}
-                aria-label={`${cell.date}, ${cell.minutes} minutes`}
+                title={`${showDate(cell.date, today, { weekday: true })}: ${cell.minutes ? hoursLabel(cell.minutes) : "no focus"}`}
+                aria-label={`${showDate(cell.date, today, { weekday: true })}, ${cell.minutes} minutes`}
                 onClick={() => onPick(cell.date)}
               />
             ))}
@@ -355,14 +351,14 @@ export function Dashboard() {
                 {" "}
                 ·{" "}
                 <span className="dash-chip pink">
-                  {dayLabel.format(new Date(`${pickedCell.date}T00:00:00Z`))}:{" "}
+                  {showDate(pickedCell.date, today, { weekday: true })}:{" "}
                   {pickedCell.minutes ? hoursLabel(pickedCell.minutes) : "no focus"}
                 </span>
               </>
             )}
           </p>
-          <label className="year-lookup">
-            <span className="meta">Look up a day</span>
+          <label className="field year-lookup">
+            <span>Look up a day</span>
             <input
               type="date"
               min={first}
@@ -389,13 +385,9 @@ export function Dashboard() {
       <section className="panel dash-areas" aria-labelledby="areas">
         <PanelHead
           id="areas"
+          icon={<IconChart size={18} />}
           title="Areas this week"
           sub="Done against each weekly target"
-          action={
-            <span className="icon-btn" aria-hidden="true">
-              <IconChart size={18} />
-            </span>
-          }
         />
         {week.rows.length > 0 && <AreaChart rows={week.rows} />}
         <ul className="dash-area-rows">
@@ -421,7 +413,7 @@ export function Dashboard() {
           ))}
         </ul>
         {!week.loading && week.rows.length === 0 && (
-          <p className="empty">No area has a weekly target yet.</p>
+          <p className="empty">No area has a weekly target yet. Set one in Plan, Routine.</p>
         )}
       </section>
     ),
@@ -432,7 +424,7 @@ export function Dashboard() {
       <section className="canvas dash-canvas" aria-labelledby="dash-title">
         <header className="canvas-head">
           <h1 id="dash-title" className="page-title">
-            Dashboard, <span className="soft">week of {shortDate.format(startMs)}</span>
+            Dashboard, <span className="soft">week of {showDate(monday, today)}</span>
           </h1>
           <span className="spacer" />
           {error && (
@@ -479,7 +471,7 @@ export function Dashboard() {
                     aria-disabled={index === 0}
                     onClick={() => step(place.id, -1)}
                   >
-                    ↑
+                    <IconArrowLeft size={16} />
                   </Button>
                   <Button
                     className="dash-icon"
@@ -487,13 +479,14 @@ export function Dashboard() {
                     aria-disabled={index === loose.length - 1}
                     onClick={() => step(place.id, 1)}
                   >
-                    ↓
+                    <IconArrowRight size={16} />
                   </Button>
                   <span className="dash-sizes">
                     {(["S", "M", "L"] as const).map((size) => (
                       <Button
                         key={size}
                         className="dash-icon"
+                        aria-label={`Size ${size}`}
                         aria-pressed={place.size === size}
                         onClick={() => save((current) => setSize(current, place.id, size))}
                       >
@@ -501,7 +494,10 @@ export function Dashboard() {
                       </Button>
                     ))}
                   </span>
-                  <Button onClick={() => save((current) => toggleHidden(current, place.id))}>
+                  <Button
+                    className="btn-ghost"
+                    onClick={() => save((current) => toggleHidden(current, place.id))}
+                  >
                     Hide
                   </Button>
                 </div>

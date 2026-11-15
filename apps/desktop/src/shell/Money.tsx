@@ -3,7 +3,7 @@ import "../theme/pages/money.css";
 import { useEffect, useRef, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
-import { logicalDate } from "../kernel/dates";
+import { logicalDate, showDate } from "../kernel/dates";
 import { type Op, query, transact } from "../kernel/db";
 import { formatAmount, parseAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
@@ -158,7 +158,39 @@ interface Category extends Record<string, string> {
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** An amount without its unit, for placeholders people type over ("e.g. 4,000"). */
 const birr = (minor: number) => formatAmount(minor).replace(/ ETB$/, "");
+
+/** "12,400 ETB" with the unit set small, both from formatAmount(). */
+function Amount({ minor }: { minor: number }) {
+  const text = formatAmount(minor);
+  const cut = text.lastIndexOf(" ");
+  return (
+    <>
+      {text.slice(0, cut)} <small>{text.slice(cut + 1)}</small>
+    </>
+  );
+}
+
+/** Money moved between accounts: two arrows passing (drawn like icons.tsx). */
+function IconMove() {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4" />
+    </svg>
+  );
+}
 
 function useMonth(month: string, today: string) {
   const { from, to } = monthOf(month);
@@ -250,11 +282,11 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
         <p className="money-safe-total">Nothing safe</p>
       ) : (
         <p className="money-safe-total">
-          {birr(safe.total)} <small>ETB</small>
+          <Amount minor={safe.total} />
         </p>
       )}
       <p className="money-safe-sub">
-        {short ? safeLine(safe) : `about ${birr(safe.perDay ?? 0)} a day`}
+        {short ? safeLine(safe) : `about ${formatAmount(safe.perDay ?? 0)} a day`}
       </p>
       {open && (
         <ul className="money-safe-sum">
@@ -347,7 +379,7 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
                   {account.pays_in === 1 && <span className="meta"> · pay lands here</span>}
                 </span>
                 <span className={balance === null ? "meta" : "money-num"}>
-                  {balance === null ? "not set" : birr(balance)}
+                  {balance === null ? "not set" : formatAmount(balance)}
                 </span>
               </li>
             );
@@ -446,14 +478,15 @@ function Stat({
 }: {
   tone: "purple" | "orange" | "leaf" | "cream" | "pink";
   label: string;
-  value: string;
+  /** Santim. */
+  value: number;
   sub?: string | undefined;
 }) {
   return (
     <div className={`money-stat tone-${tone}`}>
       <span className="money-stat-label">{label}</span>
       <strong className="money-stat-value">
-        {value} <small>ETB</small>
+        <Amount minor={value} />
       </strong>
       {sub && <span className="money-stat-sub">{sub}</span>}
     </div>
@@ -535,15 +568,17 @@ function MonthView({ month, today }: { month: string; today: string }) {
     <>
       {!current && <MonthReviewCard month={month} today={today} />}
       <div className="money-stats">
-        <Stat tone="purple" label="In" value={birr(summary.in)} />
-        <Stat tone="orange" label="Out" value={birr(summary.out)} />
-        <Stat tone="leaf" label="Saved" value={birr(summary.saved)} />
+        <Stat tone="purple" label="In" value={summary.in} />
+        <Stat tone="orange" label="Out" value={summary.out} />
+        <Stat tone="leaf" label="Saved" value={summary.saved} />
         <Stat
           tone={summary.left < 0 ? "pink" : "cream"}
           label={summary.left >= 0 ? "Left" : "Over"}
-          value={birr(Math.abs(summary.left))}
+          value={Math.abs(summary.left)}
           sub={
-            current && summary.perDay !== null ? `about ${birr(summary.perDay)} a day` : undefined
+            current && summary.perDay !== null
+              ? `about ${formatAmount(summary.perDay)} a day`
+              : undefined
           }
         />
       </div>
@@ -629,7 +664,7 @@ function CapsCard({ summary }: { summary: ReturnType<typeof monthSummary> }) {
   if (caps.loading) return null;
   if (caps.rows.length === 0)
     return (
-      <p className="meta money-note money-full">
+      <p className="empty money-note money-full">
         No caps yet. Set one per category under Categories; Sirna suggests amounts from your usual
         month.
       </p>
@@ -774,7 +809,7 @@ function FindingCard({
         {finding.actions.map((action) => (
           <Button
             key={action.label}
-            primary
+            className="finding-act"
             disabled={busy}
             onClick={() => write(action.ops, `advisor:${finding.key}`)}
           >
@@ -1160,9 +1195,7 @@ function TxnForm({
         </p>
       )}
       <div className="money-actions">
-        <Button type="submit" primary>
-          {submitLabel}
-        </Button>
+        <Button type="submit">{submitLabel}</Button>
         {onCancel && <Button onClick={onCancel}>Cancel</Button>}
       </div>
     </form>
@@ -1218,7 +1251,7 @@ function LedgerRow({
         className={income ? "ledger-mark in" : row.transfer_id ? "ledger-mark move" : "ledger-mark"}
         aria-hidden="true"
       >
-        {income ? "+" : row.transfer_id ? "⇄" : "−"}
+        {income ? "+" : row.transfer_id ? <IconMove /> : "−"}
       </span>
       <span className="ledger-what">
         <span className="ledger-desc">{row.description}</span>
@@ -1239,7 +1272,7 @@ function LedgerRow({
           </Button>
         )}
         <Button
-          className="btn-ghost"
+          className="btn-ghost btn-danger"
           onClick={() => {
             // A loan's entry goes with its loan event, or the loan would stay open.
             const loanId = loanIdOf(row.transfer_id);
@@ -1282,13 +1315,6 @@ function LedgerRow({
     </li>
   );
 }
-
-const DAY_LABEL = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
 
 function LedgerView({
   month,
@@ -1399,17 +1425,22 @@ function LedgerView({
       )}
       {!txns.loading && shown.length === 0 && (
         <p className="empty">
-          {txns.rows.length === 0 ? "No entries this month." : "Nothing matches."}
+          {txns.rows.length === 0
+            ? "No entries this month. Add one with Add entry or type it in the capture box."
+            : "Nothing matches. Clear the search or pick another category."}
         </p>
       )}
       <div className="ledger">
         {byDay(shown).map((day) => {
-          const [y = 1970, m = 1, d = 1] = day.date.split("-").map(Number);
           return (
-            <section key={day.date} className="ledger-day" aria-label={day.date}>
+            <section
+              key={day.date}
+              className="ledger-day"
+              aria-label={showDate(day.date, today, { weekday: true })}
+            >
               <h3 className="ledger-day-head">
                 <span className={day.date === today ? "ledger-date today" : "ledger-date"}>
-                  {DAY_LABEL.format(Date.UTC(y, m - 1, d))}
+                  {showDate(day.date, today, { weekday: true })}
                 </span>
                 <span className="ledger-net">
                   {day.net >= 0 ? "+" : "−"}
@@ -1557,7 +1588,7 @@ function CategoryItem({
           )}
           {!capText.trim() && suggested !== null && suggested !== row.cap_minor && (
             <Button onClick={() => void write(capOps(row.id, suggested, capStart(row)))}>
-              Use {birr(suggested)} (your usual)
+              Use {formatAmount(suggested)} (your usual)
             </Button>
           )}
           {row.cap_minor !== null && (
@@ -1626,9 +1657,7 @@ function CategoriesView({ today }: { today: string }) {
           <option value="expense">Spending</option>
           <option value="income">Income</option>
         </select>
-        <Button type="submit" primary>
-          Add
-        </Button>
+        <Button type="submit">Add</Button>
         {note && (
           <span className="meta" role="status">
             {note}
@@ -1642,7 +1671,6 @@ function CategoriesView({ today }: { today: string }) {
             yet. Start with your usual month for each:
           </span>
           <Button
-            primary
             onClick={() =>
               void transact("user", suggestions, "caps")
                 .then(() => setNote("Caps set from your usual month. Change any of them below."))
@@ -1794,8 +1822,9 @@ function PersonRow({
           {person.person}
           <span className="meta">
             {" "}
-            · {formatAmount(open)} since {person.since}
-            {person.followUp ? ` · ask on ${person.followUp}` : ""}
+            · {formatAmount(open)}
+            {person.since ? ` since ${showDate(person.since, today)}` : ""}
+            {person.followUp ? ` · ask on ${showDate(person.followUp, today)}` : ""}
           </span>
         </span>
       </span>
@@ -1920,12 +1949,10 @@ function LoanForm({ accounts, today }: { accounts: AccountRow[]; today: string }
         ))}
       </select>
       <label className="money-inline">
-        <span className="meta">ask on</span>
+        <span className="meta">Ask on</span>
         <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} />
       </label>
-      <Button type="submit" primary>
-        Save
-      </Button>
+      <Button type="submit">Save</Button>
       {note && (
         <span className="meta" role="status">
           {note}
@@ -1951,7 +1978,7 @@ function LoansView({ today }: { today: string }) {
         <section className="card" aria-labelledby="owed-to-me">
           <h2 id="owed-to-me">Owed to you · {formatAmount(total(owedToMe, "owedToMe"))}</h2>
           {owedToMe.length === 0 ? (
-            <p className="meta">Nobody owes you anything.</p>
+            <p className="empty">Nobody owes you anything. Add what you lend above.</p>
           ) : (
             <ul className="money-rows">
               {owedToMe.map((person) => (
@@ -1968,7 +1995,7 @@ function LoansView({ today }: { today: string }) {
         <section className="card" aria-labelledby="i-owe">
           <h2 id="i-owe">You owe · {formatAmount(total(iOwe, "iOwe"))}</h2>
           {iOwe.length === 0 ? (
-            <p className="meta">You don&apos;t owe anyone.</p>
+            <p className="empty">You don&apos;t owe anyone. Add what you borrow above.</p>
           ) : (
             <ul className="money-rows">
               {iOwe.map((person) => (
@@ -2056,7 +2083,7 @@ function DueRow({ item, today }: { item: DueItem; today: string }) {
           {pay ? (item.regular.job ?? item.regular.name) : item.regular.name}
           <span className="meta">
             {" "}
-            · {item.date} · {formatAmount(item.regular.amount_minor)}
+            · {showDate(item.date, today)} · {formatAmount(item.regular.amount_minor)}
             {item.done > 0 && item.left > 0
               ? ` · ${formatAmount(item.left)} still to ${pay ? "come" : "pay"}`
               : ""}
@@ -2200,9 +2227,7 @@ function RegularForm() {
           </label>
         </div>
         <div className="money-actions">
-          <Button type="submit" primary>
-            Add
-          </Button>
+          <Button type="submit">Add</Button>
           <span className="meta">
             When: <code>monthly 10</code>, <code>monthly last</code>, <code>every mon</code>,{" "}
             <code>every weekday</code>.
@@ -2244,9 +2269,7 @@ function SuggestedRegulars({ today, regulars }: { today: string; regulars: Regul
           <li key={suggestion.key} className="money-row">
             <span>{suggestion.text}</span>
             <span className="money-row-line">
-              <Button primary onClick={() => write(trackOps(suggestion, ulid()))}>
-                Track it
-              </Button>
+              <Button onClick={() => write(trackOps(suggestion, ulid()))}>Track it</Button>
               <Button onClick={() => write(notAgainOps(json, suggestion.key))}>No</Button>
             </span>
           </li>
@@ -2275,7 +2298,7 @@ function RegularsView({ today }: { today: string }) {
       <section className="card" aria-labelledby="regular-pay">
         <h2 id="regular-pay">Pay this month</h2>
         {pay.length === 0 ? (
-          <p className="meta">
+          <p className="empty">
             Add each job&apos;s pay below (yours: the 10th and the 21st, into CBO). Income you
             capture as <code>got 18k job a</code> counts toward it.
           </p>
@@ -2297,7 +2320,7 @@ function RegularsView({ today }: { today: string }) {
       <section className="card" aria-labelledby="regular-bills">
         <h2 id="regular-bills">Bills this month</h2>
         {bills.length === 0 ? (
-          <p className="meta">No bills yet. Add rent and the others below.</p>
+          <p className="empty">No bills yet. Add rent and the others below.</p>
         ) : (
           <ul className="money-rows">
             {bills.map((item) => (
@@ -2319,6 +2342,7 @@ function RegularsView({ today }: { today: string }) {
                   <span className="meta"> · {regularText(row)}</span>
                 </span>
                 <Button
+                  className="btn-ghost btn-danger"
                   onClick={() =>
                     void transact("user", removeRegularOps(row.id), `regular:${row.id}`).catch(
                       (failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`),
@@ -2351,7 +2375,7 @@ export function TodayDue({ today }: { today: string }) {
       : item.state === "late",
   );
   if (open.length === 0) return null;
-  const lines = dueLines(open);
+  const lines = dueLines(open, today);
   return (
     <ul className="list-rows money-due">
       {open.map((item, index) => (
@@ -2533,9 +2557,7 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
           </option>
         ))}
       </select>
-      <Button type="submit" primary>
-        Move
-      </Button>
+      <Button type="submit">Move</Button>
       {note && (
         <span className="meta" role="status">
           {note}
@@ -2565,6 +2587,9 @@ function AccountsView({ today }: { today: string }) {
         )}
       </p>
       <section className="card" aria-label="Accounts">
+        {accounts.rows.length === 0 && !accounts.loading && (
+          <p className="empty">No accounts yet. Add one under Add an account.</p>
+        )}
         <ul className="money-rows">
           {accounts.rows.map((account) => (
             <AccountItem

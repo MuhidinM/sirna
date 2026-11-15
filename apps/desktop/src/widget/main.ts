@@ -92,7 +92,7 @@ function drawLists(view: ReturnType<typeof widgetView>): void {
         : [
             Object.assign(document.createElement("li"), {
               className: "empty",
-              textContent: "No top 3 yet",
+              textContent: "No Top 3 yet. Pick them on Today.",
             }),
           ]),
     );

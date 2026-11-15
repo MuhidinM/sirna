@@ -9,6 +9,7 @@
  *               + the weekly hours of projects running that week
  *   load      = committed / capacity; new work keeps it at or under 85%
  */
+import { showDate } from "../../kernel/dates";
 import { shiftDate, weekStart } from "../plan/dayplan";
 
 export const BUFFER = 0.2;
@@ -278,7 +279,7 @@ export function checkWithDate(
     `Needs ${hoursLabel(weeklyNeeded)} a week for ${formatWeeks(weeksLeft)}.`,
     worst.monday === now.monday
       ? `Your load would go ${percent(now.ratio)} → ${percent(after)}.`
-      : `Your load would go ${percent(now.ratio)} → ${percent(after)} in the week of ${worst.monday}.`,
+      : `Your load would go ${percent(now.ratio)} → ${percent(after)} in the week of ${showDate(worst.monday, today)}.`,
   ];
   if (crowded)
     reasons.push(`${MAX_ACTIVE} active projects already; this would be number ${mostActive + 1}.`);

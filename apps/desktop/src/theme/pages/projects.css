@@ -21,8 +21,8 @@
 .page.projects .proj-stat {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 7px 14px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--pill);
   background: var(--canvas-2);
   color: var(--canvas-ink-2);
@@ -76,8 +76,8 @@
 
 .page.projects .proj-card .event-body {
   flex: 1;
-  gap: 4px;
-  padding: 16px 16px 14px;
+  gap: var(--space-1);
+  padding: var(--space-4);
 }
 
 .page.projects .proj-card .event-title {
@@ -121,8 +121,8 @@
 .page.projects .proj-risk {
   order: -1;
   align-self: flex-start;
-  margin-bottom: 6px;
-  padding: 2px 10px;
+  margin-bottom: var(--space-2);
+  padding: 2px var(--space-2);
   border-radius: var(--pill);
   background: var(--canvas);
   color: var(--pink);
@@ -133,7 +133,7 @@
 .page.projects .proj-card .event-check {
   position: relative;
   z-index: 1;
-  margin: 10px 0 14px;
+  margin: var(--space-3) 0 var(--space-4);
   font-size: var(--text-sm);
 }
 
@@ -170,7 +170,7 @@
 .page.projects .proj-card-error {
   position: relative;
   z-index: 1;
-  margin: 10px 0 14px;
+  margin: var(--space-3) 0 var(--space-4);
   font-size: var(--text-xs);
   font-weight: 500;
   opacity: 0.75;
@@ -197,7 +197,7 @@
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 2px var(--space-3);
-  margin: 10px 0 0;
+  margin: var(--space-3) 0 0;
   font-size: var(--text-xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -213,15 +213,13 @@
 .page.projects .proj-canvas .proj-form {
   margin-top: var(--space-5);
   padding: var(--space-5);
-  border-radius: 22px;
+  /* A card on the canvas. */
+  border-radius: var(--radius-tile);
   background: var(--canvas-2);
 }
 
 .page.projects .proj-form h2 {
   margin: 0 0 var(--space-4);
-  font-size: var(--text-xl);
-  font-weight: 700;
-  letter-spacing: -0.02em;
 }
 
 .page.projects .proj-fields {
@@ -238,7 +236,7 @@
 .page.projects .proj-form .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1);
   margin: 0 0 var(--space-3);
   min-width: 0;
 }
@@ -253,33 +251,17 @@
   color: var(--canvas-ink-2);
 }
 
+/* The shared field look; only the width is the form's own. */
 .page.projects .proj-form input:not([type="checkbox"], [type="radio"]),
 .page.projects .proj-form select,
 .page.projects .proj-form textarea {
   width: 100%;
-  min-height: 40px;
-  padding: 8px 14px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: var(--canvas-2);
-  color: var(--canvas-ink);
-}
-
-.page.projects .proj-form textarea {
-  border-radius: 16px;
-  resize: vertical;
 }
 
 .page.projects .proj-canvas .proj-form input:not([type="checkbox"], [type="radio"]),
 .page.projects .proj-canvas .proj-form select,
 .page.projects .proj-canvas .proj-form textarea {
   background: var(--canvas);
-}
-
-.page.projects .proj-form input:focus-visible,
-.page.projects .proj-form select:focus-visible,
-.page.projects .proj-form textarea:focus-visible {
-  border-color: var(--yellow);
 }
 
 .page.projects .proj-actions {
@@ -297,10 +279,10 @@
 
 .page.projects .timing {
   margin: var(--space-3) 0 0;
-  padding: 14px 16px 14px 18px;
+  padding: var(--space-3) var(--space-4);
   border: 0;
   border-left: 4px solid var(--verdict, var(--ink-3));
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--raised);
   color: var(--ink);
   font-size: var(--text-sm);
@@ -327,7 +309,7 @@
 
 .page.projects .timing-verdict {
   display: inline-flex;
-  padding: 3px 12px;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--pill);
   background: var(--verdict);
   color: var(--verdict-ink);
@@ -339,7 +321,7 @@
   display: grid;
   gap: 2px;
   margin: var(--space-2) 0 0;
-  padding-left: 18px;
+  padding-left: var(--space-5);
 }
 
 .page.projects .timing .meta {
@@ -377,7 +359,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   min-height: 44px;
-  padding: 6px 4px;
+  padding: var(--space-2) var(--space-1);
   border-bottom: 1px dashed var(--panel-line);
 }
 
@@ -396,7 +378,7 @@
 
 .page.projects .at-risk {
   margin: var(--space-3) 0 0;
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--pink) 18%, transparent);
   color: var(--pink);
@@ -419,8 +401,8 @@
   display: grid;
   gap: 2px;
   margin: 0;
-  padding: 12px 14px;
-  border-radius: 16px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
   background: var(--cream);
   color: var(--cream-ink);
   font-size: var(--text-sm);
@@ -447,11 +429,6 @@
   margin: 0;
 }
 
-.page.projects .idea-card h3 {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-
 .page.projects .idea-actions {
   display: flex;
   flex-wrap: wrap;
@@ -459,12 +436,9 @@
   margin-top: var(--space-4);
 }
 
-/* The cards canvas. */
+/* The cards canvas: a sub-section head (h2), the soft count after the comma. */
 .page.projects .proj-work-title {
   margin: 0;
-  font-size: var(--text-xl);
-  font-weight: 700;
-  letter-spacing: -0.02em;
 }
 
 .page.projects .proj-work-title .soft {
@@ -475,7 +449,7 @@
 .page.projects .board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
-  gap: 12px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   overflow: visible;
@@ -485,9 +459,9 @@
   --col: var(--canvas-ink-3);
   min-width: 0;
   min-height: 170px;
-  padding: 14px 12px 12px;
+  padding: var(--space-4) var(--space-3) var(--space-3);
   border: 0;
-  border-radius: 20px;
+  border-radius: var(--radius-tile);
   background: var(--canvas-2);
 }
 
@@ -526,7 +500,7 @@
   min-width: 22px;
   height: 22px;
   margin-left: auto;
-  padding: 0 7px;
+  padding: 0 var(--space-2);
   border-radius: var(--pill);
   background: var(--canvas);
   color: var(--canvas-ink-2);
@@ -546,12 +520,12 @@
 .page.projects .board-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   margin: 0;
-  padding: 12px;
+  padding: var(--space-3);
   border: 0;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--canvas);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--canvas-ink) 8%, transparent);
   cursor: grab;
@@ -567,37 +541,26 @@
   font-size: var(--text-xs);
 }
 
+/* The shared field look; the card's move picker keeps to its content. */
 .page.projects .board-column select {
   align-self: flex-start;
   width: auto;
   max-width: 100%;
-  min-height: 28px;
-  padding: 2px 10px;
-  border: 0;
-  border-radius: var(--pill);
-  background: var(--canvas-2);
-  color: var(--canvas-ink);
-  font-size: var(--text-xs);
-  font-weight: 600;
 }
 
+/* Add a card: the shared field, white on the grey column, dashed like a ghost card. */
 .page.projects .board-column input:not([type="checkbox"]) {
   width: 100%;
   margin-top: var(--space-2);
-  min-height: 38px;
-  padding: 8px 12px;
   border: 1.5px dashed var(--canvas-line);
-  border-radius: 14px;
   background: var(--canvas);
-  color: var(--canvas-ink);
-  font-size: var(--text-sm);
 }
 
 .page.projects .board-empty {
   margin: 0;
-  padding: 16px 8px;
+  padding: var(--space-4) var(--space-2);
   border: 1.5px dashed var(--canvas-line);
-  border-radius: 14px;
+  border-radius: var(--radius);
   color: var(--canvas-ink-3);
   font-size: var(--text-xs);
   text-align: center;
@@ -613,7 +576,7 @@
 
 .page.projects .project-list th,
 .page.projects .project-list td {
-  padding: 10px;
+  padding: var(--space-3);
   text-align: left;
   border-bottom: 1.5px dashed var(--canvas-line);
   overflow-wrap: anywhere;
@@ -635,7 +598,7 @@
 
 .page.projects .list-col {
   display: inline-block;
-  padding: 3px 10px;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--pill);
   background: var(--canvas-2);
   font-size: var(--text-xs);

@@ -91,9 +91,7 @@ function GoalEditForm({ goal, onDone }: { goal: GoalRow; onDone: () => void }) {
           onChange={(e) => set({ targetDate: e.target.value })}
         />
       </label>
-      <Button type="submit" primary>
-        Save
-      </Button>
+      <Button type="submit">Save</Button>
       <Button onClick={onDone}>Cancel</Button>
       {error && (
         <p role="alert" className="error">
@@ -172,7 +170,7 @@ function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
           <h3>{title}</h3>
           <button
             type="button"
-            className="goal-edit"
+            className="icon-btn goal-edit"
             aria-label={`Edit ${goal.title}`}
             aria-expanded={editing}
             onClick={() => setEditing((on) => !on)}
@@ -201,9 +199,7 @@ function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
               setAmount(event.target.value);
             }}
           />
-          <Button primary onClick={() => move(1)}>
-            Put aside
-          </Button>
+          <Button onClick={() => move(1)}>Put aside</Button>
           <Button className="btn-ghost" onClick={() => move(-1)}>
             Take out
           </Button>
@@ -251,22 +247,24 @@ function NewGoal({ onDone }: { onDone: () => void }) {
           .catch((failure: unknown) => setError(`Couldn't add it: ${message(failure)}`));
       }}
     >
-      <input
-        aria-label="Goal name"
-        placeholder="Laptop"
-        value={draft.title}
-        onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-      />
-      <input
-        aria-label="Target"
-        inputMode="decimal"
-        placeholder="100,000"
-        value={draft.target}
-        onChange={(event) => setDraft({ ...draft, target: event.target.value })}
-      />
-      <Button type="submit" primary>
-        Add goal
-      </Button>
+      <label className="field">
+        <span>Goal name</span>
+        <input
+          placeholder="Laptop"
+          value={draft.title}
+          onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+        />
+      </label>
+      <label className="field">
+        <span>Target (ETB)</span>
+        <input
+          inputMode="decimal"
+          placeholder="100,000"
+          value={draft.target}
+          onChange={(event) => setDraft({ ...draft, target: event.target.value })}
+        />
+      </label>
+      <Button type="submit">Add goal</Button>
       <Button onClick={onDone}>Cancel</Button>
       {error && (
         <span role="alert" className="error">
@@ -353,7 +351,9 @@ export function Savings() {
       />
       {adding && <NewGoal onDone={() => setAdding(false)} />}
       {unassigned && unassigned.n > 0 && <GiveTo minor={unassigned.minor} goals={growing} />}
-      {!goals.loading && growing.length === 0 && !adding && <p className="meta">No goals yet.</p>}
+      {!goals.loading && growing.length === 0 && !adding && (
+        <p className="empty">No goals yet. Add one with New goal and watch its plant grow.</p>
+      )}
       <ul className="goals">
         {growing.map((goal, index) => (
           <GoalCard key={goal.id} goal={goal} seed={index + 3} />

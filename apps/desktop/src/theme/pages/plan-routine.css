@@ -10,7 +10,7 @@
 .rt-days {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
   margin: var(--space-3) 0;
   padding: 0;
   border: 0;
@@ -67,7 +67,7 @@
   padding: var(--space-5);
   background: var(--canvas-2);
   border: 0;
-  border-radius: 22px;
+  border-radius: var(--radius-tile);
 }
 
 .plan-routine .rt-form-head {
@@ -77,9 +77,8 @@
   margin-bottom: var(--space-4);
 }
 
-.plan-routine .rt-form-head h3 {
+.plan-routine .rt-form-head h2 {
   margin: 0;
-  font-size: var(--text-lg);
 }
 
 .plan-routine .rt-fields {
@@ -102,7 +101,7 @@
 .plan-routine .rt-form .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   min-width: 0;
 }
@@ -116,10 +115,7 @@
 .plan-routine .rt-form input:not([type="checkbox"], [type="radio"]),
 .plan-routine .rt-form select {
   width: 100%;
-  min-height: 44px;
-  padding: 8px 14px;
   border: 1px solid transparent;
-  border-radius: var(--radius);
   background: var(--canvas);
   color: var(--canvas-ink);
   font-size: var(--text-md);
@@ -212,11 +208,11 @@
   flex: 1;
 }
 
-.plan-routine .rt-form .btn:not(.btn-primary) {
+.plan-routine .rt-form .btn:not(.btn-primary, .btn-orange, .btn-ghost) {
   background: var(--canvas);
 }
 
-.plan-routine .rt-form .btn:not(.btn-primary):hover {
+.plan-routine .rt-form .btn:not(.btn-primary, .btn-orange, .btn-ghost):hover {
   background: var(--canvas-3);
 }
 
@@ -229,7 +225,7 @@
 .plan-routine .rt-board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
-  gap: var(--space-3) 10px;
+  gap: var(--space-3) var(--space-3);
   align-items: start;
 }
 
@@ -244,8 +240,8 @@
   flex-direction: column;
   gap: var(--space-2);
   min-width: 0;
-  padding: 6px;
-  border-radius: 22px;
+  padding: var(--space-2);
+  border-radius: var(--radius-tile);
   background: var(--canvas-2);
 }
 
@@ -258,7 +254,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-1);
-  padding: 4px 4px 4px 4px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-1);
 }
 
 .plan-routine .rt-day {
@@ -266,7 +262,7 @@
   place-items: center;
   min-width: 44px;
   height: 30px;
-  padding: 0 10px;
+  padding: 0 var(--space-3);
   border-radius: var(--pill);
   background: var(--cream);
   color: var(--cream-ink);
@@ -289,7 +285,7 @@
 
 .plan-routine .rt-none {
   margin: 0;
-  padding: var(--space-3) 6px;
+  padding: var(--space-3) var(--space-2);
   font-size: var(--text-xs);
   color: var(--canvas-ink-3);
   text-align: center;
@@ -297,7 +293,7 @@
 
 .plan-routine .rt-cards {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -309,7 +305,7 @@
 }
 
 .plan-routine .rt-card .event-body {
-  padding: 10px;
+  padding: var(--space-3);
 }
 
 .plan-routine .rt-card .event-title {
@@ -357,10 +353,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-height: 38px;
   border: 1.5px dashed var(--mint-ink);
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--mint);
   color: var(--mint-ink);
   font-size: var(--text-xs);
@@ -393,7 +389,7 @@
 
 .plan-routine .rt-areas .event-body {
   flex: 1;
-  padding: 14px 16px;
+  padding: var(--space-4) var(--space-4);
 }
 
 .plan-routine .rt-areas .event-title {
@@ -403,14 +399,14 @@
 .plan-routine .rt-card-acts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
   margin-top: auto;
   padding-top: var(--space-3);
 }
 
 .plan-routine .rt-card-btn {
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--pill);
   background: color-mix(in srgb, currentColor 16%, transparent);
@@ -438,7 +434,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
   font-size: var(--text-sm);
   font-weight: 600;
 }
@@ -486,8 +482,9 @@
 .plan-routine .rt-time {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
+  margin: 0;
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--ink-2);
@@ -496,8 +493,7 @@
 .plan-routine .rt-time input {
   width: 100%;
   min-width: 0;
-  min-height: 42px;
-  padding: 6px 8px;
+  padding: var(--space-2);
   border: 1px solid var(--panel-line);
   border-radius: var(--radius);
   background: var(--raised);
@@ -525,7 +521,7 @@
 /* First run has no frame around it: give it one. */
 #root > .su-page {
   min-height: 100vh;
-  padding: 14px;
+  padding: 14px; /* the frame gap */
   background: var(--frame);
 }
 
@@ -557,7 +553,7 @@
   justify-content: center;
   gap: var(--space-2);
   margin: 0 0 var(--space-6);
-  padding: 4px;
+  padding: var(--space-1);
   list-style: none;
 }
 
@@ -566,7 +562,7 @@
   align-items: center;
   gap: var(--space-2);
   min-height: 40px;
-  padding: 0 var(--space-4) 0 6px;
+  padding: 0 var(--space-4) 0 var(--space-2);
   border: 0;
   border-radius: var(--pill);
   background: var(--canvas-2);
@@ -621,9 +617,6 @@
 
 .su-section > h2 {
   margin: 0;
-  font-size: var(--text-xl);
-  font-weight: 700;
-  letter-spacing: -0.02em;
   color: var(--canvas-ink);
 }
 
@@ -634,10 +627,7 @@
 /* Big friendly fields. */
 .su-canvas input:not([type="checkbox"], [type="radio"]),
 .su-canvas select {
-  min-height: 46px;
-  padding: 8px 14px;
   border: 1px solid transparent;
-  border-radius: var(--radius);
   background: var(--canvas-2);
   color: var(--canvas-ink);
   font-size: var(--text-md);
@@ -646,7 +636,7 @@
 .su-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   font-size: var(--text-xs);
   font-weight: 600;
@@ -669,7 +659,7 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-5) var(--space-5);
-  border-radius: 22px;
+  border-radius: var(--radius-tile);
   background: var(--cream);
   color: var(--cream-ink);
   font-size: var(--text-sm);
@@ -678,7 +668,6 @@
 
 .su-canvas .su-time input {
   width: 100%;
-  min-height: 60px;
   background: var(--canvas);
   font-size: 1.75rem;
   font-weight: 700;
@@ -696,7 +685,7 @@
   margin: 0;
   padding: var(--space-4) var(--space-5) var(--space-5);
   border: 0;
-  border-radius: 22px;
+  border-radius: var(--radius-tile);
   background: var(--canvas-2);
   transition: opacity 0.15s var(--ease);
 }
@@ -716,7 +705,6 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  padding: 6px 12px;
   border: 1px solid transparent;
   background: var(--canvas);
   font-size: var(--text-lg);
@@ -759,7 +747,7 @@
   gap: var(--space-3);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
   border: 0;
-  border-radius: 18px;
+  border-radius: var(--radius);
   background: var(--canvas-2);
 }
 
@@ -795,7 +783,6 @@
 
 .su-canvas .su-hours input {
   width: 5.5rem;
-  min-height: 40px;
   background: var(--canvas);
   font-weight: 700;
   text-align: right;
@@ -816,7 +803,7 @@
   margin: 0;
   padding: var(--space-4);
   border: 1px solid var(--canvas-line);
-  border-radius: 22px;
+  border-radius: var(--radius-tile);
   background: var(--canvas);
 }
 
@@ -837,7 +824,7 @@
 .su-extra .rt-days .day {
   min-width: 40px;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 var(--space-2);
   font-size: var(--text-xs);
 }
 
@@ -864,7 +851,7 @@
   min-height: 72px;
   padding: var(--space-4) var(--space-5);
   border: 1.5px solid var(--canvas-line);
-  border-radius: 22px;
+  border-radius: var(--radius-tile);
   background: var(--canvas);
   color: var(--canvas-ink);
   font-weight: 600;
@@ -916,12 +903,6 @@
 .su-count {
   flex: 1;
   text-align: center;
-}
-
-.su-foot .btn {
-  min-height: 44px;
-  padding: 0 var(--space-5);
-  font-size: var(--text-md);
 }
 
 .su-foot .su-back {

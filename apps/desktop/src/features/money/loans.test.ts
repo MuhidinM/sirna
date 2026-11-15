@@ -64,12 +64,10 @@ describe("who owes what (T-061)", () => {
       event({ follow_up_date: "2026-11-15" }),
       event({ person: "Sara", kind: "borrowed", follow_up_date: "2026-11-14" }),
     ]);
-    expect(followUpLines(people, "2026-11-14")).toEqual([
-      "You owe Sara 1,000 ETB since 2026-11-01",
-    ]);
+    expect(followUpLines(people, "2026-11-14")).toEqual(["You owe Sara 1,000 ETB since 1 Nov"]);
     expect(followUpLines(people, "2026-11-15")).toEqual([
-      "Abel owes you 1,000 ETB since 2026-11-01",
-      "You owe Sara 1,000 ETB since 2026-11-01",
+      "Abel owes you 1,000 ETB since 1 Nov",
+      "You owe Sara 1,000 ETB since 1 Nov",
     ]);
   });
 

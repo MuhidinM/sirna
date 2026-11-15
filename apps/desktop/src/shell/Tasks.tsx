@@ -3,7 +3,7 @@ import { type CSSProperties, type RefObject, useRef, useState } from "react";
 import "../theme/pages/plan-tasks.css";
 
 import { systemClock } from "../kernel/clock";
-import { logicalDate } from "../kernel/dates";
+import { logicalDate, showDate } from "../kernel/dates";
 import { commitCapture, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import { echo, toOps } from "../capture/ops";
@@ -43,20 +43,34 @@ const CLOCK_SQL = "SELECT value_json FROM core_settings WHERE key = 'capture.clo
 
 type Named = { id: string; name: string; active?: number; color?: string | null };
 
-const SHORT = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
-const SHORT_YEAR = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-/** "18 Nov" for a YYYY-MM-DD date; the year only when it isn't this one. */
-function shortDate(date: string, today: string): string {
-  const at = Date.parse(`${date}T00:00:00Z`);
-  if (Number.isNaN(at)) return date;
-  return (date.slice(0, 4) === today.slice(0, 4) ? SHORT : SHORT_YEAR).format(at);
+/** The repeat mark in a task's facts, drawn like the shared icons (24 px, 1.8 stroke). */
+function IconRepeat({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M4 11V9a3 3 0 0 1 3-3h12M16 3l3 3-3 3M20 13v2a3 3 0 0 1-3 3H5M8 21l-3-3 3-3" />
+    </svg>
+  );
 }
+
+/** What each view shows when it is empty, and how a task gets there. */
+const EMPTY: Record<TaskView, string> = {
+  open: "No tasks to do. Add one above.",
+  waiting: "No tasks waiting. Mark a task Waiting to see it here.",
+  someday: "No someday tasks. Move a task to Someday to park it here.",
+  done: "No tasks done lately. Tick a task to see it here.",
+  dropped: "No dropped tasks. Drop a task to see it here.",
+};
 
 const areaStyle = (color: string | null | undefined) =>
   ({ "--dot": `var(--area-${color ?? "admin"})` }) as CSSProperties;
@@ -237,7 +251,7 @@ function TaskForm({
         </p>
       )}
       <div className="task-edit-actions">
-        <Button type="submit" className="task-edit-save">
+        <Button type="submit" className="btn-orange task-edit-save">
           Save
         </Button>
         <Button className="btn-ghost" onClick={onDone}>
@@ -285,13 +299,17 @@ function TaskItem({
     row.project_title && <span key="project">{row.project_title}</span>,
     row.estimate_min && <span key="estimate">{hours(row.estimate_min)}</span>,
     row.planned_date && row.planned_date !== row.due_date && (
-      <span key="planned">on {shortDate(row.planned_date, today)}</span>
+      <span key="planned">on {showDate(row.planned_date, today)}</span>
     ),
-    row.repeat_json && <span key="repeat">↻ {repeatText(row.repeat_json)}</span>,
+    row.repeat_json && (
+      <span key="repeat" className="task-repeat">
+        <IconRepeat /> {repeatText(row.repeat_json)}
+      </span>
+    ),
     row.waiting_on && (
       <span key="waiting">
         on {row.waiting_on}
-        {row.follow_up_date ? ` · ask ${shortDate(row.follow_up_date, today)}` : ""}
+        {row.follow_up_date ? ` · ask ${showDate(row.follow_up_date, today)}` : ""}
       </span>
     ),
   ].filter(Boolean);
@@ -318,7 +336,7 @@ function TaskItem({
         )}
         {row.due_date && (
           <span className={late ? "task-due late" : "task-due"}>
-            due {shortDate(row.due_date, today)}
+            due {showDate(row.due_date, today)}
           </span>
         )}
         {row.deadline_stale === 1 && row.due_date && (
@@ -355,7 +373,7 @@ function TaskItem({
                 </Button>
               )}
               {view !== "done" && (
-                <Button className="btn-ghost task-drop" onClick={() => move("dropped")}>
+                <Button className="btn-ghost btn-danger task-drop" onClick={() => move("dropped")}>
                   Drop
                 </Button>
               )}
@@ -522,7 +540,9 @@ export function Tasks() {
             )}
             {!tasks.loading && shown.length === 0 && (
               <p className="empty tasks-empty">
-                {tasks.rows.length === 0 ? "Nothing here." : "Nothing matches."}
+                {tasks.rows.length === 0
+                  ? EMPTY[view]
+                  : "No tasks match. Try another word or area."}
               </p>
             )}
             <ul className="task-rows tasks-list">

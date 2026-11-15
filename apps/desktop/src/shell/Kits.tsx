@@ -94,7 +94,7 @@ export function Kits({ onClose }: { onClose: () => void }) {
           </p>
         )}
         {!kits.loading && kits.rows.length === 0 && !kits.error && (
-          <p className="empty">No active areas yet.</p>
+          <p className="empty">No active areas yet. Turn one on in My week to give it a kit.</p>
         )}
         <div className="pr-grid">
           {!kits.loading &&

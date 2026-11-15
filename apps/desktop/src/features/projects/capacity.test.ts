@@ -383,7 +383,7 @@ describe("review fixes", () => {
     // 500 areas + 300 from 23 Nov + 315 needed = 1115 of 1000.
     expect(check.after).toBeCloseTo(1.115, 3);
     expect(check.verdict).toBe("too_much");
-    expect(check.reasons[1]).toBe("Your load would go 50% → 112% in the week of 2026-11-23.");
+    expect(check.reasons[1]).toBe("Your load would go 50% → 112% in the week of 23 Nov.");
   });
 
   it("never runs as a third project, even after it started", () => {

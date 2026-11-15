@@ -5,7 +5,7 @@
  */
 import { type CSSProperties, type ReactNode, useState } from "react";
 
-import { IconArrowLeft, IconArrowRight } from "./icons";
+import { IconArrowLeft, IconArrowRight, IconPlus } from "./icons";
 
 // --- Panel head ---------------------------------------------------------------------------
 
@@ -373,7 +373,7 @@ export function GhostCard({ label, onClick }: { label: string; onClick: () => vo
   return (
     <button type="button" className="ghost-card" onClick={onClick}>
       <span className="ghost-plus" aria-hidden="true">
-        +
+        <IconPlus size={18} />
       </span>
       {label}
     </button>

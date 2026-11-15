@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import "../theme/pages/projects.css";
 
 import { systemClock } from "../kernel/clock";
-import { logicalDate } from "../kernel/dates";
+import { logicalDate, showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import {
@@ -88,13 +88,10 @@ function useWeek(): WeekState | null {
   return state;
 }
 
-const dayLabel = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
-const day = (date: string) => dayLabel.format(new Date(`${date}T00:00:00Z`));
+/** "Mon 16 Nov"; the year only when it isn't this year's (docs/design.md). */
+const day = (date: string) => showDate(date, logicalDate(systemClock.now()), { weekday: true });
+/** "16 Nov", for due dates on cards and in the list. */
+const shortDate = (date: string) => showDate(date, logicalDate(systemClock.now()));
 const pct = (ratio: number) => (Number.isFinite(ratio) ? `${Math.round(ratio * 100)}%` : "—");
 
 const VERDICT: Record<string, string> = { good: "Good", tight: "Tight", too_much: "Too much" };
@@ -293,9 +290,7 @@ function ProjectForm({
         </p>
       )}
       <div className="proj-actions">
-        <Button type="submit" primary>
-          Save
-        </Button>
+        <Button type="submit">Save</Button>
         <Button onClick={onCancel}>Cancel</Button>
       </div>
     </form>
@@ -312,7 +307,7 @@ function Card({ task, onMove }: { task: ProjectTask; onMove: (to: Column) => voi
     >
       <span className="board-card-title">{task.title}</span>
       {task.waiting_on && <span className="meta">Waiting on {task.waiting_on}</span>}
-      {task.due_date && <span className="meta">Due {task.due_date}</span>}
+      {task.due_date && <span className="meta">Due {shortDate(task.due_date)}</span>}
       <select
         aria-label={`Move "${task.title}"`}
         value={column ?? ""}
@@ -394,7 +389,8 @@ function Board({ project, tasks }: { project: ProjectRow; tasks: ProjectTask[] }
 }
 
 function List({ tasks }: { tasks: ProjectTask[] }) {
-  if (tasks.length === 0) return <p className="empty">No cards yet.</p>;
+  if (tasks.length === 0)
+    return <p className="empty">No cards yet. Add one under To do on the board.</p>;
   return (
     <table className="project-list">
       <thead>
@@ -413,7 +409,7 @@ function List({ tasks }: { tasks: ProjectTask[] }) {
                 {columnLabel(columnOf(task))}
               </span>
             </td>
-            <td>{task.due_date ?? ""}</td>
+            <td className="num">{task.due_date ? shortDate(task.due_date) : ""}</td>
           </tr>
         ))}
       </tbody>
@@ -499,15 +495,7 @@ function IdeaCard({
   };
   return (
     <section className="panel idea-card" aria-label="Timing check">
-      <div className="panel-head">
-        <span className="panel-icon" aria-hidden="true">
-          <IconClock size={18} />
-        </span>
-        <div className="grow">
-          <h3>Idea</h3>
-          <span className="panel-sub">Where it fits in your weeks</span>
-        </div>
-      </div>
+      <PanelHead icon={<IconClock size={18} />} title="Idea" sub="Where it fits in your weeks" />
       {timing ? (
         <TimingCard timing={timing} reasons={reasons?.reasons ?? null} />
       ) : (
@@ -524,7 +512,6 @@ function IdeaCard({
         {!project.estimate_min && guess === "asking" && <span className="meta">Asking…</span>}
         {!project.estimate_min && guess && guess !== "asking" && (
           <Button
-            primary
             title={guess.assumptions.join(" · ")}
             onClick={() =>
               act({ kind: "estimate", minutes: Math.round(guess.estimate_h * 60), by: "ai" })
@@ -534,19 +521,17 @@ function IdeaCard({
           </Button>
         )}
         {project.estimate_min && !project.deadline && (
-          <Button primary onClick={() => act({ kind: "place" })}>
-            Place it in my weeks
-          </Button>
+          <Button onClick={() => act({ kind: "place" })}>Place it in my weeks</Button>
         )}
         {project.estimate_min && project.deadline && (
           <>
-            <Button primary onClick={() => act({ kind: "keep" })}>
-              Keep {project.deadline}
+            <Button onClick={() => act({ kind: "keep" })}>
+              Keep {shortDate(project.deadline)}
             </Button>
             <Button onClick={() => act({ kind: "suggested" })}>Use suggested dates</Button>
           </>
         )}
-        <Button className="btn-ghost" onClick={() => act({ kind: "drop" })}>
+        <Button className="btn-ghost btn-danger" onClick={() => act({ kind: "drop" })}>
           Drop
         </Button>
       </div>

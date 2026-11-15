@@ -45,11 +45,16 @@
 
 button.month-day {
   cursor: pointer;
+  transition: filter 0.15s var(--ease);
+}
+
+button.month-day:hover {
+  filter: brightness(0.94);
 }
 
 .month-day.marked {
   background: var(--pink);
-  color: #fff;
+  color: var(--canvas);
 }
 
 /* Side-by-side pink days join into one shape. */
@@ -78,6 +83,12 @@ button.month-day {
   box-shadow:
     0 0 0 2.5px var(--panel),
     0 0 0 4.5px var(--ink);
+}
+
+/* The keyboard ring wins over the today and selected rings. */
+.month-grid .month-day:focus-visible,
+.panel.calendar .month-grid .month-day:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .month-foot {
@@ -132,18 +143,18 @@ button.month-day {
 
 .month-day-detail {
   margin-top: var(--space-3);
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
   background: var(--panel);
   font-size: var(--text-sm);
 }
 
 .month-day-detail ul {
-  margin: 6px 0 0;
+  margin: var(--space-2) 0 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .month-day-detail li::before {
@@ -226,7 +237,7 @@ button.month-day {
   margin: 6px 0 0;
   font-size: var(--text-sm);
   max-width: 70%;
-  color: #3a2a06;
+  color: var(--on-yellow-soft);
 }
 
 .now-card-actions {
@@ -238,20 +249,13 @@ button.month-day {
   padding-top: var(--space-4);
 }
 
-.now-card .btn {
-  min-height: 32px;
-  border-radius: 10px;
-  font-size: var(--text-xs);
-  padding: 0 14px;
-}
-
 .now-card .btn:not(.btn-orange) {
   background: transparent;
-  color: #4a3608;
+  color: var(--on-yellow-soft);
 }
 
 .now-card .btn:not(.btn-orange):hover {
-  background: #ffc54a;
+  background: var(--yellow-hover);
 }
 
 .now-art {
@@ -345,11 +349,15 @@ button.month-day {
 }
 
 .bars-col.hi .bars-done {
-  background: repeating-linear-gradient(135deg, var(--yellow) 0 7px, #ffc84a 7px 11px);
+  background: repeating-linear-gradient(135deg, var(--yellow) 0 7px, var(--yellow-hover) 7px 11px);
 }
 
 [data-theme="night"] .bars-col.hi .bars-done {
-  background: repeating-linear-gradient(135deg, var(--orange) 0 7px, #ff8a2e 7px 11px);
+  background: repeating-linear-gradient(
+    135deg,
+    var(--orange) 0 7px,
+    color-mix(in srgb, var(--orange) 65%, var(--orange-soft)) 7px 11px
+  );
 }
 
 [data-theme="night"] .bars-col.hi .bars-stack {
@@ -374,8 +382,8 @@ button.month-day {
   transform: translateX(-35%);
   z-index: 2;
   min-width: 170px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: var(--space-3);
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--raised) 92%, transparent);
   backdrop-filter: blur(6px);
   border: 1px solid var(--panel-line);
@@ -462,7 +470,7 @@ button.month-day {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   min-height: 0;
   overflow: hidden;
 }
@@ -494,7 +502,7 @@ button.month-day {
 
 .tone-orange {
   --tone: var(--orange);
-  --tone-ink: #fff;
+  --tone-ink: var(--canvas);
   --art-1: #ff9a3d;
   --art-2: #ffd0a1;
   --art-3: #ff6a00;
@@ -502,7 +510,7 @@ button.month-day {
 
 .tone-pink {
   --tone: var(--pink);
-  --tone-ink: #fff;
+  --tone-ink: var(--canvas);
   --art-1: #ffb3d1;
   --art-2: #ff7fb0;
   --art-3: #fde1ee;
@@ -580,8 +588,8 @@ button.month-day {
 }
 
 .event input[type="checkbox"]:checked {
-  background: #fff;
-  border-color: #fff;
+  background: var(--canvas);
+  border-color: var(--canvas);
 }
 
 .event input[type="checkbox"]:checked::after {
@@ -599,7 +607,7 @@ button.month-day {
 .event-progress > span {
   display: block;
   height: 100%;
-  background: #fff;
+  background: var(--canvas);
 }
 
 .ghost-card {
@@ -616,6 +624,11 @@ button.month-day {
   font-weight: 700;
   font-size: var(--text-sm);
   cursor: pointer;
+  transition: background 0.15s var(--ease);
+}
+
+.ghost-card:hover {
+  background: color-mix(in srgb, var(--mint) 88%, var(--mint-ink));
 }
 
 .ghost-plus {
@@ -624,9 +637,7 @@ button.month-day {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #bfe8cf;
-  font-size: 18px;
-  font-weight: 500;
+  background: color-mix(in srgb, var(--leaf) 45%, var(--mint));
 }
 
 /* --- Day board: today's plan on an hour grid ----------------------------------------------------- */
