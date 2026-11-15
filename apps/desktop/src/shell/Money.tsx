@@ -118,6 +118,7 @@ import {
 } from "../features/money/advisor";
 import { type Afford, afford } from "../features/money/afford";
 import { monthReview } from "../features/money/review";
+import { JOB_MINUTES_SQL, JOB_PAY_SQL, jobRates } from "../features/money/rate";
 import {
   DISMISSED_SUGGESTIONS_KEY,
   notAgainOps,
@@ -402,6 +403,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
         </section>
       )}
 
+      <JobRatesCard month={month} today={today} />
       {current && <CapsCard summary={summary} />}
 
       <Savings />
@@ -739,6 +741,39 @@ export function MonthReviewCard({ month, today }: { month: string; today: string
           owe)
         </p>
       )}
+    </section>
+  );
+}
+
+/** Birr per hour for each job (T-073): this month's pay over its blocks' hours. */
+function JobRatesCard({ month, today }: { month: string; today: string }) {
+  const { from, to } = monthOf(month);
+  const [nowMs] = useState(() => systemClock.now());
+  const minutes = useLiveQuery<{ area_id: string; name: string; minutes: number }>(
+    JOB_MINUTES_SQL,
+    [from, to, nowMs],
+  );
+  const pay = useLiveQuery<{ area_id: string; minor: number }>(JOB_PAY_SQL, [from, to]);
+  if (minutes.loading || pay.loading || minutes.rows.length === 0) return null;
+  const rates = jobRates(minutes.rows, pay.rows);
+  return (
+    <section className="card" aria-labelledby="job-rates">
+      <h2 id="job-rates">Your jobs</h2>
+      <ul className="plain-list">
+        {rates.map((rate) => (
+          <li key={rate.areaId} className="row money-line">
+            <span>{rate.name}</span>
+            <span className="meta">
+              {formatAmount(rate.pay)} for {Math.round(rate.minutes / 60)} h
+              {rate.perHour !== null ? ` · about ${formatAmount(rate.perHour)} an hour` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="meta">
+        Hours are the job&apos;s blocks {to < today ? "that month" : "so far this month"} (skipped
+        or moved ones left out); pay is income you recorded for that job.
+      </p>
     </section>
   );
 }
