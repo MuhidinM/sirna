@@ -67,19 +67,18 @@ export function Nav({ current, onGo }: { current: Page; onGo: (page: Page) => vo
 /** The tabs across the top of a Plan page. */
 export function PlanTabs({ current, onGo }: { current: Page; onGo: (page: Page) => void }) {
   return (
-    <div className="row plan-tabs" role="tablist" aria-label="Plan">
+    <nav className="row plan-tabs" aria-label="Plan">
       {PLAN_TABS.map(({ page, label }) => (
         <button
           key={page}
           type="button"
-          role="tab"
-          aria-selected={page === current}
+          aria-current={page === current ? "page" : undefined}
           className={page === current ? "step current" : "step"}
           onClick={() => onGo(page)}
         >
           {label}
         </button>
       ))}
-    </div>
+    </nav>
   );
 }

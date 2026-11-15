@@ -27,7 +27,20 @@ export const REPEAT_DUE_SQL = `
          t.completed_at
   FROM task_items t
   WHERE t.deleted_at IS NULL AND t.status = 'done' AND t.repeat_json IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM task_items n WHERE n.repeat_of = t.id)`;
+    AND NOT EXISTS (SELECT 1 FROM task_items n WHERE n.repeat_of = t.id AND n.deleted_at IS NULL)`;
+
+/**
+ * Next copies whose task is no longer done (you un-ticked it, or undid it):
+ * if untouched, the copy goes, so there aren't two open ones.
+ */
+export const REPEAT_UNDONE_SQL = `
+  SELECT n.id FROM task_items n
+  JOIN task_items p ON p.id = n.repeat_of
+  WHERE n.deleted_at IS NULL AND n.status = 'todo' AND n.user_edited_at IS NULL
+    AND p.status != 'done' AND p.deleted_at IS NULL`;
+
+/** The next copy's id: one per task, so running twice can't make two. */
+export const copyId = (taskId: string) => `${taskId}~next`;
 
 export interface RepeatRow {
   id: string;
@@ -45,7 +58,7 @@ export interface RepeatRow {
  * after the day it was finished). If that is already past (it sat done for
  * a while), the next date from today, so you never get a pile of late ones.
  */
-export function nextCopyOps(task: RepeatRow, today: string, id: string): Op[] {
+export function nextCopyOps(task: RepeatRow, today: string, id = copyId(task.id)): Op[] {
   const rule = readRule(task.repeat_json);
   if (!rule) return [];
   const base = task.due_date ?? (task.completed_at ? logicalDate(task.completed_at) : today);
@@ -54,7 +67,8 @@ export function nextCopyOps(task: RepeatRow, today: string, id: string): Op[] {
   if (next === null) return [];
   return [
     {
-      op: "insert",
+      // An upsert: a copy removed earlier (task un-ticked, then ticked again) comes back.
+      op: "upsert",
       table: "task_items",
       id,
       values: {
@@ -72,15 +86,28 @@ export function nextCopyOps(task: RepeatRow, today: string, id: string): Op[] {
   ];
 }
 
-/** Makes the next copy of every repeating task that was finished. */
-export async function ensureRepeats(
+let running: Promise<number> | null = null;
+
+/**
+ * Makes the next copy of every repeating task that was finished, and removes
+ * an untouched copy whose task is no longer done. One run at a time.
+ */
+export function ensureRepeats(
   query: Query,
   transact: (ops: Op[]) => Promise<unknown>,
   today: string,
-  newId: () => string,
 ): Promise<number> {
-  const done = await query<RepeatRow & Record<string, string | number | null>>(REPEAT_DUE_SQL);
-  const ops = done.flatMap((task) => nextCopyOps(task, today, newId()));
-  if (ops.length > 0) await transact(ops);
-  return ops.length;
+  running ??= (async () => {
+    const done = await query<RepeatRow & Record<string, string | number | null>>(REPEAT_DUE_SQL);
+    const undone = await query<{ id: string }>(REPEAT_UNDONE_SQL);
+    const ops: Op[] = [
+      ...done.flatMap((task) => nextCopyOps(task, today)),
+      ...undone.map((row): Op => ({ op: "delete", table: "task_items", id: row.id })),
+    ];
+    if (ops.length > 0) await transact(ops);
+    return ops.length;
+  })().finally(() => {
+    running = null;
+  });
+  return running;
 }

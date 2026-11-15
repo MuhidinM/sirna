@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 
+import { systemClock } from "../kernel/clock";
 import { query, transact } from "../kernel/db";
 import { formatMinutes } from "../features/plan/now";
 import { type Query } from "../features/plan/dayplan";
@@ -27,7 +28,7 @@ function usePreview(today: string): Preview | null {
   const [preview, setPreview] = useState<Preview | null>(null);
   useEffect(() => {
     const load = () => {
-      loadPreview(query as Query, today)
+      loadPreview(query as Query, today, systemClock.now())
         .then(setPreview)
         .catch(() => setPreview(null));
     };
