@@ -177,7 +177,7 @@ The smaller items of [docs/proposals/money-and-planning.md](proposals/money-and-
 | ID    | Issue                                                | Task                                        | Reqs      | Size | Status |
 | ----- | ---------------------------------------------------- | ------------------------------------------- | --------- | ---- | ------ |
 | T-072 | [#150](https://github.com/MuhidinM/sirna/issues/150) | Suggest tracking payments that look regular | R-MON-12  | S    | done   |
-| T-073 | [#151](https://github.com/MuhidinM/sirna/issues/151) | Birr per hour for each job                  | R-MON-13  | S    | todo   |
+| T-073 | [#151](https://github.com/MuhidinM/sirna/issues/151) | Birr per hour for each job                  | R-MON-13  | S    | done   |
 | T-074 | [#152](https://github.com/MuhidinM/sirna/issues/152) | Ask "afford 4500 shoes" in the capture box  | R-MON-10  | S    | todo   |
 | T-075 | [#153](https://github.com/MuhidinM/sirna/issues/153) | A status strip at the top of Settings       | R-UX-02   | S    | todo   |
 | T-076 | [#154](https://github.com/MuhidinM/sirna/issues/154) | A Sunday planning step                      | R-PLAN-10 | M    | todo   |
