@@ -109,12 +109,52 @@ button.month-day {
 .month-dots i {
   width: 5px;
   height: 5px;
-  border-radius: 50%;
-  background: var(--ink);
+  border-radius: var(--pill);
+  background: var(--ink-3);
+  transition:
+    width 0.2s var(--ease),
+    background 0.2s var(--ease);
 }
 
-.month-dots i:nth-child(n + 2) {
+.month-dots i.on {
+  width: 16px;
   background: var(--pink);
+}
+
+.month-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.month-day-detail {
+  margin-top: var(--space-3);
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-size: var(--text-sm);
+}
+
+.month-day-detail ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.month-day-detail li::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--pink);
+  vertical-align: middle;
 }
 
 /* The calendar panel is the raised one, as in the reference. */

@@ -1,7 +1,7 @@
 import "../theme/pages/settings.css";
 
 import { invoke } from "@tauri-apps/api/core";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import { type Op, transact } from "../kernel/db";
 import { CHEATS_SQL, WIDGET_ENABLED_KEY, WIDGET_NOTE_KEY, WIDGET_SQL } from "../widget/view";
@@ -569,9 +569,37 @@ function Section({
 }
 
 /** The sections as a list in the side column; a click scrolls the page to one. */
+/** The section list; on wide screens it stays in view and marks the section you are on. */
 function Jump() {
+  const [active, setActive] = useState<string>(SECTIONS[0]?.id ?? "");
+  const listRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const scroller = listRef.current?.closest(".app-page");
+    if (!scroller) return;
+    const update = () => {
+      const top = scroller.getBoundingClientRect().top;
+      // At the bottom, the last section is the one you are on, however short.
+      if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
+        setActive(SECTIONS[SECTIONS.length - 1]?.id ?? "");
+        return;
+      }
+      let current: string = SECTIONS[0]?.id ?? "";
+      for (const section of SECTIONS) {
+        const el = document.getElementById(section.id);
+        if (el && el.getBoundingClientRect().top - top <= 140) current = section.id;
+      }
+      setActive(current);
+    };
+    update();
+    scroller.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      scroller.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
   return (
-    <nav className="panel set-jump" aria-labelledby="set-jump-title">
+    <nav ref={listRef} className="panel set-jump" aria-labelledby="set-jump-title">
       <PanelHead
         id="set-jump-title"
         title="On this page"
@@ -582,6 +610,7 @@ function Jump() {
           <li key={section.id}>
             <button
               type="button"
+              aria-current={active === section.id ? "location" : undefined}
               onClick={() =>
                 document
                   .getElementById(section.id)

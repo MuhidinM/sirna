@@ -175,21 +175,30 @@ export const IconPlay = (p: IconProps) => (
   </Svg>
 );
 
-/** Sirna's mark: a ring of four leaves around a seed. */
+/**
+ * Sirna's mark: a yellow rounded square with a bite at the top-right, a check
+ * and a seed (src-tauri/icons/source/sirna.svg draws the app icon from it).
+ */
 export function Logo({ size = 34 }: { size?: number }) {
+  const id = "sirna-bite";
   return (
-    <svg width={size} height={size} viewBox="0 0 36 36" aria-hidden="true" focusable="false">
-      <g fill="currentColor">
-        <circle cx="18" cy="18" r="3.2" />
-        <path d="M18 2.5c3.6 3 4.4 7.6 0 11.2-4.4-3.6-3.6-8.2 0-11.2Z" />
-        <path d="M18 33.5c-3.6-3-4.4-7.6 0-11.2 4.4 3.6 3.6 8.2 0 11.2Z" />
-        <path d="M2.5 18c3-3.6 7.6-4.4 11.2 0-3.6 4.4-8.2 3.6-11.2 0Z" />
-        <path d="M33.5 18c-3 3.6-7.6 4.4-11.2 0 3.6-4.4 8.2-3.6 11.2 0Z" />
-        <circle cx="7.4" cy="7.4" r="2.3" />
-        <circle cx="28.6" cy="7.4" r="2.3" />
-        <circle cx="7.4" cy="28.6" r="2.3" />
-        <circle cx="28.6" cy="28.6" r="2.3" />
-      </g>
+    <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      <defs>
+        <mask id={id}>
+          <rect width="1024" height="1024" fill="#fff" />
+          <circle cx="884" cy="140" r="112" fill="#000" />
+        </mask>
+      </defs>
+      <rect x="64" y="64" width="896" height="896" rx="220" fill="#ffb413" mask={`url(#${id})`} />
+      <path
+        d="M296 534 L448 686 L700 432"
+        fill="none"
+        stroke="#141414"
+        strokeWidth="118"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="818" cy="304" r="60" fill="#141414" />
     </svg>
   );
 }

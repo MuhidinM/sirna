@@ -121,6 +121,25 @@
   transform: translateX(2px);
 }
 
+/* The section you are on. */
+.page.settings-page .set-jump button[aria-current="location"] {
+  background: var(--raised);
+  box-shadow: inset 3px 0 0 var(--pink);
+  font-weight: 700;
+}
+
+.page.settings-page .set-jump button[aria-current="location"]::after {
+  color: var(--pink);
+}
+
+/* Wide screens: the side column stays in view while the settings scroll. */
+@media (min-width: 1200px) {
+  .page.settings-page .layout-split > .side {
+    position: sticky;
+    top: 0;
+  }
+}
+
 /* --- Settings: the canvas ------------------------------------------------------------- */
 
 .page.settings-page .set-canvas .canvas-head {

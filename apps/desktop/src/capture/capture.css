@@ -1,51 +1,66 @@
-/* The capture box (560 x 72, frameless): one dark rounded panel with a big
-   input, a pink + mark at the left and the echo as a cream chip at the right. */
+/*
+ * The capture bar (680 x 52, frameless and transparent; src-tauri windows.rs
+ * matches the size). One pill, nothing behind it. The + mark and the echo
+ * chip sit 6 px in from the ends, so their curves run parallel to the bar's:
+ * bar radius 26 = chip radius 20 + 6.
+ */
 :root {
   font-family: var(--font-sans);
-  background: var(--frame);
   color: var(--ink);
+  background: transparent;
+  --bar-h: 52px;
+  --inset: 6px;
 }
 
+html,
 body {
   margin: 0;
+  height: 100%;
   overflow: hidden;
+  background: transparent;
 }
 
 .capture {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: 72px;
-  padding: 0 var(--space-4) 0 var(--space-3);
+  gap: 10px;
   box-sizing: border-box;
+  height: var(--bar-h);
+  padding: 0 var(--inset);
   background: var(--panel);
   border: 1px solid var(--panel-line);
-  border-radius: var(--radius-card);
+  border-radius: calc(var(--bar-h) / 2);
 }
 
 .capture:focus-within {
-  border-color: var(--chip);
+  border-color: var(--bar-top);
 }
 
 .capture-mark {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: calc(var(--bar-h) - 2 * var(--inset) - 2px);
+  aspect-ratio: 1;
   border-radius: 50%;
   background: var(--pink);
-  color: var(--canvas);
-  font-size: 24px;
+  color: #fff;
+  font-size: 22px;
   font-weight: 600;
   line-height: 1;
+}
+
+[data-theme="forest"] .capture-mark {
+  background: var(--cream);
+  color: var(--cream-ink);
 }
 
 .capture-input {
   flex: 1;
   min-width: 0;
+  height: 100%;
   font: inherit;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 500;
   letter-spacing: -0.01em;
   color: inherit;
@@ -53,6 +68,7 @@ body {
   background: transparent;
   border: none;
   outline: none;
+  padding: 0 4px;
 }
 
 .capture-input::placeholder {
@@ -60,16 +76,18 @@ body {
   font-weight: 400;
 }
 
-/* What the box understood: a cream chip, hidden while empty. */
+/* What the bar understood: a cream pill at the right end, hidden while empty. */
 .capture-echo {
   flex-shrink: 1;
-  max-width: 62%;
-  padding: 6px 12px;
-  border-radius: 14px;
-  line-height: 1.25;
+  max-width: 58%;
+  max-height: calc(var(--bar-h) - 2 * var(--inset) - 2px);
+  padding: 4px 14px;
+  box-sizing: border-box;
+  border-radius: calc((var(--bar-h) - 2 * var(--inset)) / 2);
+  line-height: 1.2;
   background: var(--cream);
   color: var(--cream-ink);
-  font-size: var(--text-sm);
+  font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   overflow: hidden;

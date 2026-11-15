@@ -43,3 +43,23 @@ export function logicalDate(
 ): string {
   return localDate(epochMs - dayStartHour * HOUR_MS, timeZone);
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * A logical date (YYYY-MM-DD) as people read it: "16 Nov", with the year only
+ * when it differs from `today`'s ("3 Jan 2027"), and the weekday on request
+ * ("Mon 16 Nov"). Every date shown in the app goes through this (docs/design.md).
+ */
+export function showDate(
+  date: string,
+  today?: string,
+  { weekday = false }: { weekday?: boolean } = {},
+): string {
+  const [y = 0, m = 1, d = 1] = date.split("-").map(Number);
+  if (!y || !m || !d) return date;
+  const year = today && today.slice(0, 4) !== date.slice(0, 4) ? ` ${y}` : "";
+  const day = weekday ? `${WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] ?? ""} ` : "";
+  return `${day}${d} ${MONTHS[m - 1] ?? ""}${year}`;
+}
