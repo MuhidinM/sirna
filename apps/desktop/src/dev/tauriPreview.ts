@@ -1,7 +1,7 @@
 /**
  * Dev-only: lets the app run in a plain browser (`pnpm dev`, then
  * http://localhost:1420) for design work. It stands in for Tauri's IPC:
- * `db_query` and `db_tx` run against public/__ref/sirna.db (built by
+ * `db_query` and `db_tx` run against dev-data/sirna.db (built by
  * scripts/preview-db.mjs, never committed) in sql.js; other commands return
  * quiet defaults. Never part of a build: main.tsx imports it only in dev
  * when Tauri is absent.
@@ -85,7 +85,7 @@ function applyOps(db: Database, ops: Op[]) {
 
 export async function install(): Promise<void> {
   const SQL = await initSqlJs({ locateFile: () => wasmUrl });
-  const bytes = await fetch("/__ref/sirna.db").then((r) => {
+  const bytes = await fetch("/dev-data/sirna.db").then((r) => {
     if (!r.ok) throw new Error("Run `node scripts/preview-db.mjs` first");
     return r.arrayBuffer();
   });
