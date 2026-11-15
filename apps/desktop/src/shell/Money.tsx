@@ -17,6 +17,7 @@ import {
   monthLabel,
   monthOf,
   moneyLine,
+  type MonthSummary,
   monthSummary,
   previousMonthStart,
   SAVED_SQL,
@@ -111,6 +112,7 @@ import {
   findings,
   shownToday,
 } from "../features/money/advisor";
+import { type Afford, afford } from "../features/money/afford";
 import { useAsk } from "../features/ai/ask";
 import { MONEY } from "../features/ai/touchpoints";
 import { Savings } from "./Savings";
@@ -326,6 +328,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
       )}
       {current && <Advisor today={today} />}
       {current && <SafeCard today={today} />}
+      {current && <AffordBox today={today} summary={summary} />}
       {current && <EmergencyCard today={today} />}
 
       {summary.sources.length > 0 && (
@@ -520,6 +523,77 @@ export function Advisor({ today }: { today: string }) {
           <FindingCard key={finding.key} finding={finding} today={today} hiddenJson={hiddenJson} />
         ))}
       </ul>
+    </section>
+  );
+}
+
+/** Can I afford it? (T-065): Fine, Tight or Not now, from your real numbers. */
+function AffordBox({ today, summary }: { today: string; summary: MonthSummary }) {
+  const { safe, loading } = useSafe(today);
+  const [amount, setAmount] = useState("");
+  const [what, setWhat] = useState("");
+  const [answer, setAnswer] = useState<Afford | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (loading) return null;
+  return (
+    <section className="card" aria-labelledby="afford">
+      <h2 id="afford">Can I afford it?</h2>
+      <form
+        className="row task-filters"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const minor = parseAmount(amount);
+          if (minor === null || minor <= 0) {
+            setError("An amount, like 4,500.");
+            setAnswer(null);
+            return;
+          }
+          setError(null);
+          setAnswer(
+            afford({
+              amount: minor,
+              available: safe.known ? safe.total : summary.left,
+              daysLeft: summary.days - summary.day + 1,
+              basis: safe.known ? "safe" : "month",
+            }),
+          );
+        }}
+      >
+        <input
+          inputMode="decimal"
+          aria-label="How much"
+          placeholder="4,500"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        <input
+          aria-label="What it is"
+          placeholder="shoes (optional)"
+          value={what}
+          onChange={(e) => setWhat(e.target.value)}
+        />
+        <Button type="submit">Check</Button>
+      </form>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+      {answer && (
+        <div className={answer.verdict === "Fine" ? "afford fine" : "afford warn-text"}>
+          <p>
+            <strong>{answer.verdict}</strong>
+            {what.trim() ? ` for ${what.trim()}` : ""}
+          </p>
+          <ul className="plain-list">
+            {answer.reasons.map((reason) => (
+              <li key={reason} className="meta">
+                {reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }
