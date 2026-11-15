@@ -1,5 +1,6 @@
 import { type CSSProperties, useState } from "react";
 
+import { logicalDate, showDate } from "../kernel/dates";
 import { type JobTask } from "../features/plan/jobs";
 import { type BlockRow, firstStep, formatMinutes, nowAndNext } from "../features/plan/now";
 import { type FocusStatus, startFocus } from "./Focus";
@@ -12,9 +13,11 @@ const time = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Africa/Addis_Ababa",
 });
 
-/** "12.00", as in the reference. */
+/** "12.00", as in the reference: the day board only. */
 const dot = (ms: number) => time.format(ms).replace(":", ".");
 const range = (block: BlockRow) => `${dot(block.start_at)} – ${dot(block.end_at)}`;
+/** "12:00–13:00": times in prose (the Now card), as in the brief. */
+const span = (block: BlockRow) => `${time.format(block.start_at)}–${time.format(block.end_at)}`;
 
 /** The yellow Now card: the current block, or the next one, with the time left. */
 export function NowCards({
@@ -32,7 +35,7 @@ export function NowCards({
     const left = Math.max(0, Math.round((now.end_at - nowMs) / 60_000));
     return (
       <NowCard
-        when={range(now)}
+        when={span(now)}
         left={`${formatMinutes(left)} left`}
         title={now.title}
         sub={
@@ -44,7 +47,7 @@ export function NowCards({
               </>
             )}
             {next && minutesToNext !== undefined
-              ? `Next: ${next.title} at ${dot(next.start_at)} · in ${formatMinutes(minutesToNext)}`
+              ? `Next: ${next.title} at ${time.format(next.start_at)} · in ${formatMinutes(minutesToNext)}`
               : "Nothing after this today."}
           </>
         }
@@ -59,7 +62,7 @@ export function NowCards({
   }
   return (
     <NowCard
-      when={next ? `Next at ${dot(next.start_at)}` : "Free time"}
+      when={next ? `Next at ${time.format(next.start_at)}` : "Free time"}
       left={next && minutesToNext !== undefined ? formatMinutes(minutesToNext) : null}
       title={next ? next.title : "Nothing else today"}
       sub={next ? "Free time until then." : "The rest of the day is yours."}
@@ -127,7 +130,7 @@ export function Timeline({
   // A block whose task list is opened in full.
   const [open, setOpen] = useState<string | null>(null);
   if (blocks.length === 0) {
-    return <p className="empty">No plan yet. Finish setup and today&apos;s blocks appear here.</p>;
+    return <p className="empty">Today&apos;s blocks show up here once your week is set up.</p>;
   }
   const hour = 3_600_000;
   const first = Math.floor(Math.min(...blocks.map((b) => b.start_at)) / hour) * hour;
@@ -155,6 +158,7 @@ export function Timeline({
     return later.length > 0 ? Math.min(...later) : null;
   };
   const showNow = nowMs >= first && nowMs <= last;
+  const today = logicalDate(nowMs);
   return (
     <div
       className="day-board"
@@ -251,7 +255,10 @@ export function Timeline({
                             />
                             {task.title}
                             {task.due_date && (
-                              <span className="event-due"> · due {task.due_date}</span>
+                              <span className="event-due">
+                                {" "}
+                                · due {showDate(task.due_date, today)}
+                              </span>
                             )}
                           </label>
                         </li>

@@ -126,7 +126,7 @@ describe("what is due (T-059, T-060)", () => {
     const late = dueItems([water], [], "2026-11-01", "2026-11-30", "2026-11-15");
     expect(late[0]?.state).toBe("late");
     expect(dueLines(items)).toEqual(["Water 200 ETB due today"]);
-    expect(dueLines(late)).toEqual(["Water 200 ETB was due 2026-11-14"]);
+    expect(dueLines(late)).toEqual(["Water 200 ETB was due 14 Nov"]);
   });
 
   it("doesn't ask about dates before you added it", () => {
@@ -149,7 +149,7 @@ describe("what is due (T-059, T-060)", () => {
       ["paya", "2026-11-10", "late", 600_000],
       ["payb", "2026-11-21", "upcoming", 2_100_000],
     ]);
-    expect(dueLines(items)).toEqual(["Job A pay is late: 6,000 ETB expected on 2026-11-10"]);
+    expect(dueLines(items)).toEqual(["Job A pay is late: 6,000 ETB expected on 10 Nov"]);
     const onTime = dueItems([jobA], captured, "2026-11-01", "2026-11-30", "2026-11-13");
     expect(onTime[0]?.state).toBe("due");
     const full = dueItems(

@@ -262,7 +262,7 @@ function TodayStep({
             sub={`${sessions} focus session${sessions === 1 ? "" : "s"} done.`}
           />
           {visible.length === 0 ? (
-            <p className="empty">No blocks today.</p>
+            <p className="empty">No blocks today. Blocks from your routine show here.</p>
           ) : (
             <ul className="rv-blocks">
               {visible.map((block) => (
@@ -395,7 +395,7 @@ function TodayStep({
                     {(["task", "note", "drop"] as const).map((choice) => (
                       <Button
                         key={choice}
-                        className={`rv-pick rv-pick-${choice}`}
+                        className={`rv-pick rv-pick-${choice}${choice === "drop" ? " btn-ghost btn-danger" : ""}`}
                         onClick={() =>
                           void transact(
                             "user",
@@ -588,7 +588,7 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
           {!ready ? (
             <p className="meta">Planning tomorrow…</p>
           ) : tomorrowBlocks.length === 0 ? (
-            <p className="empty">No blocks yet.</p>
+            <p className="empty">No blocks for tomorrow yet. Blocks from your routine show here.</p>
           ) : (
             <ul className="rv-blocks">
               {tomorrowBlocks.map((block) => (
@@ -695,9 +695,9 @@ function ReplyStep({
   return (
     <main className="page plan-review">
       <section className="canvas rv rv-reply" aria-labelledby="saved">
-        <h2 id="saved" className="page-title">
+        <h1 id="saved" className="page-title">
           Saved for <span className="soft">tomorrow</span>
-        </h2>
+        </h1>
         <blockquote className="rv-mind">{mind}</blockquote>
         {text ? (
           <p className="ai-text">{text}</p>

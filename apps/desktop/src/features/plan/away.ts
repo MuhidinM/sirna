@@ -1,4 +1,5 @@
 /** Away mode (plan §3.11): pure helpers for Today's banner. Rust owns the rules. */
+import { showDate } from "../../kernel/dates";
 
 export const AWAY_SQL = "SELECT value_json FROM core_settings WHERE key = 'away.until'";
 
@@ -13,14 +14,7 @@ export function awayUntil(valueJson: string | undefined, today: string): string 
   }
 }
 
-const weekday = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
-
-/** "Mon 16 Nov". */
-export function returnLabel(date: string): string {
-  return weekday.format(new Date(`${date}T00:00:00Z`));
+/** "Mon 16 Nov", with the year only when it differs from `today`'s. */
+export function returnLabel(date: string, today?: string): string {
+  return showDate(date, today, { weekday: true });
 }

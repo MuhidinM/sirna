@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Sirna: a rounded square with a bite at the top-right, a check and a seed. -->
+  <defs>
+    <mask id="bite">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="884" cy="140" r="112" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="220" fill="#ffb413" mask="url(#bite)"/>
+  <path d="M296 534 L448 686 L700 432" fill="none" stroke="#141414" stroke-width="118" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="818" cy="304" r="60" fill="#141414"/>
+</svg>

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
+import { localDate, showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
@@ -109,7 +110,6 @@ export function SplitTask({
       </ol>
       <div className="row">
         <Button
-          primary
           disabled={using}
           onClick={() => {
             if (using) return;
@@ -131,10 +131,8 @@ export function SplitTask({
   );
 }
 
-const longDate = new Intl.DateTimeFormat("en-GB", {
+const longWeekday = new Intl.DateTimeFormat("en-GB", {
   weekday: "long",
-  day: "numeric",
-  month: "short",
   timeZone: "Africa/Addis_Ababa",
 });
 const time = new Intl.DateTimeFormat("en-GB", {
@@ -176,7 +174,7 @@ function TaskLine({ task, today }: { task: TaskRow; today: string }) {
       <span className="meta">
         {task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h · ` : ""}
         {overdue
-          ? `since ${task.due_date}${task.due_at !== null ? ` ${time.format(task.due_at)}` : ""}`
+          ? `since ${showDate(task.due_date ?? "", today)}${task.due_at !== null ? ` ${time.format(task.due_at)}` : ""}`
           : task.due_at !== null
             ? time.format(task.due_at)
             : ""}
@@ -276,13 +274,9 @@ export function Today({
   const error =
     top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error ?? blocks.error;
 
-  const [weekday, dayMonth] = longDate
-    .format(nowMs)
-    .split(" ")
-    .reduce<[string, string]>(
-      (acc, part, index) => (index === 0 ? [part, ""] : [acc[0], `${acc[1]} ${part}`.trim()]),
-      ["", ""],
-    );
+  const weekday = longWeekday.format(nowMs);
+  // The calendar day, like the weekday beside it; never a year for "today".
+  const dayMonth = showDate(localDate(nowMs));
 
   return (
     <main className="page today">
@@ -291,7 +285,7 @@ export function Today({
           <MonthPanel today={today} onOpen={onOpenPlan} />
           <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
           {focus && focus.kind !== null && <FocusPanel status={focus} />}
-          <LooseEnds inbox={inbox.rows} waiting={waiting.rows} />
+          <LooseEnds inbox={inbox.rows} waiting={waiting.rows} today={today} />
         </aside>
 
         <div className="main">
@@ -311,7 +305,7 @@ export function Today({
 
             {backOn && (
               <p className="row meta notice" role="status">
-                Away until {returnLabel(backOn)}: no brief, review or block reminders.
+                Away until {returnLabel(backOn, today)}: no brief, review or block reminders.
                 <Button onClick={() => void invoke("clear_away")}>I&apos;m back</Button>
               </p>
             )}
@@ -332,7 +326,9 @@ export function Today({
                 <section aria-labelledby="top3">
                   <h2 id="top3">Top 3</h2>
                   {top.rows.length === 0 && !top.loading ? (
-                    <p className="empty">Nothing due today. Captures with a date land here.</p>
+                    <p className="empty">
+                      Tasks due or planned for today show up here; capture one with a date.
+                    </p>
                   ) : (
                     <ul className="task-rows">
                       {top.rows.map((task) => (
@@ -400,7 +396,9 @@ export function Today({
 function LooseEnds({
   inbox,
   waiting,
+  today,
 }: {
+  today: string;
   inbox: { id: string; body: string }[];
   waiting: {
     id: string;
@@ -418,7 +416,7 @@ function LooseEnds({
         action={inbox.length > 0 ? <span className="badge">{inbox.length}</span> : undefined}
       />
       {inbox.length === 0 && waiting.length === 0 ? (
-        <p className="empty">Nothing loose. Anything you capture without a date lands here.</p>
+        <p className="empty">Captures without a date and tasks you wait on show up here.</p>
       ) : (
         <ul className="list-rows">
           {inbox.map((note) => (
@@ -433,7 +431,7 @@ function LooseEnds({
               <span className="grow">
                 Waiting on {item.waiting_on ?? item.title}
                 {item.follow_up_date && (
-                  <span className="meta"> · follow up {item.follow_up_date}</span>
+                  <span className="meta"> · follow up {showDate(item.follow_up_date, today)}</span>
                 )}
               </span>
             </li>

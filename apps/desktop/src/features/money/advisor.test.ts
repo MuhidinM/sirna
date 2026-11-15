@@ -136,7 +136,7 @@ describe("the advisor's findings (T-064)", () => {
       account({ id: "cbo", name: "CBO", opening_minor: 2_000_000 }),
     ];
     const [finding] = findings({ ...base, accounts, due: [item({})] });
-    expect(finding?.text).toBe("Internet 1,200 ETB is due on 2026-11-17; CBE has 500 ETB.");
+    expect(finding?.text).toBe("Internet 1,200 ETB is due on 17 Nov; CBE has 500 ETB.");
     // 700 short, rounded up to 100 birr.
     expect(finding?.actions[0]?.label).toBe("Move 700 ETB from CBO");
     expect(
@@ -262,7 +262,7 @@ describe("after the Milestone 3 review", () => {
     const [finding] = findings({ ...base, accounts, due: [rent, net] });
     // 6,000 owed, 5,000 there: one finding for CBE, moving the 1,000 gap.
     expect(finding?.text).toBe(
-      "Rent and Internet (6,000 ETB) are due by 2026-11-18; CBE has 5,000 ETB.",
+      "Rent and Internet (6,000 ETB) are due by 18 Nov; CBE has 5,000 ETB.",
     );
     expect(finding?.actions[0]?.label).toBe("Move 1,000 ETB from CBO");
   });

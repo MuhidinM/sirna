@@ -149,13 +149,13 @@ function showChip() {
     output.textContent = editing ? "Fixing your last capture" : "";
     return;
   }
-  // While fixing, Enter replaces the capture, so the chip keeps saying "Fix →".
+  // While fixing, Enter replaces the capture, so the chip keeps saying "Fix ·".
   if (current.kind === "search" && current.query !== "" && !editing) {
     showSearch(current.query);
     return;
   }
   const hint = options.length > 1 ? "  ·  Tab: change" : "";
-  output.textContent = `${editing ? "Fix → " : ""}${echoLine(current, systemClock.now())}${hint}`;
+  output.textContent = `${editing ? "Fix · " : ""}${echoLine(current, systemClock.now())}${hint}`;
 }
 
 function finish(message: string, ms = ECHO_MS) {

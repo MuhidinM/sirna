@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
-import { logicalDate } from "../kernel/dates";
+import { logicalDate, showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { formatAmount, parseAmount } from "../kernel/money";
 import { ask } from "../features/ai/ask";
@@ -179,9 +179,9 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   if (minor > 0)
     return (
       <section className="panel pw-saving" aria-labelledby="saving">
-        <PanelHead id="saving" icon={<IconMoney size={18} />} title="Saving" />
+        <PanelHead id="saving" icon={<IconMoney size={18} />} title="Put aside" />
         <p className="pw-big">{formatAmount(minor)}</p>
-        <p className="meta">put aside this week.</p>
+        <p className="meta">this week.</p>
       </section>
     );
   if (asked.rows[0]?.value_json === JSON.stringify(monday)) return null;
@@ -235,7 +235,7 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
           </select>
         )}
         <span className="pw-actions">
-          <Button type="submit" primary>
+          <Button type="submit" className="btn-orange">
             Save
           </Button>
           <Button
@@ -317,7 +317,7 @@ export function WeekCard() {
 
   const doneMin = areas.rows.reduce((sum, area) => sum + area.done_min, 0);
   const targetMin = areas.rows.reduce((sum, area) => sum + area.target_min, 0);
-  const range = weekRange(monday);
+  const range = weekRange(monday, today);
 
   return (
     <main className="page plan-week">
@@ -359,7 +359,7 @@ export function WeekCard() {
               <p>{change.text}</p>
               <div className="pw-actions">
                 <Button
-                  primary
+                  className="btn-orange"
                   onClick={() => void write(applyOps(change, monday), `week:${monday}`)}
                 >
                   Apply
@@ -394,7 +394,7 @@ export function WeekCard() {
               </Button>
             </header>
             <p className="visually-hidden">
-              Week of {monday}
+              Week of {showDate(monday, today, { weekday: true })}
               {weekMostlyDone ? "" : " · so far"}
             </p>
             {error && (
@@ -516,7 +516,9 @@ export function WeekCard() {
                 title="Projects"
                 sub={`${activeCount} of 2 active`}
               />
-              {projects.rows.length === 0 && <p className="empty">No active projects.</p>}
+              {projects.rows.length === 0 && (
+                <p className="empty">No projects running or next up. Add one on Projects.</p>
+              )}
               <ul className="list-rows pw-project-rows">
                 {projects.rows.map((project) => (
                   <li key={project.id}>
@@ -527,7 +529,9 @@ export function WeekCard() {
                         {project.status === "next_up" ? "next up · " : ""}
                         {progressLabel(project)}
                         {project.week_min ? ` · ${hoursLabel(project.week_min)} this week` : ""}
-                        {project.forecast_finish ? ` · finish ~${project.forecast_finish}` : ""}
+                        {project.forecast_finish
+                          ? ` · finish ~${showDate(project.forecast_finish, today)}`
+                          : ""}
                       </span>
                     </span>
                     <span className="pw-actions">
@@ -588,16 +592,12 @@ export function WeekCard() {
   );
 }
 
-const SHORT_DATE = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
-
 /** "16 – 22 Nov", or "30 Nov – 6 Dec" across a month end. */
-function weekRange(monday: string): string {
-  const start = SHORT_DATE.format(Date.parse(`${monday}T00:00:00Z`));
-  const end = SHORT_DATE.format(Date.parse(`${shiftDate(monday, 6)}T00:00:00Z`));
-  const [startDay = "", startMonth = ""] = start.split(" ");
-  return end.endsWith(` ${startMonth}`) ? `${startDay} – ${end}` : `${start} – ${end}`;
+function weekRange(monday: string, today: string): string {
+  const sunday = shiftDate(monday, 6);
+  const end = showDate(sunday, today);
+  // Same month and year: say the month (and year) once.
+  return sunday.slice(0, 7) === monday.slice(0, 7)
+    ? `${Number(monday.slice(8))} – ${end}`
+    : `${showDate(monday, today)} – ${end}`;
 }

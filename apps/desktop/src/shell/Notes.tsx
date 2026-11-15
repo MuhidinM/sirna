@@ -17,7 +17,7 @@ import {
   tokens,
 } from "../features/notes/cheat";
 import { IconSearch } from "./icons";
-import { type Tone, toneOf } from "./kit";
+import { PanelHead, type Tone, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -73,20 +73,16 @@ function CardView({
 
   return (
     <section className={`card pr-card pr-cheat tone-${tone}`} aria-label={card.title}>
-      <header className="pr-cheat-head">
-        <span className="pr-cheat-mark" aria-hidden="true">
-          {card.title.charAt(0).toUpperCase() || "#"}
-        </span>
-        <div className="grow">
-          <h2>{card.title}</h2>
-          <span className="panel-sub">
-            {card.lines.length} line{card.lines.length === 1 ? "" : "s"}
-          </span>
-        </div>
-        {editing === undefined && (
-          <Button onClick={() => setEditing({ text: cardText(card), base: card })}>Edit</Button>
-        )}
-      </header>
+      <PanelHead
+        icon={<span aria-hidden="true">{card.title.charAt(0).toUpperCase() || "#"}</span>}
+        title={card.title}
+        sub={`${card.lines.length} line${card.lines.length === 1 ? "" : "s"}`}
+        action={
+          editing === undefined && (
+            <Button onClick={() => setEditing({ text: cardText(card), base: card })}>Edit</Button>
+          )
+        }
+      />
       {editing === undefined ? (
         <ul className="cheat-lines pr-lines">
           {card.lines.map((line) => (
@@ -200,16 +196,12 @@ export function Notes({
         )}
         {queryText.trim() !== "" ? (
           <section className="card pr-card pr-results" aria-label="Search results">
-            <div className="panel-head">
-              <div className="grow">
-                <h2>Matches</h2>
-                <span className="panel-sub">
-                  {hits.length} line{hits.length === 1 ? "" : "s"} for “{queryText.trim()}”
-                </span>
-              </div>
-            </div>
+            <PanelHead
+              title="Matches"
+              sub={`${hits.length} line${hits.length === 1 ? "" : "s"} for “${queryText.trim()}”`}
+            />
             {hits.length === 0 ? (
-              <p className="empty">No cheat line matches.</p>
+              <p className="empty">No cheat lines match. Try another word.</p>
             ) : (
               <ul className="cheat-lines pr-lines">
                 {hits.map((hit) => (

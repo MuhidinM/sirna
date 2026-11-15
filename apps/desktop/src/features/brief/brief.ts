@@ -2,7 +2,7 @@
  * The morning brief (plan §3.4): at most 12 lines, empty sections hidden, no
  * questions. Pure: the screen and the tests feed it rows and get lines back.
  */
-import { logicalDate } from "../../kernel/dates";
+import { localDate, logicalDate, showDate } from "../../kernel/dates";
 import { logicalDayStart } from "../tasks/today";
 import { type BlockRow, formatMinutes, nowAndNext } from "../plan/now";
 import { type ChangedCounts, changedText } from "./changed";
@@ -63,12 +63,6 @@ const clock = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
   timeZone: "Africa/Addis_Ababa",
 });
-const day = new Intl.DateTimeFormat("en-GB", {
-  weekday: "long",
-  day: "numeric",
-  month: "short",
-  timeZone: "Africa/Addis_Ababa",
-});
 
 const minutesOf = (block: BlockRow) => Math.round((block.end_at - block.start_at) / 60000);
 
@@ -95,7 +89,11 @@ function progress(doneMin: number, targetMin: number): string {
 
 export function buildBrief(input: BriefInput): BriefLine[] {
   const lines: BriefLine[] = [];
-  lines.push({ label: "", text: day.format(input.nowMs), meta: clock.format(input.nowMs) });
+  lines.push({
+    label: "",
+    text: showDate(localDate(input.nowMs), undefined, { weekday: true }),
+    meta: clock.format(input.nowMs),
+  });
 
   if (input.checks.notificationsMuted)
     lines.push({
@@ -129,7 +127,7 @@ export function buildBrief(input: BriefInput): BriefLine[] {
       task.due_date === null
         ? undefined
         : task.due_date < input.today
-          ? `since ${task.due_date}`
+          ? `since ${showDate(task.due_date, input.today)}`
           : task.due_date === input.today
             ? "due today"
             : undefined;

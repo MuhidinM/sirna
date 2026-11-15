@@ -86,6 +86,10 @@ fn open_main(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The capture bar's size: thin and long (src/capture/capture.css matches it).
+pub const CAPTURE_WIDTH: f64 = 680.0;
+pub const CAPTURE_HEIGHT: f64 = 52.0;
+
 /// The capture box: small, frameless, on top, not in the taskbar. It closes
 /// when it loses focus. Whether to keep it warm instead is decided in T-010.
 fn open_capture(app: &AppHandle) -> tauri::Result<()> {
@@ -96,14 +100,17 @@ fn open_capture(app: &AppHandle) -> tauri::Result<()> {
     let window =
         WebviewWindowBuilder::new(app, CAPTURE_LABEL, WebviewUrl::App("capture.html".into()))
             .title("Sirna capture")
-            .inner_size(560.0, 72.0)
+            .inner_size(CAPTURE_WIDTH, CAPTURE_HEIGHT)
             .resizable(false)
             .decorations(false)
+            // Only the rounded bar shows: no square window behind it, no system shadow.
+            .transparent(true)
+            .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .center()
             .focused(true)
-            .background_color(BACKGROUND)
+            .background_color(Color(0, 0, 0, 0))
             .build()?;
     let closing = window.clone();
     window.on_window_event(move |event| {

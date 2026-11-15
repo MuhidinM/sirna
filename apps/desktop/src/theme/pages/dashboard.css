@@ -10,7 +10,7 @@
 .dash .dash-cell.arranging {
   padding: var(--space-2);
   border: 1px dashed var(--ink-3);
-  border-radius: 32px;
+  border-radius: var(--radius-card);
 }
 
 .dash .dash-cell.arranging {
@@ -23,8 +23,8 @@
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
-  padding: 4px 4px 4px var(--space-4);
-  border-radius: 22px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border-radius: var(--radius);
   background: var(--raised);
   color: var(--ink);
 }
@@ -44,9 +44,21 @@
   background: var(--canvas);
 }
 
+.dash .dash-controls .btn:not([aria-pressed="true"]):hover {
+  background: var(--bar-top);
+}
+
+.dash .dash-controls .btn.btn-ghost {
+  background: transparent;
+}
+
+.dash .dash-controls .btn.btn-ghost:hover {
+  background: var(--chip);
+}
+
 .dash .dash-controls .btn.dash-icon {
   min-width: 32px;
-  padding: 0 10px;
+  padding: 0 var(--space-2);
 }
 
 .dash .dash-controls .btn[aria-pressed="true"] {
@@ -56,7 +68,7 @@
 
 .dash .dash-sizes {
   display: inline-flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .dash .dash-help {
@@ -77,8 +89,9 @@
   gap: var(--space-2);
   min-width: 0;
   min-height: 150px;
-  padding: 18px;
-  border-radius: var(--radius-event);
+  padding: var(--space-5);
+  /* A card on the canvas. */
+  border-radius: var(--radius-tile);
   background: var(--tone);
   color: var(--tone-ink, var(--on-loud));
   box-shadow: 0 1px 0 rgb(0 0 0 / 4%);
@@ -181,11 +194,6 @@
 }
 
 .dash .panel select {
-  min-height: 36px;
-  padding: 6px 14px;
-  border-radius: var(--pill);
-  font-size: var(--text-sm);
-  font-weight: 600;
   max-width: 11rem;
 }
 
@@ -199,7 +207,7 @@
 .dash .dash-chip {
   display: inline-flex;
   align-items: center;
-  padding: 5px 12px;
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--pill);
   background: var(--cream);
   color: var(--cream-ink);
@@ -268,7 +276,7 @@
 .dash .year-wrap {
   --cell-gap: clamp(1px, 0.4cqi, 3px);
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -368,18 +376,16 @@
   vertical-align: middle;
 }
 
+/* The day lookup: its label above the field, as everywhere. */
 .dash .year-lookup {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-3);
+  display: grid;
+  gap: var(--space-1);
 }
 
-.dash .year-lookup input[type="date"] {
-  min-height: 36px;
-  padding: 6px 14px;
-  border-radius: var(--pill);
+.dash .year-lookup > span {
   font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink-2);
 }
 
 /* --- Insights ----------------------------------------------------------------------------- */
@@ -396,7 +402,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: 10px var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 0;
   border-radius: var(--radius);
   line-height: 1.45;
@@ -443,7 +449,7 @@
   align-items: center;
   gap: var(--space-3);
   min-height: 44px;
-  padding: 6px var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);
 }
 
@@ -454,7 +460,7 @@
 .dash .dash-area-name {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
   min-width: 0;
   font-weight: 600;
 }
@@ -470,7 +476,7 @@
 @container (max-width: 420px) {
   .dash .dash-area-rows li {
     grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: 6px;
+    row-gap: var(--space-2);
   }
 
   .dash .dash-area-rows li .bar {

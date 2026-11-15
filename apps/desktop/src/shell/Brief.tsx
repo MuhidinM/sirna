@@ -133,7 +133,7 @@ export function Brief({
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
     outcomes,
-    due: [...dueLines(due.items), ...followUpLines(loans.people, today)],
+    due: [...dueLines(due.items, today), ...followUpLines(loans.people, today)],
     calendar: calendarCheck(
       readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),
     ),
@@ -153,11 +153,7 @@ export function Brief({
         ))}
       </dl>
       <AiLine today={today} blocks={blocks} top={top} week={week.rows} />
-      {!dismissed && (
-        <Button primary onClick={() => dismiss(today)}>
-          Start my day
-        </Button>
-      )}
+      {!dismissed && <Button onClick={() => dismiss(today)}>Start my day</Button>}
       {dismissed && <Button onClick={() => setReopened(false)}>Hide</Button>}
     </section>
   );

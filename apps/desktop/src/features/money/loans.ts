@@ -4,6 +4,7 @@
  * account, kept out of in and out. Pure and tested, integer santim.
  */
 import { type Op } from "../../kernel/db";
+import { showDate } from "../../kernel/dates";
 import { formatAmount, type Santim } from "../../kernel/money";
 
 export type LoanKind = "lent" | "borrowed" | "paid_me" | "i_paid";
@@ -201,15 +202,15 @@ export function loanRestoreOps(event: LoanEvent): Op[] {
   ];
 }
 
-/** "Abel owes you 600 ETB since 2026-11-01" for the brief, when a follow-up is due. */
+/** "Abel owes you 600 ETB since 1 Nov" for the brief, when a follow-up is due. */
 export function followUpLines(people: PersonBalance[], today: string): string[] {
   return people
     .filter((person) => person.followUp !== null && person.followUp <= today)
     .filter((person) => person.owedToMe > 0 || person.iOwe > 0)
     .map((person) =>
       person.owedToMe > 0
-        ? `${person.person} owes you ${formatAmount(person.owedToMe)} since ${person.since ?? "?"}`
-        : `You owe ${person.person} ${formatAmount(person.iOwe)} since ${person.since ?? "?"}`,
+        ? `${person.person} owes you ${formatAmount(person.owedToMe)} since ${person.since ? showDate(person.since, today) : "?"}`
+        : `You owe ${person.person} ${formatAmount(person.iOwe)} since ${person.since ? showDate(person.since, today) : "?"}`,
     );
 }
 

@@ -8,6 +8,7 @@
  * Everything is written in the capture's own transaction, so Ctrl+Z in the
  * capture box (or undoing the capture) takes it all back.
  */
+import { showDate } from "../../kernel/dates";
 import { type SqlValue } from "../../kernel/db";
 import {
   checkWithDate,
@@ -48,13 +49,9 @@ export interface Placement {
   echo: string;
 }
 
-const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** "Mon 16 Nov" */
-export function shortDay(date: string): string {
-  const at = new Date(`${date}T00:00:00Z`);
-  return `${days[at.getUTCDay()] ?? ""} ${at.getUTCDate()} ${months[at.getUTCMonth()] ?? ""}`;
+/** "Mon 16 Nov", with the year only when it differs from `today`'s (docs/design.md). */
+export function shortDay(date: string, today?: string): string {
+  return showDate(date, today, { weekday: true });
 }
 
 const percent = (ratio: number) => (Number.isFinite(ratio) ? `${Math.round(ratio * 100)}%` : "∞");
@@ -97,7 +94,7 @@ export function placeIdea(idea: IdeaInput, plan: WeekPlan | null): Placement {
     status: "idea",
     origin: "capture",
   };
-  const due = idea.deadline ? ` · by ${shortDay(idea.deadline)}` : "";
+  const due = idea.deadline ? ` · by ${shortDay(idea.deadline, plan?.today)}` : "";
   if (!idea.estimateMin) return { values, echo: `Idea${due} · add hours to place it, e.g. "~10h"` };
   if (!plan) return { values, echo: `Idea${due} · saved; couldn't read your week` };
 
@@ -128,7 +125,7 @@ export function placeIdea(idea: IdeaInput, plan: WeekPlan | null): Placement {
   const weeks = slot.weeks.length;
   return {
     values,
-    echo: `${idea.title} · starts ${shortDay(slot.start)} · ${hoursLabel(slot.weeklyMin)}/week · ~${weeks} week${weeks === 1 ? "" : "s"} · Ctrl+Z undoes`,
+    echo: `${idea.title} · starts ${shortDay(slot.start, plan.today)} · ${hoursLabel(slot.weeklyMin)}/week · ~${weeks} week${weeks === 1 ? "" : "s"} · Ctrl+Z undoes`,
   };
 }
 

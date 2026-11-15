@@ -65,6 +65,10 @@
   --leaf: #8fd6a8;
   --on-loud: #141414;
   --danger-loud: #e5484d;
+  /* Hover shades of the loud buttons, and soft ink on the yellow Now card. */
+  --yellow-hover: #ffc240;
+  --orange-hover: #d95a00;
+  --on-yellow-soft: #4a3608;
 
   /* Area colours (blocks, chips, bars). Text on them is --area-ink. */
   --area-work: var(--orange);
@@ -77,12 +81,14 @@
   --area-rest: var(--raised);
   --area-ink: #141414;
 
-  /* Shape and space. */
+  /* Shape and space. One radius per kind: list rows and fields 14, cards on
+     the canvas 20, panels 26, the canvas 28, pills round. */
   --radius-sm: 10px;
   --radius: 14px;
+  --radius-tile: 20px;
   --radius-card: 26px;
   --radius-canvas: 28px;
-  --radius-event: 18px;
+  --radius-event: var(--radius-tile);
   --pill: 999px;
   --space-1: 4px;
   --space-2: 8px;
@@ -91,6 +97,8 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-7: 32px;
+  /* The gap between panels and blocks, and around the frame. */
+  --frame-gap: 14px;
 
   --font-sans:
     "Bricolage Grotesque Variable", "Bricolage Grotesque", system-ui, "Segoe UI", sans-serif;
@@ -150,6 +158,8 @@
   --bar: #e4e4df;
   --bar-top: #d3d3cd;
   --danger: #c8333a;
+  /* Yellow text is unreadable on white: warnings turn orange here. */
+  --warning: var(--orange);
   --success: var(--mint-ink);
   --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--canvas-ink);
 }

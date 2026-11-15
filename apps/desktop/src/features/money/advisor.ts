@@ -5,6 +5,7 @@
  * names only, never birr (see MONEY in features/ai/touchpoints.ts). Pure.
  */
 import { type Op } from "../../kernel/db";
+import { showDate } from "../../kernel/dates";
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
 import { type AccountRow, balanceOf, transferOps } from "./accounts";
@@ -116,8 +117,8 @@ export function findings(input: {
       .sort((a, b) => b.balance - a.balance)[0];
     const names =
       bills.length === 1
-        ? `${first.regular.name} ${formatAmount(first.left)} is due ${first.date === today ? "today" : `on ${first.date}`}`
-        : `${bills.map((item) => item.regular.name).join(" and ")} (${formatAmount(owed)}) are due by ${bills[bills.length - 1]?.date ?? first.date}`;
+        ? `${first.regular.name} ${formatAmount(first.left)} is due ${first.date === today ? "today" : `on ${showDate(first.date, today)}`}`
+        : `${bills.map((item) => item.regular.name).join(" and ")} (${formatAmount(owed)}) are due by ${showDate(bills[bills.length - 1]?.date ?? first.date, today)}`;
     out.push({
       key: `bill_short:${from.id}:${first.date}`,
       kind: "bill_short",

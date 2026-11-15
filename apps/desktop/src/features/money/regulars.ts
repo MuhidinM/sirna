@@ -5,7 +5,7 @@
  * the date it was due. Pure and tested, integer santim, logical dates.
  */
 import { type Op } from "../../kernel/db";
-import { logicalDate } from "../../kernel/dates";
+import { logicalDate, showDate } from "../../kernel/dates";
 import { formatAmount, type Santim } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
 import { monthOf, previousMonthStart } from "./money";
@@ -374,7 +374,7 @@ export function settleOps(item: DueItem, today: string, nowMs: number, id: strin
 }
 
 /** Lines for the brief and Today: bills due or late, pay late. */
-export function dueLines(items: DueItem[]): string[] {
+export function dueLines(items: DueItem[], today?: string): string[] {
   return items
     .filter((item) =>
       item.regular.kind === "bill"
@@ -383,8 +383,8 @@ export function dueLines(items: DueItem[]): string[] {
     )
     .map((item) =>
       item.regular.kind === "bill"
-        ? `${item.regular.name} ${formatAmount(item.left)} ${item.state === "late" ? `was due ${item.date}` : "due today"}`
-        : `${item.regular.job ?? item.regular.name} pay is late: ${formatAmount(item.left)} expected on ${item.date}`,
+        ? `${item.regular.name} ${formatAmount(item.left)} ${item.state === "late" ? `was due ${showDate(item.date, today)}` : "due today"}`
+        : `${item.regular.job ?? item.regular.name} pay is late: ${formatAmount(item.left)} expected on ${showDate(item.date, today)}`,
     );
 }
 

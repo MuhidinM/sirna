@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeClock } from "./clock";
-import { localDate, logicalDate } from "./dates";
+import { localDate, logicalDate, showDate } from "./dates";
 
 // Addis Ababa is UTC+3, so local 03:00 on 11 Nov is 00:00 UTC on 11 Nov.
 const at = (iso: string) => Date.parse(iso);
@@ -36,5 +36,15 @@ describe("logicalDate", () => {
     expect(logicalDate(clock.now())).toBe("2026-11-10");
     clock.advance(30 * 60 * 1000);
     expect(logicalDate(clock.now())).toBe("2026-11-11");
+  });
+});
+
+describe("showDate", () => {
+  it("reads as people write dates", () => {
+    expect(showDate("2026-11-16", "2026-11-15")).toBe("16 Nov");
+    expect(showDate("2027-01-03", "2026-11-15")).toBe("3 Jan 2027");
+    expect(showDate("2026-11-16", "2026-11-15", { weekday: true })).toBe("Mon 16 Nov");
+    expect(showDate("2026-11-16")).toBe("16 Nov");
+    expect(showDate("not a date")).toBe("not a date");
   });
 });

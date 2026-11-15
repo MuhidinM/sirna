@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { showDate } from "../kernel/dates";
 import { type Op, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import { isoWeekday } from "../features/plan/dayplan";
@@ -64,7 +65,9 @@ export function WeekAhead({ today }: { today: string }) {
       <div className="pw-section-head">
         <div>
           <h2 id="week-ahead">{sunday ? "Plan next week" : "This week's plan"}</h2>
-          <p className="meta">Week of {monday} · every step can be skipped.</p>
+          <p className="meta">
+            Week of {showDate(monday, today, { weekday: true })} · every step can be skipped.
+          </p>
         </div>
       </div>
       {error && (
@@ -90,6 +93,7 @@ export function WeekAhead({ today }: { today: string }) {
                     {(["task", "note", "drop"] as const).map((choice) => (
                       <Button
                         key={choice}
+                        className={choice === "drop" ? "btn-ghost btn-danger" : undefined}
                         onClick={() => void write(sortInboxOps(note, choice, () => ulid()))}
                       >
                         {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
@@ -144,7 +148,7 @@ export function WeekAhead({ today }: { today: string }) {
                 </label>
               ))}
               <div className="pw-actions">
-                <Button type="submit" primary>
+                <Button type="submit" className="btn-orange">
                   Save
                 </Button>
                 {!plan.skipped.includes("outcomes") && plan.outcomes.length === 0 && (

@@ -21,7 +21,7 @@ export function InsightList({ today = logicalDate(systemClock.now()) }: { today?
   const found = useInsights(today);
   if (!found) return null;
   if (found.length === 0)
-    return <p className="meta">Insights appear after a couple of weeks of focus sessions.</p>;
+    return <p className="empty">Insights appear after a couple of weeks of focus sessions.</p>;
   return (
     <ul className="insights">
       {found.map((insight) => (
