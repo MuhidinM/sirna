@@ -4,6 +4,7 @@ import { logicalDate } from "../kernel/dates";
 import { formatAmount } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
 import { transferOps } from "../features/money/accounts";
+import { ruleText } from "../features/money/regulars";
 import { loanEchoText, loanOps } from "../features/money/loans";
 import { type MoneyItem, type Parsed } from "./parse";
 import { weekdayName } from "./when";
@@ -94,6 +95,7 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
             area_id: parsed.area ?? null,
             waiting_on: parsed.waitingOn ?? null,
             follow_up_date: parsed.waitingOn ? (parsed.dueDate ?? null) : null,
+            repeat_json: parsed.repeat ? JSON.stringify(parsed.repeat) : null,
             origin: "capture",
           },
         },
@@ -226,7 +228,8 @@ export function echo(
       const size = parsed.estimateMin
         ? ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
         : "";
-      return `Task${when}${size}${area}`;
+      const repeat = parsed.repeat ? ` · ${ruleText(parsed.repeat)}` : "";
+      return `Task${when}${repeat}${size}${area}`;
     }
     case "transfer":
       return `Moved ${formatAmount(parsed.amount)} · ${parsed.fromName} → ${parsed.toName}`;

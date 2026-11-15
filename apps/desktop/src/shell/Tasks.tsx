@@ -11,6 +11,7 @@ import {
   checkTask,
   COUNTS_SQL,
   filterTasks,
+  repeatText,
   statusOps,
   stepLabel,
   type TaskDraft,
@@ -162,6 +163,14 @@ function TaskForm({
           <input type="date" value={draft.due} onChange={(e) => set({ due: e.target.value })} />
         </label>
         <label className="field">
+          <span>Repeat</span>
+          <input
+            value={draft.repeat}
+            placeholder="every fri, monthly 1"
+            onChange={(e) => set({ repeat: e.target.value })}
+          />
+        </label>
+        <label className="field">
           <span>Hours it takes</span>
           <input
             inputMode="decimal"
@@ -260,6 +269,7 @@ function TaskItem({
           <span className="meta">on {row.planned_date}</span>
         )}
         {row.due_date && <span className="meta">due {row.due_date}</span>}
+        {row.repeat_json && <span className="meta">↻ {repeatText(row.repeat_json)}</span>}
         {row.deadline_stale === 1 && row.due_date && (
           <span
             className="meta warn-text"
