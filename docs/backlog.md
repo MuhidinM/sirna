@@ -146,3 +146,14 @@ Milestone 2 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | T-060 | [#122](https://github.com/MuhidinM/sirna/issues/122) | Expected pay per job, with late pay flagged     | R-MON-05 | M    | done   |
 | T-061 | [#123](https://github.com/MuhidinM/sirna/issues/123) | Keep track of money lent and owed               | R-MON-06 | M    | done   |
 | T-062 | [#124](https://github.com/MuhidinM/sirna/issues/124) | Safe to spend and the emergency fund            | R-MON-07 | M    | done   |
+
+## M11 — The advisor
+
+Milestone 3 of [docs/proposals/money-and-planning.md](proposals/money-and-planning.md).
+
+| ID    | Issue                                                | Task                                                       | Reqs               | Size | Status |
+| ----- | ---------------------------------------------------- | ---------------------------------------------------------- | ------------------ | ---- | ------ |
+| T-063 | [#130](https://github.com/MuhidinM/sirna/issues/130) | A spending cap on every category, with suggested amounts   | R-MON-08           | S    | done   |
+| T-064 | [#131](https://github.com/MuhidinM/sirna/issues/131) | An advisor: at most two findings a day, each with a button | R-MON-09, R-AI-02  | M    | todo   |
+| T-065 | [#132](https://github.com/MuhidinM/sirna/issues/132) | Can I afford it? Fine, Tight or Not now                    | R-MON-10           | S    | todo   |
+| T-066 | [#133](https://github.com/MuhidinM/sirna/issues/133) | A month review on the first Sunday                         | R-MON-11, R-CHK-04 | M    | todo   |

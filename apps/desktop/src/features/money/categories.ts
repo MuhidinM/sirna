@@ -11,11 +11,12 @@ export interface CategoryRow {
   kind: "expense" | "income";
   deleted_at: number | null;
   uses: number;
+  cap_minor: number | null;
 }
 
 /** Every category, hidden ones too, with how many entries use it. */
 export const ALL_CATEGORIES_SQL = `
-  SELECT c.id, c.name, c.kind, c.deleted_at,
+  SELECT c.id, c.name, c.kind, c.deleted_at, c.cap_minor,
          (SELECT count(*) FROM money_txns m
           WHERE m.category_id = c.id AND m.deleted_at IS NULL) AS uses
   FROM money_categories c
