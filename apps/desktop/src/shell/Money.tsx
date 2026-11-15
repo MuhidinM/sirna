@@ -113,6 +113,7 @@ import {
   shownToday,
 } from "../features/money/advisor";
 import { type Afford, afford } from "../features/money/afford";
+import { monthReview } from "../features/money/review";
 import { useAsk } from "../features/ai/ask";
 import { MONEY } from "../features/ai/touchpoints";
 import { Savings } from "./Savings";
@@ -292,6 +293,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
   const empty = summary.in === 0 && summary.out === 0 && summary.saved === 0;
   return (
     <>
+      {!current && <MonthReviewCard month={month} today={today} />}
       <div className="tiles">
         <div className="card tile">
           <span className="meta">In</span>
@@ -593,6 +595,56 @@ function AffordBox({ today, summary }: { today: string; summary: MonthSummary })
             ))}
           </ul>
         </div>
+      )}
+    </section>
+  );
+}
+
+/** The month review (T-066): the month that `month` starts, seen from `today`. */
+export function MonthReviewCard({ month, today }: { month: string; today: string }) {
+  const { summary, loading } = useMonth(month, today);
+  const caps = useLiveQuery<{ id: string; name: string; cap_minor: number }>(CAPS_SQL);
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const { people, loading: loansLoading } = useLoans();
+  if (loading || caps.loading || accounts.loading || loansLoading) return null;
+  const review = monthReview({ summary, caps: caps.rows, accounts: accounts.rows, people });
+  if (review.in === 0 && review.out === 0) return null;
+  return (
+    <section className="card" aria-labelledby="month-review">
+      <h2 id="month-review">{monthLabel(monthOf(month).key)} in review</h2>
+      <p>
+        {formatAmount(review.in)} in · {formatAmount(review.out)} out
+        {review.savingsRate !== null && (
+          <span className="meta"> · saved {review.savingsRate}% of what came in</span>
+        )}
+      </p>
+      {review.changes.length > 0 && (
+        <ul className="plain-list">
+          {review.changes.map((change) => (
+            <li key={change.name} className="row money-line">
+              <span>{change.name}</span>
+              <span className={change.diff > 0 ? "warn-text" : "money-in"}>
+                {change.diff > 0 ? "+" : "−"}
+                {formatAmount(Math.abs(change.diff))} against your usual{" "}
+                {formatAmount(change.usual)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {review.capsOver.length > 0 && (
+        <p className="meta">
+          Over cap:{" "}
+          {review.capsOver
+            .map((cap) => `${cap.name} (${formatAmount(cap.spent)} of ${formatAmount(cap.cap)})`)
+            .join(", ")}
+        </p>
+      )}
+      {review.netWorth !== null && (
+        <p className="meta">
+          Net worth now: {formatAmount(review.netWorth)} (accounts, plus owed to you, less what you
+          owe)
+        </p>
       )}
     </section>
   );
