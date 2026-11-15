@@ -1144,3 +1144,22 @@ input[type="number"] {
 .money .task-meta select {
   min-width: 9rem;
 }
+
+/* Caps (T-063). */
+.cap-line {
+  padding: var(--space-2) 0;
+}
+
+.cap-bar {
+  position: relative;
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.cap-pace {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  background: var(--text-secondary);
+}

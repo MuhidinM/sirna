@@ -102,8 +102,9 @@ import {
   mergeCategoryOps,
   renameCategoryOps,
 } from "../features/money/categories";
+import { acceptAllOps, CAPS_SQL, capOps, capStatus, suggestCap } from "../features/money/caps";
 import { Savings } from "./Savings";
-import { Button } from "./ui";
+import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 interface Category extends Record<string, string> {
@@ -364,8 +365,60 @@ function MonthView({ month, today }: { month: string; today: string }) {
         </section>
       )}
 
+      {current && <CapsCard summary={summary} />}
+
       <Savings />
     </>
+  );
+}
+
+/** Caps this month (T-063): spent against each cap, with where the month is. */
+function CapsCard({ summary }: { summary: ReturnType<typeof monthSummary> }) {
+  const caps = useLiveQuery<{ id: string; name: string; cap_minor: number }>(CAPS_SQL);
+  if (caps.loading) return null;
+  if (caps.rows.length === 0)
+    return (
+      <p className="meta">
+        No caps yet. Set one per category under Categories; Sirna suggests amounts from your usual
+        month.
+      </p>
+    );
+  const spent = new Map(summary.categories.map((line) => [line.id, line.spent]));
+  return (
+    <section className="card" aria-labelledby="money-caps">
+      <h2 id="money-caps">Caps this month</h2>
+      <ul className="plain-list caps">
+        {caps.rows.map((cap) => {
+          const used = spent.get(cap.id) ?? 0;
+          const status = capStatus(used, cap.cap_minor, summary.day, summary.days);
+          return (
+            <li key={cap.id} className="cap-line">
+              <span className="row money-line">
+                <span>{cap.name}</span>
+                <span className={status.over || status.ahead ? "warn-text" : "meta"}>
+                  {formatAmount(used)} of {formatAmount(cap.cap_minor)}
+                  {status.over
+                    ? ` · over by ${formatAmount(used - cap.cap_minor)}`
+                    : ` · ${formatAmount(status.left)} left${status.ahead ? ", spending fast" : ""}`}
+                </span>
+              </span>
+              <span className="cap-bar">
+                <Bar
+                  value={status.share}
+                  label={`${cap.name} ${Math.round(status.share * 100)}% of its cap`}
+                />
+                <span
+                  className="cap-pace"
+                  style={{ left: `${status.pace * 100}%` }}
+                  title={`Day ${summary.day} of ${summary.days}`}
+                />
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="meta">The mark is how far through the month you are.</p>
+    </section>
   );
 }
 
@@ -724,8 +777,18 @@ function LedgerView({ month, today }: { month: string; today: string }) {
   );
 }
 
-function CategoryItem({ row, all }: { row: CategoryRow; all: CategoryRow[] }) {
+function CategoryItem({
+  row,
+  all,
+  usual,
+}: {
+  row: CategoryRow;
+  all: CategoryRow[];
+  usual: number | null;
+}) {
   const [name, setName] = useState(row.name);
+  const [capText, setCapText] = useState("");
+  const suggested = suggestCap(usual);
   const [into, setInto] = useState("");
   const [error, setError] = useState<string | null>(null);
   const write = (ops: Op[]) =>
@@ -795,6 +858,40 @@ function CategoryItem({ row, all }: { row: CategoryRow; all: CategoryRow[] }) {
         )}
         <Button onClick={() => void write(hideCategoryOps(row.id))}>Hide</Button>
       </span>
+      {row.kind === "expense" && (
+        <span className="row task-meta">
+          <span className="meta">
+            {row.cap_minor !== null ? `Cap ${formatAmount(row.cap_minor)} a month` : "No cap"}
+          </span>
+          <input
+            className="category-name"
+            inputMode="decimal"
+            aria-label={`Monthly cap for ${row.name}`}
+            placeholder={suggested !== null ? `e.g. ${birr(suggested)}` : "Monthly cap"}
+            value={capText}
+            onChange={(e) => setCapText(e.target.value)}
+          />
+          {capText.trim() && (
+            <Button
+              onClick={() => {
+                const minor = parseAmount(capText);
+                if (minor === null || minor <= 0) setError("A cap like 4,000.");
+                else void write(capOps(row.id, minor)).then(() => setCapText(""));
+              }}
+            >
+              Set cap
+            </Button>
+          )}
+          {!capText.trim() && suggested !== null && suggested !== row.cap_minor && (
+            <Button onClick={() => void write(capOps(row.id, suggested))}>
+              Use {birr(suggested)} (your usual)
+            </Button>
+          )}
+          {row.cap_minor !== null && (
+            <Button onClick={() => void write(capOps(row.id, null))}>No cap</Button>
+          )}
+        </span>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
@@ -804,9 +901,18 @@ function CategoryItem({ row, all }: { row: CategoryRow; all: CategoryRow[] }) {
   );
 }
 
-function CategoriesView() {
+function CategoriesView({ today }: { today: string }) {
   const all = useLiveQuery<CategoryRow & Record<string, string | number | null>>(
     ALL_CATEGORIES_SQL,
+  );
+  const history = useLiveQuery<HistoryRow & Record<string, string | number | null>>(
+    HISTORY_SQL,
+    historyParams(today),
+  );
+  const usual = usualByCategory(history.rows);
+  const suggestions = acceptAllOps(
+    all.rows.filter((row) => row.deleted_at === null),
+    usual,
   );
   const [name, setName] = useState("");
   const [kind, setKind] = useState<CategoryRow["kind"]>("expense");
@@ -855,6 +961,24 @@ function CategoriesView() {
           </span>
         )}
       </form>
+      {suggestions.length > 0 && (
+        <p className="row">
+          <span className="meta">
+            {suggestions.length} categor{suggestions.length === 1 ? "y has" : "ies have"} no cap
+            yet. Start with your usual month for each:
+          </span>
+          <Button
+            primary
+            onClick={() =>
+              void transact("user", suggestions, "caps")
+                .then(() => setNote("Caps set from your usual month. Change any of them below."))
+                .catch((failure: unknown) => setNote(`Couldn't set them: ${message(failure)}`))
+            }
+          >
+            Use all suggestions
+          </Button>
+        </p>
+      )}
       {(["expense", "income"] as const).map((group) => (
         <section
           key={group}
@@ -866,7 +990,12 @@ function CategoriesView() {
             {shown
               .filter((row) => row.kind === group)
               .map((row) => (
-                <CategoryItem key={row.id} row={row} all={all.rows} />
+                <CategoryItem
+                  key={row.id}
+                  row={row}
+                  all={all.rows}
+                  usual={usual.get(row.id) ?? null}
+                />
               ))}
           </ul>
         </section>
@@ -1799,7 +1928,7 @@ export function Money() {
       {tab === "regulars" && <RegularsView today={today} />}
       {tab === "loans" && <LoansView today={today} />}
       {tab === "accounts" && <AccountsView today={today} />}
-      {tab === "categories" && <CategoriesView />}
+      {tab === "categories" && <CategoriesView today={today} />}
     </main>
   );
 }
