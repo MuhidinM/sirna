@@ -1,3 +1,5 @@
+import "../theme/pages/settings.css";
+
 import { useState } from "react";
 
 import { type Op, transact } from "../kernel/db";
@@ -62,9 +64,15 @@ export function Missed({
     );
   const shown = missed.rows.slice(-SHOWN);
   return (
-    <section aria-labelledby="missed">
-      <h2 id="missed">Missed</h2>
-      <ul className="task-list">
+    <section className="missed" aria-labelledby="missed">
+      <div className="missed-head">
+        <h2 id="missed">Missed</h2>
+        <span className="badge" aria-label={`${shown.length} missed`}>
+          {shown.length}
+        </span>
+        <span className="missed-sub">Ended with nothing done</span>
+      </div>
+      <ul className="missed-rows">
         {shown.map((block) => {
           const gap = freeGap(
             blocks.filter((other) => other.id !== block.id),
@@ -73,24 +81,26 @@ export function Missed({
             until,
           );
           return (
-            <li key={block.id} className="task">
-              <span>
-                {block.task_title ?? block.title}
-                <span className="meta">
-                  {" "}
-                  · {clock.format(block.start_at)}–{clock.format(block.end_at)}
-                </span>
+            <li key={block.id} className="missed-row">
+              <span className="missed-time">
+                {clock.format(block.start_at)}–{clock.format(block.end_at)}
               </span>
-              <span className="row task-meta">
+              <span className="missed-title">{block.task_title ?? block.title}</span>
+              <span className="missed-actions">
                 {gap !== null && (
-                  <Button onClick={() => write(laterTodayOps(block, gap), block.id)}>
+                  <Button
+                    className="missed-later"
+                    onClick={() => write(laterTodayOps(block, gap), block.id)}
+                  >
                     Later today ({clock.format(gap)})
                   </Button>
                 )}
                 <Button onClick={() => write(tomorrowOps(block, shiftDate(today, 1)), block.id)}>
                   Tomorrow
                 </Button>
-                <Button onClick={() => write(skipOps(block), block.id)}>Skip</Button>
+                <Button className="btn-ghost" onClick={() => write(skipOps(block), block.id)}>
+                  Skip
+                </Button>
               </span>
             </li>
           );

@@ -1,0 +1,221 @@
+/* Savings goals as night scenes (docs/design.md → Savings tree). */
+
+.savings .goals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.savings .goals .goal {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #161d26;
+  color: #e8ecef;
+}
+
+.goal-scene {
+  position: relative;
+  height: clamp(240px, 32vw, 340px);
+  background:
+    radial-gradient(120% 90% at 50% 0%, #1b2430 0%, transparent 60%),
+    linear-gradient(180deg, #161d26 0%, #141a22 100%);
+}
+
+.tree-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tree-mark {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  fill: #5d6a66;
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-mark.reached {
+  fill: #a9c3a3;
+}
+
+.tree-goal {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  fill: #6f7680;
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-sparkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tree-twinkle 4s ease-in-out infinite;
+}
+
+@keyframes tree-twinkle {
+  0%,
+  100% {
+    opacity: 0.95;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.45;
+    transform: scale(0.75);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-sparkle {
+    animation: none;
+  }
+}
+
+.goal-top {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.goal-top h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #f3f5f6;
+}
+
+.goal-edit {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 8%);
+  color: #e8ecef;
+  cursor: pointer;
+  flex: none;
+}
+
+.goal-edit:hover {
+  background: rgb(255 255 255 / 16%);
+}
+
+.goal-amount {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.goal-amount strong {
+  font-size: clamp(1.25rem, 2.6vw, 1.75rem);
+  font-weight: 700;
+  color: #ecc979;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  text-shadow: 0 2px 10px rgb(0 0 0 / 50%);
+}
+
+.goal-amount span {
+  font-size: var(--text-sm);
+  color: #b9c0c6;
+  text-shadow: 0 1px 6px rgb(0 0 0 / 60%);
+}
+
+.goal-controls {
+  display: grid;
+  gap: var(--space-2);
+  padding: 14px 18px 16px;
+  border-top: 1px solid rgb(255 255 255 / 6%);
+  background: #141a22;
+}
+
+.goal-controls .meta {
+  color: #a9b2ba;
+}
+
+.goal-pace {
+  margin: 0;
+}
+
+.savings .goal-controls input,
+.savings .new-goal input {
+  width: 9rem;
+  background: #1f2832;
+  border-color: rgb(255 255 255 / 8%);
+  color: #f3f5f6;
+}
+
+.goal-controls .btn-ghost {
+  color: #e8ecef;
+}
+
+.goal-controls .btn-ghost:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+.savings .new-goal {
+  margin-bottom: var(--space-4);
+}
+
+.savings .garden {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.savings .garden-tree {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 72px;
+}
+
+.savings .garden-tree .tree-svg {
+  position: static;
+  width: 64px;
+  height: 92px;
+}
+
+.savings .panel-sub code,
+.savings code {
+  font-size: 0.8em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--chip);
+}
+
+@media (max-width: 719px) {
+  .goal-amount {
+    right: 14px;
+    bottom: 12px;
+  }
+
+  .goal-top {
+    left: 14px;
+    right: 12px;
+  }
+}
+
+.goal-picture {
+  position: absolute;
+  inset: 0;
+}

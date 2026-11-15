@@ -31,41 +31,62 @@ function ratio(a: string, b: string): number {
 }
 
 const themes = {
-  dark: block('[data-theme="dark"]'),
-  light: block('[data-theme="light"]'),
+  night: block('[data-theme="night"] {'),
+  forest: block('[data-theme="forest"] {'),
 };
-const areas = block(":root {\n  /* Area");
+const shared = block(":root {\n  /* The white working surface");
 
 describe.each(Object.entries(themes))("%s theme", (_, t) => {
-  it.each(["surface-0", "surface-1", "surface-2"])("body text is readable on %s", (surface) => {
-    expect(ratio(t["text-primary"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(t["text-secondary"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+  it.each(["frame", "panel", "raised"])("text is readable on %s", (surface) => {
+    expect(ratio(t["ink"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(t["ink-2"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("muted text and the accent are visible as large text or marks", () => {
-    expect(ratio(t["text-muted"] ?? "", t["surface-0"] ?? "")).toBeGreaterThanOrEqual(3);
-    expect(ratio(t["accent"] ?? "", t["surface-0"] ?? "")).toBeGreaterThanOrEqual(3);
+  it("hints and chart bars are visible", () => {
+    expect(ratio(t["ink-3"] ?? "", t["panel"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio(t["bar-top"] ?? "", t["panel"] ?? "")).toBeGreaterThanOrEqual(1.3);
   });
 
-  it("text on the accent button is readable", () => {
-    expect(ratio(t["on-accent"] ?? "", t["accent"] ?? "")).toBeGreaterThanOrEqual(4.5);
+  it("the yellow and the cream stand out from the panel", () => {
+    expect(ratio(shared["yellow"] ?? "", t["panel"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio(shared["cream"] ?? "", t["panel"] ?? "")).toBeGreaterThanOrEqual(3);
   });
 });
 
-describe("area colours", () => {
-  it.each(
-    Object.keys(areas).filter(
-      (name) => name.startsWith("area-") && name !== "area-ink" && name !== "area-rest",
-    ),
-  )("%s carries readable dark text", (name) => {
-    expect(ratio(areas["area-ink"] ?? "", areas[name] ?? "")).toBeGreaterThanOrEqual(4.5);
+describe("the white canvas", () => {
+  it.each(["canvas", "canvas-2"])("text is readable on %s", (surface) => {
+    expect(ratio(shared["canvas-ink"] ?? "", shared[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(shared["canvas-ink-2"] ?? "", shared[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("hints are visible", () => {
+    expect(ratio(shared["canvas-ink-3"] ?? "", shared["canvas"] ?? "")).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("the loud colours", () => {
+  it.each(["yellow", "orange", "purple", "pink", "cream", "mint", "sky", "leaf"])(
+    "%s carries readable dark text",
+    (name) => {
+      expect(ratio(shared["on-loud"] ?? "", shared[name] ?? "")).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("white titles on orange and pink are readable as large text", () => {
+    expect(ratio("#ffffff", shared["orange"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio("#ffffff", shared["pink"] ?? "")).toBeGreaterThanOrEqual(2.9);
+  });
+
+  it("the mint ink reads on mint", () => {
+    expect(ratio(shared["mint-ink"] ?? "", shared["mint"] ?? "")).toBeGreaterThanOrEqual(3);
   });
 });
 
 describe("themeFromSetting", () => {
-  it("defaults to dark", () => {
-    expect(themeFromSetting(undefined)).toBe("dark");
-    expect(themeFromSetting("not json")).toBe("dark");
-    expect(themeFromSetting('"light"')).toBe("light");
+  it("reads Night by default and Forest when chosen", () => {
+    expect(themeFromSetting(undefined)).toBe("night");
+    expect(themeFromSetting("not json")).toBe("night");
+    expect(themeFromSetting('"light"')).toBe("night");
+    expect(themeFromSetting('"forest"')).toBe("forest");
   });
 });

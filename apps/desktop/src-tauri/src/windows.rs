@@ -8,8 +8,8 @@ pub const MAIN_LABEL: &str = "main";
 pub const CAPTURE_LABEL: &str = "capture";
 pub const SETUP_LABEL: &str = "setup";
 
-/// The theme's background, so a new window never flashes white.
-pub const BACKGROUND: Color = Color(0x12, 0x12, 0x12, 0xff);
+/// The Night frame (docs/design.md), so a new window never flashes white.
+pub const BACKGROUND: Color = Color(0x0e, 0x0e, 0x0e, 0xff);
 
 /// Building a window inside a sync command or an event handler deadlocks on
 /// Windows, so every caller (tray, single-instance, toasts, hotkey) goes

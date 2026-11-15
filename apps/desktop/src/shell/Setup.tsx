@@ -1,3 +1,5 @@
+import "../theme/pages/plan-routine.css";
+
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
@@ -13,6 +15,7 @@ import {
   type Weekday,
 } from "../features/plan/routine";
 import { setupOps, type SetupChoices } from "../features/plan/setup";
+import { IconArrowLeft, IconArrowRight, IconCheck } from "./icons";
 import { Button } from "./ui";
 
 const DAYS: [Weekday, string][] = [
@@ -34,6 +37,8 @@ const AREAS: { id: string; name: string; hours: number; note?: string }[] = [
   { id: "admin", name: "Life admin", hours: 2.3, note: "email checks, errands" },
 ];
 
+const STEPS = ["Your day", "Your jobs", "Your week", "Two small things"];
+
 function DayPicker({
   value,
   onChange,
@@ -44,7 +49,7 @@ function DayPicker({
   label: string;
 }) {
   return (
-    <fieldset className="days">
+    <fieldset className="days rt-days">
       <legend className="visually-hidden">{label}</legend>
       {DAYS.map(([day, name]) => (
         <label key={day} className={value.includes(day) ? "day on" : "day"}>
@@ -82,6 +87,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [startWithWindows, setStartWithWindows] = useState(true);
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState(0);
 
   // Running setup again starts from what you chose last time.
   useEffect(() => {
@@ -152,6 +158,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     const emailChecks = parseTimes(emailText);
     if (!emailChecks) {
       setError('Email check times: use times like "10:00, 15:00", or leave it empty for none.');
+      setStep(2);
       return;
     }
     setSaving(true);
@@ -217,180 +224,260 @@ export function Setup({ onDone }: { onDone: () => void }) {
     }
   }
 
+  const last = STEPS.length - 1;
+
   return (
-    <main className="setup">
-      <h1>Set up your week</h1>
-      <p className="meta">About 5 minutes. You can change all of this later.</p>
+    <main className="setup su-page">
+      <section className="canvas su-canvas" aria-labelledby="su-title">
+        <header className="su-head">
+          <h1 id="su-title" className="page-title">
+            Set up <span className="soft">your week</span>
+          </h1>
+          <p className="meta">About 5 minutes. You can change all of this later.</p>
+        </header>
 
-      <section aria-labelledby="day">
-        <h2 id="day">Your day</h2>
-        <div className="row">
-          <label>
-            Wake <input type="time" value={wake} onChange={(e) => setWake(e.target.value)} />
-          </label>
-          <label>
-            Night review{" "}
-            <input type="time" value={review} onChange={(e) => setReview(e.target.value)} />
-          </label>
-          <label>
-            Hard stop{" "}
-            <input type="time" value={hardStop} onChange={(e) => setHardStop(e.target.value)} />
-          </label>
-        </div>
-      </section>
+        <ol className="su-steps" aria-label="Steps">
+          {STEPS.map((name, index) => (
+            <li key={name}>
+              <button
+                type="button"
+                className={
+                  index === step ? "su-step current" : index < step ? "su-step done" : "su-step"
+                }
+                aria-current={index === step ? "step" : undefined}
+                onClick={() => setStep(index)}
+              >
+                <span className="su-step-n" aria-hidden="true">
+                  {index < step ? <IconCheck size={14} /> : index + 1}
+                </span>
+                {name}
+              </button>
+            </li>
+          ))}
+        </ol>
 
-      <section aria-labelledby="jobs">
-        <h2 id="jobs">Your jobs</h2>
-        {jobs.map((job, index) => (
-          <div className="card job" key={job.areaId}>
-            <label>
-              <input
-                type="checkbox"
-                checked={job.enabled}
-                onChange={(e) => updateJob(index, { enabled: e.target.checked })}
-              />
-              <input
-                aria-label="Job name"
-                value={job.name}
-                onChange={(e) => updateJob(index, { name: e.target.value })}
-              />
-            </label>
-            <DayPicker
-              value={job.days}
-              onChange={(days) => updateJob(index, { days })}
-              label={`${job.name} days`}
-            />
-            <div className="row">
-              <label>
-                From{" "}
-                <input
-                  type="time"
-                  value={job.start}
-                  onChange={(e) => updateJob(index, { start: e.target.value })}
-                />
+        {step === 0 && (
+          <section aria-labelledby="day" className="su-section">
+            <h2 id="day">Your day</h2>
+            <p className="meta">
+              When you get up, when you look back at the day, and when work stops.
+            </p>
+            <div className="su-times">
+              <label className="su-time">
+                <span>Wake</span>
+                <input type="time" value={wake} onChange={(e) => setWake(e.target.value)} />
               </label>
-              <label>
-                To{" "}
-                <input
-                  type="time"
-                  value={job.end}
-                  onChange={(e) => updateJob(index, { end: e.target.value })}
-                />
+              <label className="su-time">
+                <span>Night review</span>
+                <input type="time" value={review} onChange={(e) => setReview(e.target.value)} />
+              </label>
+              <label className="su-time">
+                <span>Hard stop</span>
+                <input type="time" value={hardStop} onChange={(e) => setHardStop(e.target.value)} />
               </label>
             </div>
-          </div>
-        ))}
-      </section>
+          </section>
+        )}
 
-      <section aria-labelledby="areas">
-        <h2 id="areas">What else gets your time each week</h2>
-        <ul className="areas">
-          {AREAS.map((area) => {
-            const state = areas[area.id] ?? { on: true, hours: area.hours };
-            return (
-              <li key={area.id}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={state.on}
-                    onChange={(e) =>
-                      setAreas({ ...areas, [area.id]: { ...state, on: e.target.checked } })
-                    }
+        {step === 1 && (
+          <section aria-labelledby="jobs" className="su-section">
+            <h2 id="jobs">Your jobs</h2>
+            <p className="meta">
+              Untick a job you don&apos;t have. Sirna plans around these hours.
+            </p>
+            <div className="su-jobs">
+              {jobs.map((job, index) => (
+                <div
+                  className={job.enabled ? "card job su-job" : "card job su-job off"}
+                  key={job.areaId}
+                >
+                  <label className="su-job-name">
+                    <input
+                      type="checkbox"
+                      checked={job.enabled}
+                      onChange={(e) => updateJob(index, { enabled: e.target.checked })}
+                    />
+                    <input
+                      aria-label="Job name"
+                      value={job.name}
+                      onChange={(e) => updateJob(index, { name: e.target.value })}
+                    />
+                  </label>
+                  <DayPicker
+                    value={job.days}
+                    onChange={(days) => updateJob(index, { days })}
+                    label={`${job.name} days`}
                   />
-                  {area.name}
-                </label>
-                <label className="hours">
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.5}
-                    value={state.hours}
-                    aria-label={`${area.name} hours a week`}
-                    onChange={(e) =>
-                      setAreas({ ...areas, [area.id]: { ...state, hours: Number(e.target.value) } })
-                    }
-                  />
-                  h / week
-                </label>
-                {area.note && <span className="meta">{area.note}</span>}
-              </li>
-            );
-          })}
-        </ul>
-        <div className="row">
-          <span>Gym days</span>
-          <DayPicker value={gymDays} onChange={setGymDays} label="Gym days" />
-          <label>
-            at <input type="time" value={gymTime} onChange={(e) => setGymTime(e.target.value)} />
-          </label>
-        </div>
-        <div className="row">
-          <label>
-            Check email at{" "}
-            <input
-              value={emailText}
-              aria-label="Email check times"
-              placeholder="10:00, 15:00"
-              onChange={(e) => setEmailText(e.target.value)}
-            />
-          </label>
-          <span className="meta">10-minute reminders on workdays; leave empty for none</span>
-        </div>
-        <div className="row">
-          <label>
-            Rest day{" "}
-            <select value={restDay} onChange={(e) => setRestDay(Number(e.target.value) as Weekday)}>
-              {DAYS.map(([day, name]) => (
-                <option key={day} value={day}>
-                  {name}
-                </option>
+                  <div className="su-pair">
+                    <label className="su-field">
+                      <span>From</span>
+                      <input
+                        type="time"
+                        value={job.start}
+                        onChange={(e) => updateJob(index, { start: e.target.value })}
+                      />
+                    </label>
+                    <label className="su-field">
+                      <span>To</span>
+                      <input
+                        type="time"
+                        value={job.end}
+                        onChange={(e) => updateJob(index, { end: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
               ))}
-            </select>
-          </label>
-        </div>
-      </section>
+            </div>
+          </section>
+        )}
 
-      <section aria-labelledby="small">
-        <h2 id="small">Two small things</h2>
-        <fieldset className="row">
-          <legend>When you write &ldquo;at 3&rdquo;, you mean</legend>
-          <label>
-            <input
-              type="radio"
-              checked={clockStyle === "western"}
-              onChange={() => setClockStyle("western")}
-            />{" "}
-            15:00
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={clockStyle === "ethiopian"}
-              onChange={() => setClockStyle("ethiopian")}
-            />{" "}
-            09:00 (Ethiopian clock)
-          </label>
-        </fieldset>
-        <label>
-          <input
-            type="checkbox"
-            checked={startWithWindows}
-            onChange={(e) => setStartWithWindows(e.target.checked)}
-          />{" "}
-          Start Sirna with Windows (it waits in the tray)
-        </label>
-      </section>
+        {step === 2 && (
+          <section aria-labelledby="areas" className="su-section">
+            <h2 id="areas">What else gets your time each week</h2>
+            <ul className="areas su-areas">
+              {AREAS.map((area) => {
+                const state = areas[area.id] ?? { on: true, hours: area.hours };
+                return (
+                  <li key={area.id} className={state.on ? "su-area" : "su-area off"}>
+                    <label className="su-area-name">
+                      <input
+                        type="checkbox"
+                        checked={state.on}
+                        onChange={(e) =>
+                          setAreas({ ...areas, [area.id]: { ...state, on: e.target.checked } })
+                        }
+                      />
+                      <span>
+                        {area.name}
+                        {area.note && <span className="meta su-note">{area.note}</span>}
+                      </span>
+                    </label>
+                    <label className="hours su-hours">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={state.hours}
+                        aria-label={`${area.name} hours a week`}
+                        onChange={(e) =>
+                          setAreas({
+                            ...areas,
+                            [area.id]: { ...state, hours: Number(e.target.value) },
+                          })
+                        }
+                      />
+                      h / week
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="su-extras">
+              <div className="card su-extra">
+                <span className="su-extra-title">Gym days</span>
+                <DayPicker value={gymDays} onChange={setGymDays} label="Gym days" />
+                <label className="su-field">
+                  <span>at</span>
+                  <input type="time" value={gymTime} onChange={(e) => setGymTime(e.target.value)} />
+                </label>
+              </div>
+              <div className="card su-extra">
+                <label className="su-field">
+                  <span className="su-extra-title">Check email at</span>
+                  <input
+                    value={emailText}
+                    aria-label="Email check times"
+                    placeholder="10:00, 15:00"
+                    onChange={(e) => setEmailText(e.target.value)}
+                  />
+                </label>
+                <span className="meta">10-minute reminders on workdays; leave empty for none</span>
+              </div>
+              <div className="card su-extra">
+                <label className="su-field">
+                  <span className="su-extra-title">Rest day</span>
+                  <select
+                    value={restDay}
+                    onChange={(e) => setRestDay(Number(e.target.value) as Weekday)}
+                  >
+                    {DAYS.map(([day, name]) => (
+                      <option key={day} value={day}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+          </section>
+        )}
 
-      {error && (
-        <p role="alert" className="error">
-          Couldn&apos;t save: {error}
-        </p>
-      )}
-      <p>
-        <Button primary disabled={saving} onClick={() => void save()}>
-          {saving ? "Saving…" : "Start my week"}
-        </Button>
-      </p>
+        {step === 3 && (
+          <section aria-labelledby="small" className="su-section">
+            <h2 id="small">Two small things</h2>
+            <fieldset className="su-choice">
+              <legend>When you write &ldquo;at 3&rdquo;, you mean</legend>
+              <label className={clockStyle === "western" ? "su-tile on" : "su-tile"}>
+                <input
+                  type="radio"
+                  checked={clockStyle === "western"}
+                  onChange={() => setClockStyle("western")}
+                />
+                <span className="su-tile-big">15:00</span>
+              </label>
+              <label className={clockStyle === "ethiopian" ? "su-tile on" : "su-tile"}>
+                <input
+                  type="radio"
+                  checked={clockStyle === "ethiopian"}
+                  onChange={() => setClockStyle("ethiopian")}
+                />
+                <span className="su-tile-big">09:00</span>
+                <span className="meta">Ethiopian clock</span>
+              </label>
+            </fieldset>
+            <label className={startWithWindows ? "su-tile su-wide on" : "su-tile su-wide"}>
+              <input
+                type="checkbox"
+                checked={startWithWindows}
+                onChange={(e) => setStartWithWindows(e.target.checked)}
+              />
+              Start Sirna with Windows (it waits in the tray)
+            </label>
+          </section>
+        )}
+
+        {error && (
+          <p role="alert" className="error">
+            Couldn&apos;t save: {error}
+          </p>
+        )}
+
+        <footer className="su-foot">
+          {/* Stays in place on the first step, so focus never drops to the page. */}
+          <Button
+            className="su-back"
+            aria-disabled={step === 0}
+            onClick={() => {
+              if (step > 0) setStep(step - 1);
+            }}
+          >
+            <IconArrowLeft size={16} /> Back
+          </Button>
+          <span className="su-count meta">
+            Step {step + 1} of {STEPS.length}
+          </span>
+          {step < last ? (
+            <Button primary onClick={() => setStep(step + 1)}>
+              Next <IconArrowRight size={16} />
+            </Button>
+          ) : (
+            <Button primary disabled={saving} onClick={() => void save()}>
+              {saving ? "Saving…" : "Start my week"}
+            </Button>
+          )}
+        </footer>
+      </section>
     </main>
   );
 }

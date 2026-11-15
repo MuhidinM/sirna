@@ -20,13 +20,13 @@ import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { type ClockStyle } from "./when";
 
-import { applyAccent, applyTheme, cachedAccent, cachedTheme } from "../theme/theme";
+import { applyTheme, cachedTheme } from "../theme/theme";
 
+import "@fontsource-variable/bricolage-grotesque";
 import "../theme/tokens.css";
 import "./capture.css";
 
 applyTheme(cachedTheme());
-applyAccent(cachedAccent());
 
 const ECHO_MS = 1500;
 const ANSWER_MS = 6000;

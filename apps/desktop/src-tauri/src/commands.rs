@@ -257,6 +257,12 @@ mod tests {
     }
 }
 
+/// Opens the capture box; the + on the main window's rail.
+#[tauri::command]
+pub fn open_capture(app: AppHandle) {
+    crate::windows::spawn_open_capture(app);
+}
+
 /// Opens (or brings up) the main window; the widget's Open button.
 #[tauri::command]
 pub fn open_main(app: AppHandle) {

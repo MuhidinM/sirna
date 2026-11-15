@@ -29,6 +29,10 @@ import { Missed } from "./Missed";
 import { TodayMoney } from "./Money";
 import { FocusPanel, useFocus } from "./Focus";
 import { NowCards, Timeline } from "./Timeline";
+import { FocusWeek } from "./FocusWeek";
+import { IconPlus } from "./icons";
+import { PanelHead } from "./kit";
+import { MonthPanel } from "./MonthPanel";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -222,7 +226,10 @@ function useMinute(): number {
   return minute;
 }
 
-export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
+export function Today({
+  onOpenMoney,
+  onOpenPlan,
+}: { onOpenMoney?: () => void; onOpenPlan?: () => void } = {}) {
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
 
@@ -269,105 +276,178 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
   const error =
     top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error ?? blocks.error;
 
+  const [weekday, dayMonth] = longDate
+    .format(nowMs)
+    .split(" ")
+    .reduce<[string, string]>(
+      (acc, part, index) => (index === 0 ? [part, ""] : [acc[0], `${acc[1]} ${part}`.trim()]),
+      ["", ""],
+    );
+
   return (
-    <main className="today">
-      <header>
-        <h1>{longDate.format(nowMs)}</h1>
-        <p className="meta">Capture anything with your capture key; it shows up here.</p>
-      </header>
+    <main className="page today">
+      <div className="layout-split">
+        <aside className="side" aria-label="Today at a glance">
+          <MonthPanel today={today} onOpen={onOpenPlan} />
+          <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
+          {focus && focus.kind !== null && <FocusPanel status={focus} />}
+          <LooseEnds inbox={inbox.rows} waiting={waiting.rows} />
+        </aside>
 
-      {backOn && (
-        <p className="row meta" role="status">
-          Away until {returnLabel(backOn)}: no brief, review or block reminders.
-          <Button onClick={() => void invoke("clear_away")}>I&apos;m back</Button>
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="error">
-          Couldn&apos;t load today: {error}
-        </p>
-      )}
+        <div className="main">
+          <section className="canvas" aria-labelledby="today-title">
+            <header className="canvas-head">
+              <h1 id="today-title" className="page-title">
+                {weekday}, <span className="soft">{dayMonth}</span>
+              </h1>
+              <span className="spacer" />
+              <Button primary onClick={() => void invoke("open_capture").catch(() => undefined)}>
+                <IconPlus size={16} /> Capture
+              </Button>
+            </header>
+            <p className="meta today-hint">
+              Capture anything with your capture key; it shows up here.
+            </p>
 
-      {!top.loading && !blocks.loading && (
-        <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={top.rows} />
-      )}
-      {focus && focus.kind !== null && <FocusPanel status={focus} />}
-      <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
+            {backOn && (
+              <p className="row meta notice" role="status">
+                Away until {returnLabel(backOn)}: no brief, review or block reminders.
+                <Button onClick={() => void invoke("clear_away")}>I&apos;m back</Button>
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="error">
+                Couldn&apos;t load today: {error}
+              </p>
+            )}
 
-      <WeekOutcomes monday={weekStart(today)} />
+            {!top.loading && !blocks.loading && (
+              <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={top.rows} />
+            )}
 
-      <section aria-labelledby="top3">
-        <h2 id="top3">Top 3</h2>
-        {top.rows.length === 0 && !top.loading ? (
-          <p className="empty">Nothing due today. Captures with a date land here.</p>
-        ) : (
-          <ul>
-            {top.rows.map((task) => (
-              <TaskLine key={task.id} task={task} today={today} />
-            ))}
-          </ul>
-        )}
-      </section>
+            <div className="today-cols">
+              <div className="today-tasks">
+                <WeekOutcomes monday={weekStart(today)} />
 
-      {moreDue.length > 0 && (
-        <section aria-labelledby="due">
-          <h2 id="due">Also due</h2>
-          <ul>
-            {moreDue.map((task) => (
-              <TaskLine key={task.id} task={task} today={today} />
-            ))}
-          </ul>
-        </section>
-      )}
+                <section aria-labelledby="top3">
+                  <h2 id="top3">Top 3</h2>
+                  {top.rows.length === 0 && !top.loading ? (
+                    <p className="empty">Nothing due today. Captures with a date land here.</p>
+                  ) : (
+                    <ul className="task-rows">
+                      {top.rows.map((task) => (
+                        <TaskLine key={task.id} task={task} today={today} />
+                      ))}
+                    </ul>
+                  )}
+                </section>
 
-      {waiting.rows.length > 0 && (
-        <section aria-labelledby="waiting">
-          <h2 id="waiting">Waiting on</h2>
-          <ul>
-            {waiting.rows.map((item) => (
-              <li key={item.id} className="task">
-                <span>{item.waiting_on ?? item.title}</span>
-                <span className="meta">
-                  {item.follow_up_date ? `follow up ${item.follow_up_date}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+                {moreDue.length > 0 && (
+                  <section aria-labelledby="due">
+                    <h2 id="due">Also due</h2>
+                    <ul className="task-rows">
+                      {moreDue.map((task) => (
+                        <TaskLine key={task.id} task={task} today={today} />
+                      ))}
+                    </ul>
+                  </section>
+                )}
 
-      <Missed today={today} nowMs={minuteNow} blocks={blocks.rows} />
+                <Missed today={today} nowMs={minuteNow} blocks={blocks.rows} />
+              </div>
 
-      <section aria-labelledby="plan">
-        <h2 id="plan">Today&apos;s plan</h2>
-        <Timeline
-          blocks={blocks.rows}
-          nowMs={minuteNow}
-          jobTasks={tasksByJob(jobTasks.rows)}
-          listUnder={listBlockIds(blocks.rows, new Set(jobs.rows.map((row) => row.id)), minuteNow)}
-          onDone={(task) =>
-            void transact("user", statusOps(task, "done", systemClock.now()), `task:${task.id}`)
-          }
-        />
-      </section>
+              <section className="today-plan" aria-labelledby="plan">
+                <h2 id="plan">Today&apos;s plan</h2>
+                <Timeline
+                  blocks={blocks.rows}
+                  nowMs={minuteNow}
+                  jobTasks={tasksByJob(jobTasks.rows)}
+                  listUnder={listBlockIds(
+                    blocks.rows,
+                    new Set(jobs.rows.map((row) => row.id)),
+                    minuteNow,
+                  )}
+                  onDone={(task) =>
+                    void transact(
+                      "user",
+                      statusOps(task, "done", systemClock.now()),
+                      `task:${task.id}`,
+                    )
+                  }
+                />
+              </section>
+            </div>
+          </section>
 
-      <section aria-labelledby="money">
-        <h2 id="money">Money</h2>
-        <TodayMoney today={today} spentToday={spent.rows[0]?.spent ?? 0} onOpen={onOpenMoney} />
-      </section>
-
-      {inbox.rows.length > 0 && (
-        <section aria-labelledby="inbox">
-          <h2 id="inbox">Loose ends ({inbox.rows.length})</h2>
-          <p className="meta">Sorted in tonight&apos;s review.</p>
-          <ul>
-            {inbox.rows.map((note) => (
-              <li key={note.id}>{note.body}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+          <div className="panel-row">
+            <FocusWeek today={today} />
+            <section className="panel" aria-labelledby="money">
+              <PanelHead id="money" title="Money today" sub="Safe to spend and what is due" />
+              <TodayMoney
+                today={today}
+                spentToday={spent.rows[0]?.spent ?? 0}
+                onOpen={onOpenMoney}
+              />
+            </section>
+          </div>
+        </div>
+      </div>
     </main>
+  );
+}
+
+/** Loose ends from captures and who you are waiting on, in the side column. */
+function LooseEnds({
+  inbox,
+  waiting,
+}: {
+  inbox: { id: string; body: string }[];
+  waiting: {
+    id: string;
+    title: string;
+    waiting_on: string | null;
+    follow_up_date: string | null;
+  }[];
+}) {
+  return (
+    <section className="panel" aria-labelledby="loose">
+      <PanelHead
+        id="loose"
+        title="Loose ends"
+        sub="Sorted in tonight's review"
+        action={inbox.length > 0 ? <span className="badge">{inbox.length}</span> : undefined}
+      />
+      {inbox.length === 0 && waiting.length === 0 ? (
+        <p className="empty">Nothing loose. Anything you capture without a date lands here.</p>
+      ) : (
+        <ul className="list-rows">
+          {inbox.map((note) => (
+            <li key={note.id}>
+              <span className="dot-pink" aria-hidden="true" />
+              <span className="grow">{note.body}</span>
+            </li>
+          ))}
+          {waiting.map((item) => (
+            <li key={item.id}>
+              <span className="dot-cream" aria-hidden="true" />
+              <span className="grow">
+                Waiting on {item.waiting_on ?? item.title}
+                {item.follow_up_date && (
+                  <span className="meta"> · follow up {item.follow_up_date}</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <button
+        type="button"
+        className="add-row"
+        onClick={() => void invoke("open_capture").catch(() => undefined)}
+      >
+        <IconPlus size={16} /> Add one
+      </button>
+    </section>
   );
 }
 
@@ -377,7 +457,7 @@ function WeekOutcomes({ monday }: { monday: string }) {
   if (!outcomes || outcomes.length === 0) return null;
   return (
     <section aria-labelledby="week-outcomes" className="week-outcomes">
-      <h2 id="week-outcomes">This week</h2>
+      <h2 id="week-outcomes">This week&apos;s outcomes</h2>
       <ol className="outcomes">
         {outcomes.map((outcome) => (
           <li key={outcome}>{outcome}</li>

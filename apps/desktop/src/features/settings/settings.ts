@@ -1,6 +1,6 @@
 /** Settings page logic (plan §3.14, §9). Pure and tested; secrets never pass through here. */
 import { type Op } from "../../kernel/db";
-import { type Accent, accentFromSetting } from "../../theme/theme";
+import { type Theme, themeFromSetting } from "../../theme/theme";
 
 /** Secrets the main window may set or remove, never read (Rust SECRET_NAMES). */
 export const SECRETS = [
@@ -21,7 +21,7 @@ export const SECRETS = [
 export type SecretName = (typeof SECRETS)[number]["name"];
 
 export const SETTINGS_SQL = `SELECT key, value_json FROM core_settings
-  WHERE key IN ('focus.daily_cap_min', 'focus.dnd', 'ui.theme', 'ui.accent')`;
+  WHERE key IN ('focus.daily_cap_min', 'focus.dnd', 'ui.theme')`;
 
 export const DEFAULT_CAP_MIN = 240;
 export const MIN_CAP_MIN = 30;
@@ -30,8 +30,7 @@ export const MAX_CAP_MIN = 720;
 export interface SettingsValues {
   capMin: number;
   dnd: boolean;
-  theme: "dark" | "light";
-  accent: Accent;
+  theme: Theme;
 }
 
 function parse(json: string | null | undefined): unknown {
@@ -50,8 +49,7 @@ export function readSettings(rows: { key: string; value_json: string | null }[])
   return {
     capMin: typeof cap === "number" && Number.isInteger(cap) && cap > 0 ? cap : DEFAULT_CAP_MIN,
     dnd: value("focus.dnd") !== "off",
-    theme: value("ui.theme") === "light" ? "light" : "dark",
-    accent: accentFromSetting(rows.find((row) => row.key === "ui.accent")?.value_json),
+    theme: themeFromSetting(rows.find((row) => row.key === "ui.theme")?.value_json ?? undefined),
   };
 }
 
@@ -76,7 +74,6 @@ export function settingsOps(values: SettingsValues): Op[] {
     setting("focus.daily_cap_min", values.capMin),
     setting("focus.dnd", values.dnd ? "on" : "off"),
     setting("ui.theme", values.theme),
-    setting("ui.accent", values.accent),
   ];
 }
 

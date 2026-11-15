@@ -1,4 +1,6 @@
-import { useState } from "react";
+import "../theme/pages/plan-routine.css";
+
+import { type CSSProperties, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
@@ -32,12 +34,16 @@ import {
 } from "../features/plan/editor";
 import { isoWeekday, replanDay, shiftDate } from "../features/plan/dayplan";
 import { toHhmm, type Weekday } from "../features/plan/routine";
-import { type AreaColor, Button, Chip } from "./ui";
+import { IconArrowUpRight, IconClock, IconPlus } from "./icons";
+import { EventCard, PanelHead, type Tone, toneOf } from "./kit";
+import { Segmented } from "./Nav";
+import { type AreaColor, Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const dayName = (day: number) => WEEKDAYS.find(([d]) => d === day)?.[1] ?? "";
 const kindLabel = (kind: string) => BLOCK_KINDS.find((k) => k.kind === kind)?.label ?? kind;
+const hours = (minutes: number) => Math.round((minutes / 60) * 100) / 100;
 
 /**
  * Saves routine changes, then plans today again (and tomorrow, if the night
@@ -57,7 +63,7 @@ async function saveRoutine(ops: Op[]): Promise<void> {
 
 function DayPicker({ value, onChange }: { value: Weekday[]; onChange: (days: Weekday[]) => void }) {
   return (
-    <fieldset className="days">
+    <fieldset className="days rt-days">
       <legend className="visually-hidden">Days</legend>
       {WEEKDAYS.map(([day, name]) => (
         <label key={day} className={value.includes(day) ? "day on" : "day"}>
@@ -79,17 +85,26 @@ function DayPicker({ value, onChange }: { value: Weekday[]; onChange: (days: Wee
   );
 }
 
+type BlockFormState = { editing: RoutineRow | null; draft: BlockDraft };
+
+const newBlock = (day: Weekday): BlockFormState => ({
+  editing: null,
+  draft: { title: "", kind: "routine", areaId: "", start: "07:00", end: "07:30", days: [day] },
+});
+
 function BlockForm({
   rows,
   areas,
   initial,
   editing,
+  onRemove,
   onDone,
 }: {
   rows: RoutineRow[];
   areas: AreaRow[];
   initial: BlockDraft;
   editing: RoutineRow | null;
+  onRemove: (row: RoutineRow, scope: "day" | "series") => void;
   onDone: () => void;
 }) {
   const [draft, setDraft] = useState(initial);
@@ -109,7 +124,7 @@ function BlockForm({
   const active = areas.filter((area) => area.active === 1 || area.id === draft.areaId);
   return (
     <form
-      className="card block-form"
+      className="card block-form rt-form"
       onSubmit={(event) => {
         event.preventDefault();
         const effective =
@@ -134,9 +149,12 @@ function BlockForm({
           .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
       }}
     >
-      <h3>{editing ? "Change block" : "Add a block"}</h3>
-      <div className="row">
-        <label className="field">
+      <div className="rt-form-head">
+        <h3>{editing ? "Change block" : "Add a block"}</h3>
+        {editing && <span className="meta">{dayName(editing.weekday)}</span>}
+      </div>
+      <div className="rt-fields">
+        <label className="field rt-wide">
           <span>Name</span>
           <input
             // eslint-disable-next-line jsx-a11y/no-autofocus -- the form opens on request; focus shows it
@@ -183,12 +201,12 @@ function BlockForm({
       </div>
       <p className="meta">{BLOCK_KINDS.find((k) => k.kind === draft.kind)?.help}</p>
       {editing && series.length > 1 && (
-        <div className="row" role="radiogroup" aria-label="Change which days">
-          <label className="check">
+        <div className="rt-scope" role="radiogroup" aria-label="Change which days">
+          <label className={scope === "series" ? "rt-option on" : "rt-option"}>
             <input type="radio" checked={scope === "series"} onChange={() => setScope("series")} />
             Every day it&apos;s on
           </label>
-          <label className="check">
+          <label className={scope === "day" ? "rt-option on" : "rt-option"}>
             <input type="radio" checked={scope === "day"} onChange={() => setScope("day")} />
             Only {dayName(editing.weekday)}
           </label>
@@ -207,123 +225,146 @@ function BlockForm({
           {error}
         </p>
       )}
-      <div className="row">
+      <div className="rt-actions">
         <Button type="submit" primary>
           Save
         </Button>
         <Button onClick={onDone}>Cancel</Button>
+        {editing && (
+          <>
+            <span className="rt-spacer" />
+            <Button className="btn-danger" onClick={() => onRemove(editing, "day")}>
+              Remove{series.length > 1 ? ` on ${dayName(editing.weekday)}` : ""}
+            </Button>
+            {series.length > 1 && (
+              <Button className="btn-danger" onClick={() => onRemove(editing, "series")}>
+                Remove all
+              </Button>
+            )}
+          </>
+        )}
       </div>
     </form>
   );
 }
 
-function RoutineTab({ rows, areas }: { rows: RoutineRow[]; areas: AreaRow[] }) {
-  const [day, setDay] = useState<Weekday>(
-    () => isoWeekday(logicalDate(systemClock.now())) as Weekday,
-  );
-  const [form, setForm] = useState<{ editing: RoutineRow | null; draft: BlockDraft } | null>(null);
+/** The card's colour: the block's area, grey for rest. */
+function toneFor(row: RoutineRow, area: AreaRow | undefined): Tone {
+  if (row.kind === "rest") return "raised";
+  return area ? toneOf(area.color) : "cream";
+}
+
+function RoutineTab({
+  rows,
+  areas,
+  today,
+  form,
+  setForm,
+}: {
+  rows: RoutineRow[];
+  areas: AreaRow[];
+  today: Weekday;
+  form: BlockFormState | null;
+  setForm: (form: BlockFormState | null) => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   const areaById = new Map(areas.map((area) => [area.id, area]));
-  const onDay = rows.filter((row) => row.weekday === day);
   const remove = (row: RoutineRow, scope: "day" | "series") =>
-    saveRoutine(removeBlockOps(rows, row, scope)).catch((failure: unknown) =>
-      setError(`Couldn't remove it: ${message(failure)}`),
-    );
+    saveRoutine(removeBlockOps(rows, row, scope))
+      .then(() => setForm(null))
+      .catch((failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`));
   return (
-    <section aria-label="Routine">
-      <div className="row" role="tablist" aria-label="Day">
-        {WEEKDAYS.map(([d, name]) => (
-          <button
-            key={d}
-            type="button"
-            role="tab"
-            aria-selected={d === day}
-            className={d === day ? "step current" : "step"}
-            onClick={() => {
-              setDay(d);
-              setForm(null);
-            }}
-          >
-            {name} <span className="meta">{rows.filter((r) => r.weekday === d).length}</span>
-          </button>
-        ))}
-      </div>
+    <section aria-label="Routine" className="rt-routine">
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
-      <ul className="routine-list">
-        {onDay.length === 0 && <li className="meta">Nothing on {dayName(day)} yet.</li>}
-        {onDay.map((row) => {
-          const area = row.area_id ? areaById.get(row.area_id) : undefined;
-          const series = seriesOf(rows, row);
-          return (
-            <li key={row.id} className="task">
-              <span>
-                <span className="meta">
-                  {toHhmm(row.start_min)}–{toHhmm(row.start_min + row.duration_min)}
-                </span>{" "}
-                {row.title} {area && <Chip area={area.color as AreaColor}>{area.name}</Chip>}{" "}
-                <span className="meta">
-                  {kindLabel(row.kind)}
-                  {series.length > 1 ? ` · ${series.map((r) => dayName(r.weekday)).join(" ")}` : ""}
-                </span>
-              </span>
-              <span className="row">
-                <Button
-                  onClick={() =>
-                    setForm({
-                      editing: row,
-                      draft: draftOf(
-                        row,
-                        series.map((r) => r.weekday as Weekday),
-                      ),
-                    })
-                  }
-                >
-                  Change
-                </Button>
-                <Button onClick={() => void remove(row, "day")}>
-                  Remove{series.length > 1 ? ` on ${dayName(row.weekday)}` : ""}
-                </Button>
-                {series.length > 1 && (
-                  <Button onClick={() => void remove(row, "series")}>Remove all</Button>
-                )}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {form ? (
+      {form && (
         <BlockForm
-          key={form.editing?.id ?? `new-${day}`}
+          key={form.editing?.id ?? `new-${form.draft.days.join("")}`}
           rows={rows}
           areas={areas}
           initial={form.draft}
           editing={form.editing}
+          onRemove={(row, scope) => void remove(row, scope)}
           onDone={() => setForm(null)}
         />
-      ) : (
-        <Button
-          primary
-          onClick={() =>
-            setForm({
-              editing: null,
-              draft: {
-                title: "",
-                kind: "routine",
-                areaId: "",
-                start: "07:00",
-                end: "07:30",
-                days: [day],
-              },
-            })
-          }
-        >
-          Add a block
-        </Button>
       )}
+      <div className="rt-board-wrap">
+        <div className="rt-board">
+          {WEEKDAYS.map(([day, name]) => {
+            const onDay = rows.filter((row) => row.weekday === day);
+            const minutes = onDay.reduce((sum, row) => sum + row.duration_min, 0);
+            return (
+              <section
+                key={day}
+                className={day === today ? "rt-col today" : "rt-col"}
+                aria-label={`${name}, ${onDay.length} block${onDay.length === 1 ? "" : "s"}`}
+              >
+                <header className="rt-col-head">
+                  <span className="rt-day">{name}</span>
+                  <span className="rt-col-hours">{hours(minutes)} h</span>
+                </header>
+                {onDay.length === 0 ? (
+                  <p className="rt-none">Nothing on {name} yet.</p>
+                ) : (
+                  <ul className="rt-cards">
+                    {onDay.map((row) => {
+                      const area = row.area_id ? areaById.get(row.area_id) : undefined;
+                      const series = seriesOf(rows, row);
+                      const style = { "--len": row.duration_min } as CSSProperties;
+                      return (
+                        <li key={row.id}>
+                          <EventCard
+                            tone={toneFor(row, area)}
+                            label={`${toHhmm(row.start_min)}–${toHhmm(row.start_min + row.duration_min)}`}
+                            title={row.title}
+                            className={form?.editing?.id === row.id ? "rt-card editing" : "rt-card"}
+                            style={style}
+                          >
+                            <span className="rt-card-meta">
+                              {kindLabel(row.kind)}
+                              {area ? ` · ${area.name}` : ""}
+                            </span>
+                            {series.length > 1 && (
+                              <span className="rt-card-days">
+                                {series.map((r) => dayName(r.weekday)).join(" ")}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              className="rt-card-open"
+                              aria-label={`Change ${row.title} on ${name}`}
+                              onClick={() =>
+                                setForm({
+                                  editing: row,
+                                  draft: draftOf(
+                                    row,
+                                    series.map((r) => r.weekday as Weekday),
+                                  ),
+                                })
+                              }
+                            />
+                          </EventCard>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <button
+                  type="button"
+                  className="rt-add"
+                  aria-label={`Add a block on ${name}`}
+                  onClick={() => setForm(newBlock(day))}
+                >
+                  <IconPlus size={14} /> Add
+                </button>
+              </section>
+            );
+          })}
+        </div>
+      </div>
     </section>
   );
 }
@@ -345,7 +386,7 @@ function AreaForm({
   };
   return (
     <form
-      className="card block-form"
+      className="card block-form rt-form"
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkArea(draft, areas, editing?.id ?? null);
@@ -364,9 +405,11 @@ function AreaForm({
           .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
       }}
     >
-      <h3>{editing ? `Change ${editing.name}` : "Add an area"}</h3>
-      <div className="row">
-        <label className="field">
+      <div className="rt-form-head">
+        <h3>{editing ? `Change ${editing.name}` : "Add an area"}</h3>
+      </div>
+      <div className="rt-fields">
+        <label className="field rt-wide">
           <span>Name</span>
           <input
             value={draft.name}
@@ -405,7 +448,7 @@ function AreaForm({
         </label>
       </div>
       <p className="meta">{AREA_KINDS.find((k) => k.kind === draft.kind)?.help}</p>
-      <fieldset className="row colors">
+      <fieldset className="colors rt-colors">
         <legend>Colour</legend>
         {AREA_COLORS.map((color) => (
           <label key={color} className={draft.color === color ? "swatch on" : "swatch"}>
@@ -419,28 +462,30 @@ function AreaForm({
           </label>
         ))}
       </fieldset>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={draft.capped}
-          onChange={(e) => set({ capped: e.target.checked })}
-        />
-        Never more than its hours a week (capped)
-      </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={draft.protected}
-          onChange={(e) => set({ protected: e.target.checked })}
-        />
-        Protected: never dropped for work
-      </label>
+      <div className="rt-checks">
+        <label className="check rt-option">
+          <input
+            type="checkbox"
+            checked={draft.capped}
+            onChange={(e) => set({ capped: e.target.checked })}
+          />
+          Never more than its hours a week (capped)
+        </label>
+        <label className="check rt-option">
+          <input
+            type="checkbox"
+            checked={draft.protected}
+            onChange={(e) => set({ protected: e.target.checked })}
+          />
+          Protected: never dropped for work
+        </label>
+      </div>
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
-      <div className="row">
+      <div className="rt-actions">
         <Button type="submit" primary>
           Save
         </Button>
@@ -450,12 +495,21 @@ function AreaForm({
   );
 }
 
-function AreasTab({ rows, areas }: { rows: RoutineRow[]; areas: AreaRow[] }) {
-  const [form, setForm] = useState<{ editing: AreaRow | null } | null>(null);
+function AreasTab({
+  rows,
+  areas,
+  form,
+  setForm,
+}: {
+  rows: RoutineRow[];
+  areas: AreaRow[];
+  form: { editing: AreaRow | null } | null;
+  setForm: (form: { editing: AreaRow | null } | null) => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   return (
-    <section aria-label="Areas">
-      <p className="meta">
+    <section aria-label="Areas" className="rt-areas-tab">
+      <p className="meta rt-lead">
         Jobs are areas too: add one, then give it Fixed blocks in Routine. Grow and Admin areas fill
         free slots by their hours a week.
       </p>
@@ -464,55 +518,128 @@ function AreasTab({ rows, areas }: { rows: RoutineRow[]; areas: AreaRow[] }) {
           {error}
         </p>
       )}
-      <ul className="routine-list">
-        {areas.map((area) => {
-          const blocks = rows.filter((row) => row.area_id === area.id).length;
-          return (
-            <li key={area.id} className={area.active === 1 ? "task" : "task off"}>
-              <span>
-                <Chip area={area.color as AreaColor}>{area.name}</Chip>{" "}
-                <span className="meta">
-                  {AREA_KINDS.find((k) => k.kind === area.kind)?.label} ·{" "}
-                  {Math.round((area.weekly_target_min / 60) * 100) / 100} h/week · {blocks} block
-                  {blocks === 1 ? "" : "s"}
-                  {area.capped ? " · capped" : ""}
-                  {area.protected ? " · protected" : ""}
-                  {area.active === 1 ? "" : " · off"}
-                </span>
-              </span>
-              <span className="row">
-                <Button onClick={() => setForm({ editing: area })}>Change</Button>
-                <Button
-                  onClick={() =>
-                    void saveRoutine(setAreaActiveOps(area.id, area.active !== 1, rows)).catch(
-                      (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
-                    )
-                  }
-                  title={
-                    area.active === 1 && blocks > 0
-                      ? `Its ${blocks} block${blocks === 1 ? "" : "s"} leave the routine`
-                      : undefined
-                  }
-                >
-                  {area.active === 1 ? "Turn off" : "Turn on"}
-                </Button>
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      {form ? (
+      {form && (
         <AreaForm
           key={form.editing?.id ?? "new"}
           areas={areas}
           editing={form.editing}
           onDone={() => setForm(null)}
         />
-      ) : (
-        <Button primary onClick={() => setForm({ editing: null })}>
-          Add an area
-        </Button>
       )}
+      <ul className="rt-areas">
+        {areas.map((area) => {
+          const blocks = rows.filter((row) => row.area_id === area.id).length;
+          const on = area.active === 1;
+          return (
+            <li key={area.id}>
+              <EventCard
+                tone={toneOf(area.color)}
+                label={AREA_KINDS.find((k) => k.kind === area.kind)?.label}
+                title={area.name}
+                faded={!on}
+                className={form?.editing?.id === area.id ? "rt-card editing" : "rt-card"}
+              >
+                <span className="rt-card-meta">
+                  {hours(area.weekly_target_min)} h/week · {blocks} block
+                  {blocks === 1 ? "" : "s"}
+                  {area.capped ? " · capped" : ""}
+                  {area.protected ? " · protected" : ""}
+                  {on ? "" : " · off"}
+                </span>
+                <span className="rt-card-acts">
+                  <button
+                    type="button"
+                    className="rt-card-btn"
+                    onClick={() => setForm({ editing: area })}
+                  >
+                    Change
+                  </button>
+                  <button
+                    type="button"
+                    className="rt-card-btn"
+                    onClick={() =>
+                      void saveRoutine(setAreaActiveOps(area.id, !on, rows)).catch(
+                        (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
+                      )
+                    }
+                    title={
+                      on && blocks > 0
+                        ? `Its ${blocks} block${blocks === 1 ? "" : "s"} leave the routine`
+                        : undefined
+                    }
+                  >
+                    {on ? "Turn off" : "Turn on"}
+                  </button>
+                </span>
+              </EventCard>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** Each active area's routine hours against its weekly target, on a dark panel. */
+function AreaTargets({
+  rows,
+  areas,
+  onOpen,
+}: {
+  rows: RoutineRow[];
+  areas: AreaRow[];
+  onOpen: () => void;
+}) {
+  const active = areas.filter((area) => area.active === 1);
+  const total = rows.reduce((sum, row) => sum + row.duration_min, 0);
+  return (
+    <section className="panel rt-targets" aria-labelledby="rt-targets">
+      <PanelHead
+        id="rt-targets"
+        title="Area targets"
+        sub="Hours in the routine against each weekly target"
+        action={
+          <button type="button" className="icon-btn" aria-label="Change areas" onClick={onOpen}>
+            <IconArrowUpRight size={18} />
+          </button>
+        }
+      />
+      {active.length === 0 ? (
+        <p className="empty">No areas on. Add one under Areas.</p>
+      ) : (
+        <ul className="rt-target-list">
+          {active.map((area) => {
+            const planned = rows
+              .filter((row) => row.area_id === area.id)
+              .reduce((sum, row) => sum + row.duration_min, 0);
+            const target = area.weekly_target_min;
+            return (
+              <li key={area.id}>
+                <div className="rt-target-line">
+                  <span
+                    className="rt-dot"
+                    style={{ background: `var(--area-${area.color})` }}
+                    aria-hidden="true"
+                  />
+                  <span className="grow">{area.name}</span>
+                  <span className="rt-target-num">
+                    {hours(planned)}
+                    <span className="soft"> / {hours(target)} h</span>
+                  </span>
+                </div>
+                <Bar
+                  value={target > 0 ? planned / target : 0}
+                  area={area.color as AreaColor}
+                  label={`${area.name}: ${hours(planned)} of ${hours(target)} hours in the routine`}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="hint rt-target-foot">
+        {hours(total)} h of blocks a week. Grow and Admin areas also fill free slots.
+      </p>
     </section>
   );
 }
@@ -520,10 +647,9 @@ function AreasTab({ rows, areas }: { rows: RoutineRow[]; areas: AreaRow[] }) {
 const TIMES_SQL = `SELECT key, value_json FROM core_settings
   WHERE key IN ('day.wake', 'day.review', 'day.hard_stop')`;
 
-function TimesTab() {
+function TimesPanel() {
   const rows = useLiveQuery<{ key: string; value_json: string }>(TIMES_SQL);
   const [note, setNote] = useState("");
-  if (rows.loading) return null;
   const read = (key: string, fallback: string) => {
     try {
       const value = JSON.parse(
@@ -540,36 +666,42 @@ function TimesTab() {
     ["day.hard_stop", "Hard stop", read("day.hard_stop", "22:30")],
   ];
   return (
-    <section aria-label="Day times" className="row">
-      {fields.map(([key, label, value]) => (
-        <label key={key} className="field">
-          <span>{label}</span>
-          <input
-            type="time"
-            defaultValue={value}
-            onBlur={(event) => {
-              if (!event.target.value || event.target.value === value) return;
-              transact(
-                "user",
-                [
-                  {
-                    op: "upsert",
-                    table: "core_settings",
-                    id: key,
-                    values: { value_json: JSON.stringify(event.target.value) },
-                  },
-                ],
-                "settings",
-              )
-                .then(() => setNote(`${label} saved`))
-                .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
-            }}
-          />
-        </label>
-      ))}
-      <span className="meta" role="status">
-        {note}
-      </span>
+    <section className="panel rt-times" aria-label="Day times">
+      <PanelHead
+        icon={<IconClock size={18} />}
+        title="Day times"
+        sub={<span role="status">{note || "When your day starts, is reviewed and must end"}</span>}
+      />
+      {!rows.loading && (
+        <div className="rt-time-grid">
+          {fields.map(([key, label, value]) => (
+            <label key={key} className="rt-time">
+              <span>{label}</span>
+              <input
+                type="time"
+                defaultValue={value}
+                onBlur={(event) => {
+                  if (!event.target.value || event.target.value === value) return;
+                  transact(
+                    "user",
+                    [
+                      {
+                        op: "upsert",
+                        table: "core_settings",
+                        id: key,
+                        values: { value_json: JSON.stringify(event.target.value) },
+                      },
+                    ],
+                    "settings",
+                  )
+                    .then(() => setNote(`${label} saved`))
+                    .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+                }}
+              />
+            </label>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -577,18 +709,28 @@ function TimesTab() {
 function StartOver({ onStartOver }: { onStartOver: () => void }) {
   const [sure, setSure] = useState(false);
   return (
-    <p className="meta start-over">
-      Want a fresh routine from a few questions instead?{" "}
+    <section className="panel rt-start-over" aria-labelledby="rt-start-over">
+      <PanelHead
+        id="rt-start-over"
+        title="Start over"
+        sub="Want a fresh routine from a few questions instead?"
+      />
       {sure ? (
         <>
-          Saving those answers replaces your whole routine (areas you added stay).{" "}
-          <Button onClick={onStartOver}>Show the questions</Button>{" "}
-          <Button onClick={() => setSure(false)}>Keep my routine</Button>
+          <p className="meta">
+            Saving those answers replaces your whole routine (areas you added stay).
+          </p>
+          <div className="rt-actions">
+            <Button onClick={onStartOver}>Show the questions</Button>
+            <Button className="btn-ghost" onClick={() => setSure(false)}>
+              Keep my routine
+            </Button>
+          </div>
         </>
       ) : (
         <Button onClick={() => setSure(true)}>Start over</Button>
       )}
-    </p>
+    </section>
   );
 }
 
@@ -596,48 +738,77 @@ function StartOver({ onStartOver }: { onStartOver: () => void }) {
 export function Week({ onStartOver }: { onStartOver: () => void }) {
   const rows = useLiveQuery<RoutineRow & Record<string, string | number | null>>(ROUTINE_SQL);
   const areas = useLiveQuery<AreaRow & Record<string, string | number | null>>(AREAS_SQL);
-  const [tab, setTab] = useState<"routine" | "areas" | "times">("routine");
+  const [tab, setTab] = useState<"routine" | "areas">("routine");
+  const [blockForm, setBlockForm] = useState<BlockFormState | null>(null);
+  const [areaForm, setAreaForm] = useState<{ editing: AreaRow | null } | null>(null);
+  const today = isoWeekday(logicalDate(systemClock.now())) as Weekday;
+  const loaded = !rows.loading && !areas.loading;
+  const total = rows.rows.reduce((sum, row) => sum + row.duration_min, 0);
   return (
-    <main className="review week">
-      <header className="review-head">
-        <h1>My week</h1>
-        <p className="meta">
-          Your routine repeats every week. Changes apply from today: Sirna plans today again.
-        </p>
-        <div className="row" role="tablist" aria-label="Part">
-          {(
-            [
-              ["routine", "Routine"],
-              ["areas", "Areas"],
-              ["times", "Day times"],
-            ] as const
-          ).map(([name, label]) => (
-            <button
-              key={name}
-              type="button"
-              role="tab"
-              aria-selected={tab === name}
-              className={tab === name ? "step current" : "step"}
-              onClick={() => setTab(name)}
-            >
-              {label}
-            </button>
-          ))}
+    <main className="page week plan-routine">
+      <div className="layout-split">
+        <aside className="side" aria-label="Targets and times">
+          {loaded && (
+            <AreaTargets rows={rows.rows} areas={areas.rows} onOpen={() => setTab("areas")} />
+          )}
+          <TimesPanel />
+          <StartOver onStartOver={onStartOver} />
+        </aside>
+
+        <div className="main">
+          <section className="canvas rt-canvas" aria-labelledby="week-title">
+            <header className="canvas-head">
+              <h1 id="week-title" className="page-title">
+                My week
+                {loaded && (
+                  <span className="soft">
+                    , {rows.rows.length} blocks · {hours(total)} h
+                  </span>
+                )}
+              </h1>
+              <Segmented
+                label="Part"
+                options={[
+                  { value: "routine", label: "Routine" },
+                  { value: "areas", label: "Areas" },
+                ]}
+                value={tab}
+                onChange={setTab}
+              />
+              <span className="spacer" />
+              {tab === "routine" ? (
+                <Button primary onClick={() => setBlockForm(newBlock(today))}>
+                  <IconPlus size={16} /> Add a block
+                </Button>
+              ) : (
+                <Button primary onClick={() => setAreaForm({ editing: null })}>
+                  <IconPlus size={16} /> Add an area
+                </Button>
+              )}
+            </header>
+            <p className="meta rt-lead">
+              Your routine repeats every week. Changes apply from today: Sirna plans today again.
+            </p>
+            {(rows.error ?? areas.error) && (
+              <p role="alert" className="error">
+                Couldn&apos;t load your week: {rows.error ?? areas.error}
+              </p>
+            )}
+            {loaded && tab === "routine" && (
+              <RoutineTab
+                rows={rows.rows}
+                areas={areas.rows}
+                today={today}
+                form={blockForm}
+                setForm={setBlockForm}
+              />
+            )}
+            {loaded && tab === "areas" && (
+              <AreasTab rows={rows.rows} areas={areas.rows} form={areaForm} setForm={setAreaForm} />
+            )}
+          </section>
         </div>
-      </header>
-      {(rows.error ?? areas.error) && (
-        <p role="alert" className="error">
-          Couldn&apos;t load your week: {rows.error ?? areas.error}
-        </p>
-      )}
-      {!rows.loading && !areas.loading && tab === "routine" && (
-        <RoutineTab rows={rows.rows} areas={areas.rows} />
-      )}
-      {!rows.loading && !areas.loading && tab === "areas" && (
-        <AreasTab rows={rows.rows} areas={areas.rows} />
-      )}
-      {tab === "times" && <TimesTab />}
-      <StartOver onStartOver={onStartOver} />
+      </div>
     </main>
   );
 }

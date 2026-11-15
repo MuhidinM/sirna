@@ -1,0 +1,259 @@
+/*
+ * The frame, the rail and page layouts (docs/design.md). The frame never
+ * scrolls; `.app-page` is the one scroll container on every screen.
+ */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 14px;
+  height: 100vh;
+  padding: 14px;
+  background: var(--frame);
+  overflow: hidden;
+}
+
+.app-page {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border-radius: var(--radius-card);
+}
+
+/* --- The rail --------------------------------------------------------------------------- */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  min-height: 0;
+  padding: 18px 0 14px;
+  border-radius: var(--radius-card);
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  overflow: hidden;
+}
+
+.rail-logo {
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  margin-bottom: var(--space-3);
+}
+
+.rail-pages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.rail-item {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+
+.rail-item:hover {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+.rail-item[aria-current="page"] {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.rail-add {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pink);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--pink) 35%, transparent);
+  transition: transform 0.15s var(--ease);
+}
+
+[data-theme="forest"] .rail-add {
+  background: var(--cream);
+  color: var(--cream-ink);
+  box-shadow: none;
+}
+
+.rail-add:hover {
+  transform: scale(1.06);
+}
+
+.theme-switch {
+  position: relative;
+  width: 52px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--panel-line);
+  border-radius: var(--pill);
+  background: var(--raised);
+  cursor: pointer;
+}
+
+.theme-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--cream);
+  color: var(--cream-ink);
+  transition: transform 0.25s var(--ease);
+}
+
+.theme-switch[data-on="forest"] .theme-switch-knob {
+  transform: translateX(22px);
+}
+
+/* --- Page layouts ------------------------------------------------------------------------ */
+
+/* Every page: a column of blocks with the frame's gap. */
+.page {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+
+/* Side column + canvas (Today, Plan, Money). */
+.layout-split {
+  display: grid;
+  grid-template-columns: minmax(270px, 312px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.layout-split > .side,
+.layout-split > .main {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+
+/* Panels in a row that wraps. */
+.panel-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+/* The page head on the canvas: title, controls, primary action. */
+.canvas-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.canvas-head h1 {
+  margin: 0;
+}
+
+.canvas-head .spacer {
+  flex: 1;
+}
+
+.page-title {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+/* The Plan tabs sit on the frame above the page. */
+.plan-tabs {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+/* Medium: the side column goes under the main one, two panels a row. */
+@media (max-width: 1199px) {
+  .layout-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout-split > .side {
+    order: 2;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    align-items: start;
+  }
+}
+
+/* Narrow: a slimmer frame and rail. */
+@media (max-width: 719px) {
+  .app-shell {
+    grid-template-columns: 60px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .rail-item {
+    width: 40px;
+    height: 40px;
+  }
+
+  .canvas {
+    padding: var(--space-4);
+  }
+
+  .panel,
+  .card {
+    padding: var(--space-4);
+  }
+}
+
+/* Short windows: the rail keeps the + and the switch reachable. */
+@media (max-height: 560px) {
+  .rail {
+    gap: var(--space-2);
+    padding-top: 10px;
+  }
+
+  .rail-logo {
+    display: none;
+  }
+
+  .rail-pages {
+    gap: 2px;
+  }
+}

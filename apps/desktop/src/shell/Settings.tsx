@@ -1,5 +1,7 @@
+import "../theme/pages/settings.css";
+
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { type Op, transact } from "../kernel/db";
 import { CHEATS_SQL, WIDGET_ENABLED_KEY, WIDGET_NOTE_KEY, WIDGET_SQL } from "../widget/view";
@@ -12,11 +14,14 @@ import {
   settingsOps,
   type SettingsValues,
 } from "../features/settings/settings";
-import { ACCENTS, applyAccent, applyTheme } from "../theme/theme";
+import { THEMES } from "../theme/theme";
+import { transactTheme, useTheme } from "./useTheme";
 import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
 import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
-import { Button } from "./ui";
+import { IconBolt, IconExpand, IconPencil, IconSettings, IconSun } from "./icons";
+import { PanelHead } from "./kit";
+import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 import { AI_CHANGED_EVENT, BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
 import { SYNC_SQL } from "../features/calendar/sync";
@@ -86,7 +91,7 @@ function SecretField({ name, label, help, placeholder }: (typeof SECRETS)[number
           {saved ? "Replace" : "Save"}
         </Button>
         {saved && <Button onClick={() => void store("", "Removed")}>Remove</Button>}
-        <span className="meta" role="status">
+        <span className={saved && !note ? "set-state saved" : "set-state"} role="status">
           {note || status}
         </span>
       </div>
@@ -135,7 +140,7 @@ function CaptureKey() {
           Use this key
         </Button>
         <Button onClick={() => void apply("")}>Back to default</Button>
-        <span className="meta" role="status">
+        <span className="meta set-note" role="status">
           {note}
         </span>
       </div>
@@ -147,6 +152,8 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
   const [values, setValues] = useState(initial);
   const [capText, setCapText] = useState(String(initial.capMin));
   const [note, setNote] = useState("");
+  // The theme on screen, wherever it was changed (here or on the rail).
+  const current = useTheme();
   const change = (next: SettingsValues) => {
     setNote("");
     setValues(next);
@@ -161,13 +168,9 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
           setNote(cap.error);
           return;
         }
-        const next = { ...values, capMin: cap.minutes };
+        const next = { ...values, capMin: cap.minutes, theme: current };
         transact("user", settingsOps(next), "settings")
-          .then(() => {
-            applyTheme(next.theme);
-            applyAccent(next.accent);
-            setNote("Saved");
-          })
+          .then(() => setNote("Saved"))
           .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
       }}
     >
@@ -190,37 +193,34 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
         />
         Turn on Do not disturb during focus
       </label>
-      <label className="field">
-        <span>Theme</span>
-        <select
-          value={values.theme}
-          onChange={(event) =>
-            change({ ...values, theme: event.target.value === "light" ? "light" : "dark" })
-          }
-        >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-      </label>
-      <fieldset className="row colors">
-        <legend>Accent</legend>
-        {ACCENTS.map(({ accent, label }) => (
-          <label key={accent} className={values.accent === accent ? "swatch on" : "swatch"}>
-            <input
-              type="radio"
-              name="accent"
-              checked={values.accent === accent}
-              onChange={() => change({ ...values, accent })}
-            />
-            <span className={`accent-swatch accent-${accent}`} aria-label={label} title={label} />
-          </label>
-        ))}
+      <fieldset className="field set-theme">
+        <legend>Theme</legend>
+        <div className="seg">
+          {THEMES.map(({ theme, label }) => (
+            <label key={theme} className={`seg-item set-theme-${theme}`}>
+              <input
+                type="radio"
+                name="theme"
+                className="visually-hidden"
+                value={theme}
+                checked={current === theme}
+                onChange={() =>
+                  void transactTheme(theme)
+                    .then(() => setNote(""))
+                    .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`))
+                }
+              />
+              <span className="set-swatch" aria-hidden="true" />
+              {label}
+            </label>
+          ))}
+        </div>
       </fieldset>
       <div className="row">
         <Button type="submit" primary>
           Save
         </Button>
-        <span className="meta" role="status">
+        <span className="meta set-note" role="status">
           {note}
         </span>
       </div>
@@ -387,6 +387,12 @@ function AiSetup() {
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
   return (
     <div className="setting">
+      <div className="set-usage">
+        <span className="set-usage-count">
+          <strong>{usage.used}</strong> / {usage.cap}
+        </span>
+        <Bar label="AI requests used today" value={usage.cap > 0 ? usage.used / usage.cap : 0} />
+      </div>
       <p className="meta" role="status">
         Today: {usage.used} of {usage.cap} requests · the count resets at midnight Pacific (11:00
         here, 10:00 in US summer).
@@ -428,7 +434,7 @@ function AiSetup() {
         {!usage.has_key && <span className="meta">Save a Gemini key above first.</span>}
       </div>
       <form
-        className="row"
+        className="row set-inline"
         onSubmit={(event) => {
           event.preventDefault();
           const checked = checkDailyCap(capText);
@@ -442,7 +448,7 @@ function AiSetup() {
         </label>
         <Button type="submit">Save limit</Button>
       </form>
-      <span className="meta" role="status">
+      <span className="meta set-note" role="status">
         {note}
       </span>
     </div>
@@ -456,7 +462,7 @@ function WhatWasSent() {
   if (calls.rows.length === 0) return <p className="meta">Nothing has been sent.</p>;
   const now = systemClock.now();
   return (
-    <ul className="ai-log">
+    <ul className="ai-log set-log">
       {calls.rows.map((call) => (
         <li key={call.id}>
           <details>
@@ -505,11 +511,17 @@ function StatusStrip() {
     today: logicalDate(systemClock.now()),
   });
   return (
-    <ul className="status-strip" aria-label="Status">
+    <ul className="set-status" aria-label="Status">
       {lines.map((line) => (
-        <li key={line.name} className={line.ok === false ? "needs" : line.ok ? "fine" : "unset"}>
-          <strong>{line.name}</strong>{" "}
-          <span>
+        <li
+          key={line.name}
+          className={`panel set-stat ${line.ok === false ? "needs" : line.ok ? "fine" : "unset"}`}
+        >
+          <span className="set-stat-head">
+            <span className="set-dot" aria-hidden="true" />
+            <strong>{line.name}</strong>
+          </span>{" "}
+          <span className="set-stat-text">
             {line.ok === false ? "Needs you: " : ""}
             {line.text}
           </span>
@@ -519,64 +531,141 @@ function StatusStrip() {
   );
 }
 
+const SECTIONS = [
+  { id: "set-keys", title: "Keys and links" },
+  { id: "set-ai", title: "AI" },
+  { id: "set-capture", title: "Capture" },
+  { id: "set-look", title: "Focus and look" },
+  { id: "set-windows", title: "Windows" },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+
+/** One block on the canvas: its name and a line on the left, the settings on the right. */
+function Section({
+  id,
+  icon,
+  sub,
+  children,
+}: {
+  id: SectionId;
+  icon: ReactNode;
+  sub: string;
+  children: ReactNode;
+}) {
+  const title = SECTIONS.find((section) => section.id === id)?.title ?? "";
+  return (
+    <section className="set-section" id={id} aria-labelledby={`${id}-title`}>
+      <div className="set-label">
+        <span className="set-icon">{icon}</span>
+        <div>
+          <h2 id={`${id}-title`}>{title}</h2>
+          <p className="set-sub">{sub}</p>
+        </div>
+      </div>
+      <div className="set-body">{children}</div>
+    </section>
+  );
+}
+
+/** The sections as a list in the side column; a click scrolls the page to one. */
+function Jump() {
+  return (
+    <nav className="panel set-jump" aria-labelledby="set-jump-title">
+      <PanelHead
+        id="set-jump-title"
+        title="On this page"
+        sub="The theme saves at once; other parts have a Save button"
+      />
+      <ul className="list-rows">
+        {SECTIONS.map((section) => (
+          <li key={section.id}>
+            <button
+              type="button"
+              onClick={() =>
+                document
+                  .getElementById(section.id)
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            >
+              {section.title}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
 /** Keys, links and preferences, all changeable here (nothing is built in). */
 export function Settings() {
   const settings = useLiveQuery<{ key: string; value_json: string | null }>(SETTINGS_SQL);
   return (
-    <main className="review settings">
-      <header className="review-head">
-        <h1>Settings</h1>
-        <p className="meta">
-          Keys and links are kept in Windows Credential Manager, not in Sirna&apos;s database, and
-          are never shown again once saved. Replace or remove them here at any time.
-        </p>
-      </header>
-      <StatusStrip />
+    <main className="page settings-page">
+      <div className="layout-split">
+        <aside className="side" aria-label="Status and sections">
+          <StatusStrip />
+          <Jump />
+        </aside>
 
-      <section className="card">
-        <h2>Keys and links</h2>
-        {SECRETS.map((secret) => (
-          <SecretField key={secret.name} {...secret} />
-        ))}
-        <CalendarStatus />
-        <p className="meta">
-          Email: Sirna doesn&apos;t sign in to email, so there is no email password to store. The
-          &ldquo;Check email&rdquo; blocks only remind you; change their times in My week.
-        </p>
-      </section>
+        <div className="main">
+          <div className="canvas set-canvas">
+            <header className="canvas-head">
+              <h1 className="page-title">
+                Settings, <span className="soft">keys and look</span>
+              </h1>
+            </header>
+            <p className="set-lead">
+              Keys and links are kept in Windows Credential Manager, not in Sirna&apos;s database,
+              and are never shown again once saved. Replace or remove them here at any time.
+            </p>
 
-      <section className="card">
-        <h2>AI</h2>
-        <p className="meta">
-          Gemini only phrases and suggests; the numbers and verdicts are Sirna&apos;s own. Without a
-          key, offline or over the limit, everything still works with plain text.
-        </p>
-        <AiSetup />
-        <StrictMode />
-        <h3>What was sent</h3>
-        <WhatWasSent />
-      </section>
+            <Section id="set-keys" icon={<IconSettings size={18} />} sub="Saved outside Sirna">
+              {SECRETS.map((secret) => (
+                <SecretField key={secret.name} {...secret} />
+              ))}
+              <CalendarStatus />
+              <p className="meta set-aside">
+                Email: Sirna doesn&apos;t sign in to email, so there is no email password to store.
+                The &ldquo;Check email&rdquo; blocks only remind you; change their times in My week.
+              </p>
+            </Section>
 
-      <section className="card">
-        <h2>Capture</h2>
-        <CaptureKey />
-      </section>
+            <Section id="set-ai" icon={<IconBolt size={18} />} sub="Gemini phrases, Sirna decides">
+              <p className="meta set-aside">
+                Gemini only phrases and suggests; the numbers and verdicts are Sirna&apos;s own.
+                Without a key, offline or over the limit, everything still works with plain text.
+              </p>
+              <AiSetup />
+              <div className="setting">
+                <StrictMode />
+              </div>
+              <div className="setting">
+                <h3>What was sent</h3>
+                <WhatWasSent />
+              </div>
+            </Section>
 
-      <section className="card">
-        <h2>Focus and look</h2>
-        {settings.error && (
-          <p role="alert" className="error">
-            Couldn&apos;t load settings: {settings.error}
-          </p>
-        )}
-        {!settings.loading && <FocusAndLook initial={readSettings(settings.rows)} />}
-      </section>
+            <Section id="set-capture" icon={<IconPencil size={18} />} sub="One key, from anywhere">
+              <CaptureKey />
+            </Section>
 
-      <section className="card">
-        <h2>Windows</h2>
-        <Autostart />
-        <DesktopWidget />
-      </section>
+            <Section id="set-look" icon={<IconSun size={18} />} sub="Daily cap, quiet and theme">
+              {settings.error && (
+                <p role="alert" className="error">
+                  Couldn&apos;t load settings: {settings.error}
+                </p>
+              )}
+              {!settings.loading && <FocusAndLook initial={readSettings(settings.rows)} />}
+            </Section>
+
+            <Section id="set-windows" icon={<IconExpand size={18} />} sub="Start-up and the widget">
+              <Autostart />
+              <DesktopWidget />
+            </Section>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }

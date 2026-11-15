@@ -1,0 +1,1016 @@
+/*
+ * Money (docs/design.md → Pages): safe to spend, accounts and the advisor in
+ * the side column; the month, the ledger and the rest as tabs on the canvas.
+ * Also "Money today" (TodayMoney, TodayDue) inside a dark panel on Today.
+ */
+
+.money-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Side: safe to spend (the yellow card) ------------------------------------------------ */
+
+.money-safe {
+  min-height: 210px;
+}
+
+.money-safe h2.now-when {
+  margin: 0;
+  color: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.money-safe-total {
+  position: relative;
+  z-index: 1;
+  margin: var(--space-1) 0 0;
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.money-safe-total small {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+.money-safe-sub,
+.money-safe-note {
+  position: relative;
+  z-index: 1;
+  margin: var(--space-2) 0 0;
+  max-width: 66%;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.money-safe-note {
+  max-width: none;
+  opacity: 0.85;
+}
+
+.money-safe-sum {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+  margin: var(--space-4) 0 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--canvas) 55%, transparent);
+  font-size: var(--text-xs);
+}
+
+.money-safe-sum li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 3px 0;
+}
+
+.money-safe-sum li.total {
+  margin-top: var(--space-1);
+  padding-top: 8px;
+  border-top: 1.5px dashed color-mix(in srgb, var(--on-loud) 30%, transparent);
+  font-size: var(--text-sm);
+}
+
+.money-art {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 92px;
+  transform: rotate(-4deg);
+  pointer-events: none;
+}
+
+/* Nothing safe: the card turns pink, the colour of what needs you. */
+.money-safe.short {
+  background: var(--pink);
+  color: var(--canvas);
+}
+
+.money-safe.short .btn:not(.btn-orange) {
+  color: var(--canvas);
+}
+
+.money-safe.short .btn:not(.btn-orange):hover {
+  background: color-mix(in srgb, var(--canvas) 18%, transparent);
+}
+
+/* --- Side: accounts, emergency fund, afford ---------------------------------------------- */
+
+.money-accounts .list-rows > li {
+  font-weight: 500;
+}
+
+.money-accounts .money-num {
+  font-weight: 700;
+}
+
+.money-big {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.money-emergency .bar {
+  height: 10px;
+  margin-bottom: var(--space-3);
+  background: var(--raised);
+}
+
+.money-emergency .btn {
+  margin-top: var(--space-2);
+}
+
+.money-afford-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: var(--space-2);
+}
+
+.money-afford-form input {
+  width: 100%;
+}
+
+@container (max-width: 300px) {
+  .money-afford-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.money-afford .error {
+  margin: var(--space-2) 0 0;
+}
+
+.money-verdict {
+  margin-top: var(--space-3);
+  padding: 12px 14px;
+  border-radius: var(--radius);
+}
+
+.money-verdict p {
+  margin: 0 0 var(--space-1);
+}
+
+.money-verdict strong {
+  font-size: var(--text-lg);
+}
+
+.money-verdict .meta {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.money-verdict.fine {
+  background: var(--mint);
+  color: var(--mint-ink);
+}
+
+.money-verdict.warn {
+  background: var(--pink);
+  color: var(--canvas);
+}
+
+/* --- The advisor (side panel on Money, inside "Money today" on Today) -------------------- */
+
+.advisor .findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.advisor li.finding {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 6px var(--space-3);
+  margin: 0;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+
+.advisor li.finding > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.advisor li.finding > .dot-pink,
+.advisor li.finding > .dot-cream {
+  grid-column: 1;
+  grid-row: 1;
+  margin-top: 7px;
+}
+
+.advisor li.finding p {
+  margin: 0;
+}
+
+.finding-text {
+  font-weight: 500;
+}
+
+.finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.advisor .finding-actions .btn {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: var(--text-xs);
+}
+
+/* Yellow stays the page's one primary action; the advisor's are cream. */
+.advisor .finding-actions .btn-primary {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.advisor .finding-actions .btn:not(.btn-primary) {
+  background: transparent;
+  border-color: var(--bar-top);
+}
+
+.advisor.flat {
+  margin-top: var(--space-4);
+}
+
+.advisor.flat h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* --- Money today (a dark panel on Today) -------------------------------------------------- */
+
+.money-today-block {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.money-today {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 14px 16px;
+  border-radius: var(--radius-event);
+  background: var(--raised);
+}
+
+.money-today-line {
+  flex: 1 1 180px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.money-today-line strong {
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+.money-today .btn {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.money-due .btn {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: var(--text-xs);
+}
+
+.money-due .error {
+  font-size: var(--text-xs);
+}
+
+/* --- Canvas head and tabs ------------------------------------------------------------------- */
+
+.money-canvas .canvas-head {
+  margin-bottom: var(--space-4);
+}
+
+.money-months {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.money-months .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.money-tabs {
+  margin-bottom: var(--space-5);
+}
+
+.money-canvas code {
+  font-size: 0.86em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--canvas-2);
+}
+
+.money-canvas .warn-text {
+  color: var(--danger);
+}
+
+.money-note {
+  margin: 0 0 var(--space-3);
+}
+
+.money-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* --- Cards on the canvas ------------------------------------------------------------------ */
+
+.money-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+  margin-bottom: var(--space-4);
+}
+
+.money-grid > .money-full {
+  grid-column: 1 / -1;
+}
+
+.money-canvas .card {
+  padding: var(--space-5);
+  min-width: 0;
+}
+
+.money-canvas .card h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+}
+
+.money-canvas .card .panel-head h2 {
+  margin: 0;
+}
+
+.money-canvas .card > .hint:last-child,
+.money-canvas .card > .meta:last-child {
+  margin: var(--space-3) 0 0;
+}
+
+.money-wide {
+  margin-top: var(--space-2);
+}
+
+/* --- The month's four numbers ---------------------------------------------------------------- */
+
+.money-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.money-stat {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 116px;
+  padding: 16px 18px;
+  border-radius: var(--radius-event);
+  background: var(--tone);
+  color: var(--tone-ink, var(--on-loud));
+}
+
+.money-stat::after {
+  content: "";
+  position: absolute;
+  top: -26px;
+  right: -26px;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--canvas) 22%, transparent);
+  pointer-events: none;
+}
+
+.money-stat-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.money-stat-value {
+  margin-top: auto;
+  font-size: 1.7rem;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.money-stat-value small {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+.money-stat-sub {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+/* --- Out by month (the shared bar chart) ---------------------------------------------------- */
+
+.money-trend .bars {
+  height: 210px;
+}
+
+/* The last bar's tip opens to the left, so it stays on the card. */
+.money-trend .bars-col:last-child .bars-tip {
+  transform: translateX(-80%);
+}
+
+.money-trend .bars-tip {
+  min-width: 150px;
+}
+
+/* --- Where it went and caps: two-tone bars --------------------------------------------------- */
+
+.money-spend,
+.money-caps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.money-spend-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px var(--space-3);
+  margin-bottom: 6px;
+}
+
+.money-spend-name {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.money-spend-head .meta {
+  font-size: var(--text-xs);
+}
+
+.money-track {
+  position: relative;
+  display: block;
+  height: 12px;
+  border-radius: var(--pill);
+  background: var(--canvas-2);
+}
+
+.money-usual {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: inherit;
+  background: var(--bar-top);
+}
+
+.money-spent {
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  min-width: 4px;
+  border-radius: inherit;
+  background: var(--canvas-ink);
+}
+
+.money-spend li.hi .money-spent {
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(135deg, var(--yellow) 0 7px, var(--orange-soft) 7px 11px);
+}
+
+.money-cap-bar {
+  position: relative;
+  display: block;
+}
+
+.money-cap .bar {
+  height: 12px;
+  background: var(--canvas-2);
+}
+
+.money-cap .bar > span {
+  background: var(--canvas-ink);
+}
+
+.money-cap.warn .bar > span {
+  background: repeating-linear-gradient(135deg, var(--pink) 0 7px, var(--pink-soft) 7px 11px);
+}
+
+.money-pace {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 20px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--yellow);
+  box-shadow: 0 0 0 2px var(--canvas);
+}
+
+/* --- Plain lines (money in, jobs, month review) --------------------------------------------- */
+
+.money-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.money-lines li,
+.money-page .money-review .money-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px var(--space-4);
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1.5px dashed var(--canvas-line);
+}
+
+.money-lines li:last-child,
+.money-page .money-review .money-line:last-child {
+  border-bottom: 0;
+}
+
+.money-lines li > :first-child {
+  font-weight: 600;
+}
+
+.money-page .money-review {
+  margin-bottom: var(--space-4);
+  background: var(--cream);
+  border-color: transparent;
+  color: var(--cream-ink);
+}
+
+.money-page .money-review .meta {
+  color: color-mix(in srgb, var(--cream-ink) 75%, transparent);
+}
+
+.money-page .money-review .money-line {
+  border-bottom-color: color-mix(in srgb, var(--cream-ink) 18%, transparent);
+}
+
+/* --- Toolbars and forms ------------------------------------------------------------------------ */
+
+.money-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.money-toolbar > input {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.money-toolbar > select {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.money-toolbar > .meta[role="status"] {
+  flex-basis: 100%;
+}
+
+.money-search {
+  flex: 1 1 220px;
+}
+
+.money-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.money-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.money-form .error,
+.money-form > .meta {
+  margin: 0;
+}
+
+.money-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: var(--space-3);
+}
+
+.money-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.money-field input,
+.money-field select {
+  width: 100%;
+  color: var(--ink);
+  font-size: var(--text-md);
+  font-weight: 450;
+}
+
+.money-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.money-canvas .card.money-add {
+  margin-bottom: var(--space-4);
+  border-style: dashed;
+  border-color: var(--mint-ink);
+  background: var(--mint);
+}
+
+.money-canvas .money-add .money-field {
+  color: var(--mint-ink);
+}
+
+.money-canvas .money-add input,
+.money-canvas .money-add select {
+  background: var(--canvas);
+}
+
+/* --- The ledger ------------------------------------------------------------------------------ */
+
+.ledger {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.ledger-day h3.ledger-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.ledger-date {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: var(--pill);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-weight: 600;
+}
+
+.ledger-date.today {
+  background: var(--canvas-ink);
+  color: var(--canvas);
+}
+
+.ledger-net {
+  color: var(--canvas-ink-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--canvas-line);
+  border-radius: var(--radius-event);
+  overflow: hidden;
+}
+
+.ledger-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--canvas-line);
+  transition: background 0.12s var(--ease);
+}
+
+.ledger-row:last-child,
+.ledger-edit:last-child {
+  border-bottom: 0;
+}
+
+.ledger-row:hover {
+  background: var(--canvas-2);
+}
+
+.ledger-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--canvas-2);
+  color: var(--canvas-ink-2);
+  font-weight: 700;
+}
+
+.ledger-row:hover .ledger-mark:not(.in, .move) {
+  background: var(--canvas);
+}
+
+.ledger-mark.in {
+  background: var(--mint);
+  color: var(--mint-ink);
+}
+
+.ledger-mark.move {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.ledger-what {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ledger-desc {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-what .meta {
+  font-size: var(--text-xs);
+}
+
+.ledger-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ledger-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.ledger-actions .btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  color: var(--canvas-ink-2);
+}
+
+.ledger-error {
+  grid-column: 2 / -1;
+  margin: 0;
+}
+
+.ledger-edit {
+  padding: 14px;
+  border-bottom: 1px solid var(--canvas-line);
+}
+
+@container (max-width: 520px) {
+  .ledger-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .ledger-actions {
+    grid-column: 2 / -1;
+  }
+}
+
+/* --- Rows with controls (pay and bills, lent, accounts, categories) -------------------------- */
+
+.money-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.money-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  padding: 12px 0;
+  border-bottom: 1.5px dashed var(--canvas-line);
+}
+
+.money-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.money-row:first-child {
+  padding-top: 0;
+}
+
+.money-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.money-row-title {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.money-row-title .meta {
+  font-weight: 450;
+}
+
+.money-row-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Rows made of several control lines stack them. */
+.money-row:has(> .money-row-line + .money-row-line) > .money-row-line {
+  flex-basis: 100%;
+}
+
+.money-row .btn {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: var(--text-xs);
+}
+
+.money-row input:not([type="checkbox"], [type="radio"]),
+.money-row select {
+  min-height: 34px;
+  font-size: var(--text-sm);
+}
+
+.money-input {
+  flex: 1 1 140px;
+  width: auto;
+  min-width: 0;
+}
+
+.money-row > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.money-avatar,
+.money-day {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.money-day.late {
+  background: var(--pink);
+  color: var(--canvas);
+}
+
+.money-day.paid {
+  background: var(--mint);
+  color: var(--mint-ink);
+}
+
+.money-day.upcoming {
+  background: var(--canvas-2);
+  color: var(--canvas-ink-2);
+}
+
+.money-state {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--pill);
+  background: var(--canvas-2);
+  color: var(--canvas-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.money-state.late {
+  background: var(--pink);
+  color: var(--canvas);
+}
+
+.money-state.due {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.money-state.paid {
+  background: var(--mint);
+  color: var(--mint-ink);
+}
+
+.money-progress-line {
+  margin: 0 0 var(--space-2);
+  color: var(--canvas-ink-2);
+}
+
+.money-progress-line strong {
+  font-size: var(--text-xl);
+  color: var(--canvas-ink);
+  letter-spacing: -0.02em;
+}
+
+.money-canvas .card .bar {
+  height: 10px;
+  background: var(--canvas-2);
+}
+
+.money-canvas .card .money-progress-line + .bar {
+  margin-bottom: var(--space-4);
+}
+
+.money-canvas .card .money-progress-line + .bar > span {
+  background: var(--canvas-ink);
+}
+
+/* Accounts tab. */
+.money-headline {
+  margin: 0 0 var(--space-4);
+  color: var(--canvas-ink-2);
+}
+
+.money-headline strong {
+  display: block;
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--canvas-ink);
+}
+
+.money-balance {
+  margin-left: auto;
+  font-size: var(--text-lg);
+}

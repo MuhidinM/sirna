@@ -1,4 +1,6 @@
-import { type ReactNode, useEffect, useState } from "react";
+import "../theme/pages/dashboard.css";
+
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { transact } from "../kernel/db";
@@ -8,7 +10,6 @@ import {
   type CardPlace,
   LAYOUT_SQL,
   layoutOps,
-  move,
   moveTo,
   readLayout,
   setSize,
@@ -39,12 +40,14 @@ import {
 import { weekStart } from "../features/plan/dayplan";
 import { hoursLabel } from "../features/projects/capacity";
 import { AREA_WEEK_SQL, type AreaWeek, share } from "../features/week/card";
+import { IconBolt, IconChart, IconCheck, IconClock, IconPencil, IconPlay } from "./icons";
 import { InsightList } from "./Insights";
+import { type Bar as ChartBar, BarChart, PanelHead } from "./kit";
 import { Savings } from "./Savings";
 import { type AreaColor, Bar, Button } from "./ui";
+import { useLiveQuery } from "./useLiveQuery";
 
 const labelOf = (id: CardId) => CARDS.find((card) => card.id === id)?.label ?? id;
-import { useLiveQuery } from "./useLiveQuery";
 
 const AREAS_SQL =
   "SELECT id, name FROM area_items WHERE deleted_at IS NULL AND active = 1 AND kind != 'work' ORDER BY priority_rank, name";
@@ -74,31 +77,96 @@ const dayLabel = new Intl.DateTimeFormat("en-GB", {
   timeZone: "UTC",
 });
 
+const shortDate = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+
+const monthLabel = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" });
+
+/** A month name over the first week that starts in it. */
+function monthMarks(grid: Cell[][]): { column: number; label: string }[] {
+  const marks: { column: number; label: string }[] = [];
+  let last = "";
+  grid.forEach((week, column) => {
+    const month = week[0]?.date.slice(0, 7);
+    if (!month || month === last) return;
+    last = month;
+    // Skip a first column that only catches the end of a month.
+    if (column === 0 && week[0]?.date.slice(8) !== "01") return;
+    marks.push({ column, label: monthLabel.format(new Date(`${month}-01T00:00:00Z`)) });
+  });
+  return marks;
+}
+
 /**
  * The chart's cells are for the mouse (out of the tab order); the date field
- * next to it picks a day from the keyboard.
+ * next to it picks a day from the keyboard. Columns share the width, so the
+ * year squeezes instead of scrolling.
  */
-function YearChart({ grid, onPick }: { grid: Cell[][]; onPick: (date: string) => void }) {
+function YearChart({
+  grid,
+  today,
+  picked,
+  onPick,
+}: {
+  grid: Cell[][];
+  today: string;
+  picked: string | null;
+  onPick: (date: string) => void;
+}) {
+  const style = { "--weeks": grid.length } as CSSProperties;
   return (
-    <div className="year-chart" role="group" aria-label="Focus time over the last year">
-      {grid.map((week) => (
-        <div key={week[0]?.date} className="year-week">
-          {week.map((cell) => (
-            <button
-              key={cell.date}
-              type="button"
-              tabIndex={-1}
-              className={`year-cell shade-${cell.shade}${cell.outline ? " outline" : ""}${cell.future ? " future" : ""}`}
-              disabled={cell.future}
-              title={`${dayLabel.format(new Date(`${cell.date}T00:00:00Z`))}: ${cell.minutes ? hoursLabel(cell.minutes) : "no focus"}`}
-              aria-label={`${cell.date}, ${cell.minutes} minutes`}
-              onClick={() => onPick(cell.date)}
-            />
-          ))}
-        </div>
-      ))}
+    <div className="year-wrap" style={style}>
+      <div className="year-months" aria-hidden="true">
+        {monthMarks(grid).map((mark) => (
+          <span key={mark.column} style={{ gridColumnStart: mark.column + 1 }}>
+            {mark.label}
+          </span>
+        ))}
+      </div>
+      <div className="year-chart" role="group" aria-label="Focus time over the last year">
+        {grid.map((week) => (
+          <div key={week[0]?.date} className="year-week">
+            {week.map((cell) => (
+              <button
+                key={cell.date}
+                type="button"
+                tabIndex={-1}
+                className={`year-cell shade-${cell.shade}${cell.outline ? " outline" : ""}${cell.future ? " future" : ""}${cell.date === today ? " today" : ""}${cell.date === picked ? " picked" : ""}`}
+                disabled={cell.future}
+                title={`${dayLabel.format(new Date(`${cell.date}T00:00:00Z`))}: ${cell.minutes ? hoursLabel(cell.minutes) : "no focus"}`}
+                aria-label={`${cell.date}, ${cell.minutes} minutes`}
+                onClick={() => onPick(cell.date)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
+}
+
+/** This week's areas: target (cap) against done (body), the busiest one highlighted. */
+function AreaChart({ rows }: { rows: AreaWeek[] }) {
+  const busiest = rows.reduce<AreaWeek | null>(
+    (best, row) => (row.done_min > (best?.done_min ?? 0) ? row : best),
+    null,
+  );
+  const bars: ChartBar[] = rows.map((row) => ({
+    label: row.name,
+    total: row.target_min / 60,
+    done: row.done_min / 60,
+    highlight: row.id === busiest?.id,
+    tipTitle: row.name,
+    tip: [
+      { label: "Target", value: hoursLabel(row.target_min), tone: "yellow" },
+      { label: "Done", value: hoursLabel(row.done_min), tone: "cream" },
+    ],
+  }));
+  const done = rows.reduce((sum, row) => sum + row.done_min, 0);
+  return <BarChart bars={bars} unit="h" ariaLabel={`Areas this week: ${hoursLabel(done)} done`} />;
 }
 
 /** The dashboard (plan §3.13): tiles, the streak, the year chart and this week's areas. */
@@ -168,146 +236,228 @@ export function Dashboard() {
   const t = tiles.rows[0];
   const goalMin = goal.rows[0]?.goal_min ?? 0;
 
+  const loose = layout.filter((place) => !place.hidden);
+  /** One step among the cards in the grid (hidden ones are stepped over). */
+  const step = (id: CardId, by: -1 | 1) => {
+    const at = loose.findIndex((place) => place.id === id);
+    const other = loose[at + by];
+    if (other) save((current) => moveTo(current, id, other.id));
+  };
+
   const cards: Record<CardId, ReactNode> = {
+    savings: <Savings />,
     tiles: (
-      <section className="tiles" aria-label="This week">
-        <div className="card tile">
-          <span className="meta">Focus this week</span>
-          <strong>{hoursLabel(t?.focus_min ?? 0)}</strong>
-          {goalMin > 0 && (
-            <>
-              <Bar
-                value={(t?.goal_focus_min ?? 0) / goalMin}
-                label="Focus in Grow and Admin areas against the week's goal"
-              />
-              <span className="meta">
-                {hoursLabel(t?.goal_focus_min ?? 0)} of {hoursLabel(goalMin)} aimed for in your
-                areas
+      <div className="canvas dash-tiles">
+        <section className="dash-stats" aria-label="This week">
+          <div className="dash-stat tone-orange">
+            <span className="dash-stat-top">
+              <span className="dash-stat-label">Focus this week</span>
+              <span className="dash-stat-icon" aria-hidden="true">
+                <IconClock size={16} />
               </span>
-            </>
-          )}
-        </div>
-        <div className="card tile">
-          <span className="meta">Sessions</span>
-          <strong>{t?.sessions ?? 0}</strong>
-        </div>
-        <div className="card tile">
-          <span className="meta">Breaks taken</span>
-          <strong>{hoursLabel(t?.break_min ?? 0)}</strong>
-        </div>
-        <div className="card tile">
-          <span className="meta">Distractions noted</span>
-          <strong>{t?.distractions ?? 0}</strong>
-        </div>
-      </section>
+            </span>
+            <strong className="dash-stat-value">{hoursLabel(t?.focus_min ?? 0)}</strong>
+            {goalMin > 0 && (
+              <>
+                <Bar
+                  value={(t?.goal_focus_min ?? 0) / goalMin}
+                  label="Focus in Grow and Admin areas against the week's goal"
+                />
+                <span className="dash-stat-sub">
+                  {hoursLabel(t?.goal_focus_min ?? 0)} of {hoursLabel(goalMin)} aimed for in your
+                  areas
+                </span>
+              </>
+            )}
+          </div>
+          <div className="dash-stat tone-purple">
+            <span className="dash-stat-top">
+              <span className="dash-stat-label">Sessions</span>
+              <span className="dash-stat-icon" aria-hidden="true">
+                <IconPlay size={16} />
+              </span>
+            </span>
+            <strong className="dash-stat-value">{t?.sessions ?? 0}</strong>
+          </div>
+          <div className="dash-stat tone-cream">
+            <span className="dash-stat-top">
+              <span className="dash-stat-label">Breaks taken</span>
+              <span className="dash-stat-icon" aria-hidden="true">
+                <IconCheck size={16} />
+              </span>
+            </span>
+            <strong className="dash-stat-value">{hoursLabel(t?.break_min ?? 0)}</strong>
+          </div>
+          <div className="dash-stat tone-pink">
+            <span className="dash-stat-top">
+              <span className="dash-stat-label">Distractions noted</span>
+              <span className="dash-stat-icon" aria-hidden="true">
+                <IconBolt size={16} />
+              </span>
+            </span>
+            <strong className="dash-stat-value">{t?.distractions ?? 0}</strong>
+          </div>
+        </section>
+      </div>
     ),
     streak: (
-      <section className="card streak" aria-label="Focus streak">
-        <Flame lit={streak.alive} />
-        <div>
+      <section
+        className={`panel dash-streak${streak.alive ? " alive" : ""}`}
+        aria-label="Focus streak"
+      >
+        <PanelHead
+          icon={<Flame lit={streak.alive} />}
+          title="Focus streak"
+          sub="Rest days and light days never break it"
+        />
+        <p className="dash-streak-count">
           <strong className="streak-number">{streak.current}</strong>{" "}
           <span>day{streak.current === 1 ? "" : "s"}</span>
-          <p className="meta">
-            Best: {streak.best} · {streak.freeLeft === 1 ? "1 free miss" : "No free miss"} left this
-            week · rest days and light days never break it
-          </p>
+        </p>
+        <div className="dash-chips">
+          <span className="dash-chip">Best: {streak.best}</span>
+          <span className={streak.freeLeft === 1 ? "dash-chip" : "dash-chip pink"}>
+            {streak.freeLeft === 1 ? "1 free miss" : "No free miss"} left this week
+          </span>
         </div>
       </section>
     ),
     year: (
-      <section className="card" aria-labelledby="year">
-        <div className="row">
-          <h2 id="year">The year</h2>
-          <select aria-label="Area" value={area} onChange={(event) => setArea(event.target.value)}>
-            <option value="">All areas</option>
-            {areas.rows.map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.name}
-              </option>
-            ))}
-          </select>
+      <section className="panel dash-year" aria-labelledby="year">
+        <PanelHead
+          id="year"
+          title="The year"
+          sub="Focus time per day"
+          action={
+            <select
+              aria-label="Area"
+              value={area}
+              onChange={(event) => setArea(event.target.value)}
+            >
+              <option value="">All areas</option>
+              {areas.rows.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          }
+        />
+        <YearChart grid={grid} today={today} picked={picked} onPick={setPicked} />
+        <div className="year-foot">
+          <p className="meta legend">
+            Less <span className="year-cell shade-0" /> <span className="year-cell shade-1" />{" "}
+            <span className="year-cell shade-2" /> <span className="year-cell shade-3" />{" "}
+            <span className="year-cell shade-4" /> 3 h+ · <span className="year-cell outline" />{" "}
+            rest or away
+            {pickedCell && (
+              <>
+                {" "}
+                ·{" "}
+                <span className="dash-chip pink">
+                  {dayLabel.format(new Date(`${pickedCell.date}T00:00:00Z`))}:{" "}
+                  {pickedCell.minutes ? hoursLabel(pickedCell.minutes) : "no focus"}
+                </span>
+              </>
+            )}
+          </p>
+          <label className="year-lookup">
+            <span className="meta">Look up a day</span>
+            <input
+              type="date"
+              min={first}
+              max={today}
+              value={picked ?? ""}
+              onChange={(event) => setPicked(event.target.value || null)}
+            />
+          </label>
         </div>
-        <YearChart grid={grid} onPick={setPicked} />
-        <label className="field inline">
-          <span className="meta">Look up a day</span>
-          <input
-            type="date"
-            min={first}
-            max={today}
-            value={picked ?? ""}
-            onChange={(event) => setPicked(event.target.value || null)}
-          />
-        </label>
-        <p className="meta legend">
-          Less <span className="year-cell shade-0" /> <span className="year-cell shade-1" />{" "}
-          <span className="year-cell shade-2" /> <span className="year-cell shade-3" />{" "}
-          <span className="year-cell shade-4" /> 3 h+ · <span className="year-cell outline" /> rest
-          or away
-          {pickedCell && (
-            <>
-              {" "}
-              · {dayLabel.format(new Date(`${pickedCell.date}T00:00:00Z`))}:{" "}
-              {pickedCell.minutes ? hoursLabel(pickedCell.minutes) : "no focus"}
-            </>
-          )}
-        </p>
       </section>
     ),
     insights: (
-      <section className="card" aria-labelledby="insights">
-        <h2 id="insights">Insights</h2>
+      <section className="panel dash-insights" aria-labelledby="insights">
+        <PanelHead
+          id="insights"
+          icon={<IconBolt size={18} />}
+          title="Insights"
+          sub="Last 4 weeks"
+        />
         <InsightList today={today} />
       </section>
     ),
-    savings: <Savings />,
     areas: (
-      <section className="card" aria-labelledby="areas">
-        <h2 id="areas">Areas this week</h2>
-        <ul className="area-bars">
+      <section className="panel dash-areas" aria-labelledby="areas">
+        <PanelHead
+          id="areas"
+          title="Areas this week"
+          sub="Done against each weekly target"
+          action={
+            <span className="icon-btn" aria-hidden="true">
+              <IconChart size={18} />
+            </span>
+          }
+        />
+        {week.rows.length > 0 && <AreaChart rows={week.rows} />}
+        <ul className="dash-area-rows">
           {week.rows.map((row) => (
             <li key={row.id}>
-              <span>{row.name}</span>
+              <span className="dash-area-name">
+                <i
+                  className="dash-dot"
+                  style={{ "--dot": `var(--area-${row.color})` } as CSSProperties}
+                  aria-hidden="true"
+                />
+                {row.name}
+              </span>
               <Bar
                 value={share(row)}
                 area={row.color as AreaColor}
                 label={`${row.name} this week`}
               />
-              <span className="meta">
+              <span className="meta num">
                 {hoursLabel(row.done_min)} of {hoursLabel(row.target_min)}
               </span>
             </li>
           ))}
         </ul>
+        {!week.loading && week.rows.length === 0 && (
+          <p className="empty">No area has a weekly target yet.</p>
+        )}
       </section>
     ),
   };
 
   return (
-    <main className="dashboard">
-      <div className="row dash-head">
-        <h1>Dashboard</h1>
-        <Button onClick={() => setArranging(!arranging)}>
-          {arranging ? "Done arranging" : "Arrange"}
-        </Button>
-        {error && (
-          <span role="alert" className="error">
-            {error}
-          </span>
+    <main className="page dash">
+      <section className="canvas dash-canvas" aria-labelledby="dash-title">
+        <header className="canvas-head">
+          <h1 id="dash-title" className="page-title">
+            Dashboard, <span className="soft">week of {shortDate.format(startMs)}</span>
+          </h1>
+          <span className="spacer" />
+          {error && (
+            <span role="alert" className="error">
+              {error}
+            </span>
+          )}
+          <Button primary onClick={() => setArranging(!arranging)}>
+            <IconPencil size={16} /> {arranging ? "Done arranging" : "Arrange"}
+          </Button>
+        </header>
+        {arranging && (
+          <p className="meta dash-help">
+            Drag a card onto another to move it, or use the arrows. Sizes: S, M, L. Hidden cards
+            wait below.
+          </p>
         )}
-      </div>
-      {arranging && (
-        <p className="meta">
-          Drag a card onto another to move it, or use the arrows. Sizes: S, M, L. Hidden cards wait
-          below.
-        </p>
-      )}
-      <div className="dash-grid">
-        {layout
-          .filter((place) => !place.hidden)
-          .map((place) => (
+      </section>
+
+      <div className="dash-board">
+        <div className="dash-cells">
+          {loose.map((place, index) => (
             <div
               key={place.id}
-              className={`dash-card span-${span(place.size)}${arranging ? " arranging" : ""}`}
+              className={`dash-cell span-${span(place.size)}${arranging ? " arranging" : ""}`}
               draggable={arranging}
               onDragStart={(event) => event.dataTransfer.setData("text/plain", place.id)}
               onDragOver={(event) => {
@@ -321,43 +471,51 @@ export function Dashboard() {
               }}
             >
               {arranging && (
-                <div className="row card-controls" aria-label={`Arrange ${labelOf(place.id)}`}>
+                <div className="dash-controls" aria-label={`Arrange ${labelOf(place.id)}`}>
                   <strong>{labelOf(place.id)}</strong>
                   <Button
+                    className="dash-icon"
                     aria-label="Move earlier"
-                    onClick={() => save((current) => move(current, place.id, -1))}
+                    aria-disabled={index === 0}
+                    onClick={() => step(place.id, -1)}
                   >
                     ↑
                   </Button>
                   <Button
+                    className="dash-icon"
                     aria-label="Move later"
-                    onClick={() => save((current) => move(current, place.id, 1))}
+                    aria-disabled={index === loose.length - 1}
+                    onClick={() => step(place.id, 1)}
                   >
                     ↓
                   </Button>
-                  {(["S", "M", "L"] as const).map((size) => (
-                    <Button
-                      key={size}
-                      primary={place.size === size}
-                      aria-pressed={place.size === size}
-                      onClick={() => save((current) => setSize(current, place.id, size))}
-                    >
-                      {size}
-                    </Button>
-                  ))}
+                  <span className="dash-sizes">
+                    {(["S", "M", "L"] as const).map((size) => (
+                      <Button
+                        key={size}
+                        className="dash-icon"
+                        aria-pressed={place.size === size}
+                        onClick={() => save((current) => setSize(current, place.id, size))}
+                      >
+                        {size}
+                      </Button>
+                    ))}
+                  </span>
                   <Button onClick={() => save((current) => toggleHidden(current, place.id))}>
                     Hide
                   </Button>
                 </div>
               )}
-              {cards[place.id]}
+              {cards[place.id as keyof typeof cards]}
             </div>
           ))}
+        </div>
       </div>
+
       {arranging && layout.some((place) => place.hidden) && (
-        <section className="card" aria-label="Hidden cards">
-          <h2>Hidden</h2>
-          <div className="row">
+        <section className="panel dash-hidden" aria-label="Hidden cards">
+          <PanelHead title="Hidden" sub="Show a card to put it back" />
+          <div className="dash-chips">
             {layout
               .filter((place) => place.hidden)
               .map((place) => (

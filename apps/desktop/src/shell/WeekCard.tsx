@@ -1,3 +1,5 @@
+import "../theme/pages/plan-week.css";
+
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 
@@ -43,6 +45,9 @@ import { InsightList } from "./Insights";
 import { MonthReviewCard } from "./Money";
 import { WeekPreview } from "./WeekPreview";
 import { WeekAhead } from "./WeekAhead";
+import { IconChart, IconClock, IconMoney, IconPlan, IconProjects } from "./icons";
+import { PanelHead } from "./kit";
+import { MonthPanel } from "./MonthPanel";
 import { isFirstSunday } from "../features/money/review";
 import { previousMonthStart } from "../features/money/money";
 import { type AreaColor, Bar, Button } from "./ui";
@@ -173,17 +178,18 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   const minor = saved.rows[0]?.minor ?? 0;
   if (minor > 0)
     return (
-      <section className="card" aria-labelledby="saving">
-        <h2 id="saving">Saving</h2>
-        <p>{formatAmount(minor)} put aside this week.</p>
+      <section className="panel pw-saving" aria-labelledby="saving">
+        <PanelHead id="saving" icon={<IconMoney size={18} />} title="Saving" />
+        <p className="pw-big">{formatAmount(minor)}</p>
+        <p className="meta">put aside this week.</p>
       </section>
     );
   if (asked.rows[0]?.value_json === JSON.stringify(monday)) return null;
   return (
-    <section className="card" aria-labelledby="saving">
-      <h2 id="saving">Put anything aside this week?</h2>
+    <section className="panel pw-saving" aria-labelledby="saving">
+      <PanelHead id="saving" icon={<IconMoney size={18} />} title="Put anything aside this week?" />
       <form
-        className="row"
+        className="pw-saving-form"
         onSubmit={(event) => {
           event.preventDefault();
           const value = parseAmount(amount);
@@ -228,27 +234,29 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
             ))}
           </select>
         )}
-        <Button type="submit" primary>
-          Save
-        </Button>
-        <Button
-          onClick={() =>
-            void transact(
-              "user",
-              [
-                {
-                  op: "upsert",
-                  table: "core_settings",
-                  id: ASKED_KEY,
-                  values: { value_json: JSON.stringify(monday) },
-                },
-              ],
-              "settings",
-            )
-          }
-        >
-          No
-        </Button>
+        <span className="pw-actions">
+          <Button type="submit" primary>
+            Save
+          </Button>
+          <Button
+            onClick={() =>
+              void transact(
+                "user",
+                [
+                  {
+                    op: "upsert",
+                    table: "core_settings",
+                    id: ASKED_KEY,
+                    values: { value_json: JSON.stringify(monday) },
+                  },
+                ],
+                "settings",
+              )
+            }
+          >
+            No
+          </Button>
+        </span>
         <span className="meta" role="status">
           {note}
           {active.length === 0 ? "It joins the first savings goal you add on the Dashboard." : ""}
@@ -307,185 +315,289 @@ export function WeekCard() {
   const ready = !areas.loading && !focus.loading && !settings.loading;
   const maxSpend = Math.max(1, ...money.lines.map((l) => Math.max(l.week, l.average ?? 0)));
 
+  const doneMin = areas.rows.reduce((sum, area) => sum + area.done_min, 0);
+  const targetMin = areas.rows.reduce((sum, area) => sum + area.target_min, 0);
+  const range = weekRange(monday);
+
   return (
-    <main className="review week-card">
-      <header className="review-head">
-        <h1>This week</h1>
-        <p className="meta">
-          Week of {monday}
-          {weekMostlyDone ? "" : " · so far"}
-        </p>
-      </header>
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+    <main className="page plan-week">
+      <div className="layout-split">
+        <aside className="side" aria-label="The week at a glance">
+          <MonthPanel today={today} />
 
-      <WeekAhead today={today} />
-      <WeekPreview today={today} />
+          <section className="panel pw-next" aria-labelledby="next">
+            <PanelHead
+              id="next"
+              icon={<IconClock size={18} />}
+              title="Next week"
+              sub="Planned against your free time"
+            />
+            {next ? (
+              <>
+                <p className={next.over ? "pw-big over" : "pw-big"}>{pct(next.ratio)}</p>
+                <Bar value={next.ratio} label="Next week's load" />
+                <p className={next.over ? "warn-text" : "meta"}>
+                  {pct(next.ratio)} of your free time planned ({hoursLabel(next.committed)} of{" "}
+                  {hoursLabel(next.capacity)}) · {next.activeProjects} project
+                  {next.activeProjects === 1 ? "" : "s"} running
+                  {next.over ? " · over the 85% line" : ""}
+                </p>
+              </>
+            ) : (
+              <p className="meta">…</p>
+            )}
+          </section>
 
-      <section className="card" aria-labelledby="time">
-        <h2 id="time">Where time went</h2>
-        {focus.rows[0] && (
-          <p className="meta">
-            {focus.rows[0].sessions} focus sessions · {focus.rows[0].distractions} distractions
-            noted · {focus.rows[0].overrun_days} day{focus.rows[0].overrun_days === 1 ? "" : "s"}{" "}
-            past the cap
-          </p>
-        )}
-        <ul className="area-bars">
-          {areas.rows.map((area) => (
-            <li key={area.id}>
-              <span>{area.name}</span>
-              <Bar
-                value={share(area)}
-                area={area.color as AreaColor}
-                label={`${area.name} this week`}
+          {showChange && (
+            <section className="panel one-change" aria-labelledby="change">
+              <PanelHead
+                id="change"
+                icon={<span className="pw-one">1</span>}
+                title="One change"
+                sub="For next week"
               />
-              <span className="meta">
-                {hoursLabel(area.done_min)} of {hoursLabel(area.target_min)}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <WeekParagraph
-          monday={monday}
-          saved={setting(PARAGRAPH_KEY)}
-          areas={areas.rows}
-          focus={focus.rows[0]}
-          next={next}
-          ready={ready && weekMostlyDone}
-        />
-      </section>
-
-      <section className="card" aria-labelledby="week-insights">
-        <h2 id="week-insights">Insights</h2>
-        <InsightList today={today} />
-      </section>
-
-      <section className="card" aria-labelledby="next">
-        <h2 id="next">Next week</h2>
-        {next ? (
-          <>
-            <Bar value={next.ratio} label="Next week's load" />
-            <p className={next.over ? "warn-text" : "meta"}>
-              {pct(next.ratio)} of your free time planned ({hoursLabel(next.committed)} of{" "}
-              {hoursLabel(next.capacity)}) · {next.activeProjects} project
-              {next.activeProjects === 1 ? "" : "s"} running
-              {next.over ? " · over the 85% line" : ""}
-            </p>
-          </>
-        ) : (
-          <p className="meta">…</p>
-        )}
-      </section>
-
-      <section className="card" aria-labelledby="projects">
-        <h2 id="projects">Projects</h2>
-        {projects.rows.length === 0 && <p className="meta">No active projects.</p>}
-        <ul>
-          {projects.rows.map((project) => (
-            <li key={project.id} className="task">
-              <span>
-                {project.title}{" "}
-                <span className="meta">
-                  {project.status === "next_up" ? "next up · " : ""}
-                  {progressLabel(project)}
-                  {project.week_min ? ` · ${hoursLabel(project.week_min)} this week` : ""}
-                  {project.forecast_finish ? ` · finish ~${project.forecast_finish}` : ""}
-                </span>
-              </span>
-              <span className="row">
-                {project.status === "next_up" ? (
-                  <Button
-                    disabled={activeCount >= 2}
-                    title={
-                      activeCount >= 2
-                        ? "Two projects are already active: pause or finish one first"
-                        : undefined
-                    }
-                    onClick={() =>
-                      void write(projectStatusOps(project.id, "active"), `project:${project.id}`)
-                    }
-                  >
-                    Start
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() =>
-                      void write(projectStatusOps(project.id, "paused"), `project:${project.id}`)
-                    }
-                  >
-                    Pause
-                  </Button>
-                )}
+              <p>{change.text}</p>
+              <div className="pw-actions">
                 <Button
-                  onClick={() =>
-                    void write(projectStatusOps(project.id, "done"), `project:${project.id}`)
-                  }
+                  primary
+                  onClick={() => void write(applyOps(change, monday), `week:${monday}`)}
                 >
-                  Done
+                  Apply
                 </Button>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {isFirstSunday(today) && <MonthReviewCard month={previousMonthStart(today)} today={today} />}
-
-      <section className="card" aria-labelledby="money">
-        <h2 id="money">Money</h2>
-        <p>
-          {formatAmount(money.week)} spent this week{" "}
-          {money.average !== null && (
-            <span className="meta">· usually {formatAmount(money.average)} a week</span>
+                <Button onClick={() => void write(dismissOps(monday, change.key), "settings")}>
+                  No
+                </Button>
+              </div>
+            </section>
           )}
-        </p>
-        <ul className="spend-bars">
-          {money.lines.map((line) => (
-            <li key={line.category}>
-              <span>{line.category}</span>
-              <span className="spend-pair">
-                <span
-                  className="spend-bar"
-                  style={{ width: `${(line.week / maxSpend) * 100}%` }}
-                  aria-label={`${line.category} this week ${formatAmount(line.week)}`}
-                />
-                {line.average !== null && (
-                  <span
-                    className="spend-bar usual"
-                    style={{ width: `${(line.average / maxSpend) * 100}%` }}
-                    aria-label={`${line.category} usually ${formatAmount(line.average)}`}
-                  />
-                )}
-              </span>
-              <span className="meta">
-                {formatAmount(line.week)}
-                {line.average !== null ? ` · usually ${formatAmount(line.average)}` : ""}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
 
-      {isoWeekday(today) >= 6 && <SavingQuestion monday={monday} nowMs={nowMs} />}
+          {isoWeekday(today) >= 6 && <SavingQuestion monday={monday} nowMs={nowMs} />}
+        </aside>
 
-      {showChange && (
-        <section className="card one-change" aria-labelledby="change">
-          <h2 id="change">One change</h2>
-          <p>{change.text}</p>
-          <div className="row">
-            <Button primary onClick={() => void write(applyOps(change, monday), `week:${monday}`)}>
-              Apply
-            </Button>
-            <Button onClick={() => void write(dismissOps(monday, change.key), "settings")}>
-              No
-            </Button>
+        <div className="main">
+          <section className="canvas pw-canvas" aria-labelledby="week-title">
+            <header className="canvas-head">
+              <h1 id="week-title" className="page-title">
+                This week, <span className="soft">{range}</span>
+              </h1>
+              <span className="pw-chip">{weekMostlyDone ? "Wrapping up" : "So far"}</span>
+              <span className="spacer" />
+              <Button
+                primary
+                onClick={() => {
+                  const plan = document.getElementById("week-plan");
+                  plan?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  plan?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+                }}
+              >
+                <IconPlan size={16} /> {isoWeekday(today) === 7 ? "Plan next week" : "Plan"}
+              </Button>
+            </header>
+            <p className="visually-hidden">
+              Week of {monday}
+              {weekMostlyDone ? "" : " · so far"}
+            </p>
+            {error && (
+              <p role="alert" className="error">
+                {error}
+              </p>
+            )}
+
+            <WeekPreview today={today} />
+            <WeekAhead today={today} />
+          </section>
+
+          <div className="panel-row">
+            <section className="panel pw-time" aria-labelledby="time">
+              <PanelHead
+                id="time"
+                icon={<IconChart size={18} />}
+                title="Where time went"
+                sub={
+                  focus.rows[0] ? (
+                    <>
+                      {focus.rows[0].sessions} focus sessions · {focus.rows[0].distractions}{" "}
+                      distractions noted · {focus.rows[0].overrun_days} day
+                      {focus.rows[0].overrun_days === 1 ? "" : "s"} past the cap
+                    </>
+                  ) : undefined
+                }
+              />
+              <p className="pw-big">
+                {hoursLabel(doneMin)} <span className="soft">of {hoursLabel(targetMin)}</span>
+              </p>
+              <ul className="pw-bars">
+                {areas.rows.map((area) => (
+                  <li key={area.id}>
+                    <span className="pw-bar-name">
+                      <i
+                        className="pw-swatch"
+                        style={{ background: `var(--area-${area.color})` }}
+                        aria-hidden="true"
+                      />
+                      {area.name}
+                    </span>
+                    <span className="pw-bar-value">
+                      {hoursLabel(area.done_min)} of {hoursLabel(area.target_min)}
+                    </span>
+                    <Bar
+                      value={share(area)}
+                      area={area.color as AreaColor}
+                      label={`${area.name} this week`}
+                    />
+                  </li>
+                ))}
+              </ul>
+              <WeekParagraph
+                monday={monday}
+                saved={setting(PARAGRAPH_KEY)}
+                areas={areas.rows}
+                focus={focus.rows[0]}
+                next={next}
+                ready={ready && weekMostlyDone}
+              />
+            </section>
+
+            <section className="panel pw-money" aria-labelledby="money">
+              <PanelHead
+                id="money"
+                icon={<IconMoney size={18} />}
+                title="Money"
+                sub={
+                  money.average !== null
+                    ? `Usually ${formatAmount(money.average)} a week`
+                    : "Spent this week"
+                }
+              />
+              <p className="pw-big">
+                {formatAmount(money.week)} <span className="soft">spent this week</span>
+              </p>
+              <ul className="pw-spend">
+                {money.lines.map((line) => (
+                  <li
+                    key={line.category}
+                    className={
+                      line.average !== null && line.week > line.average ? "over" : undefined
+                    }
+                  >
+                    <span className="pw-bar-name">{line.category}</span>
+                    <span className="pw-bar-value">
+                      {formatAmount(line.week)}
+                      {line.average !== null ? ` · usually ${formatAmount(line.average)}` : ""}
+                    </span>
+                    <span className="pw-spend-pair">
+                      <span
+                        className="pw-spend-bar"
+                        style={{ width: `${(line.week / maxSpend) * 100}%` }}
+                        aria-label={`${line.category} this week ${formatAmount(line.week)}`}
+                      />
+                      {line.average !== null && (
+                        <span
+                          className="pw-spend-bar usual"
+                          style={{ width: `${(line.average / maxSpend) * 100}%` }}
+                          aria-label={`${line.category} usually ${formatAmount(line.average)}`}
+                        />
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {money.lines.length > 0 && (
+                <p className="pw-legend" aria-hidden="true">
+                  <i className="sq cream" /> This week <i className="sq usual" /> Usual
+                </p>
+              )}
+            </section>
+
+            <section className="panel pw-projects" aria-labelledby="projects">
+              <PanelHead
+                id="projects"
+                icon={<IconProjects size={18} />}
+                title="Projects"
+                sub={`${activeCount} of 2 active`}
+              />
+              {projects.rows.length === 0 && <p className="empty">No active projects.</p>}
+              <ul className="list-rows pw-project-rows">
+                {projects.rows.map((project) => (
+                  <li key={project.id}>
+                    <span className={`pw-status ${project.status}`} aria-hidden="true" />
+                    <span className="grow">
+                      <b>{project.title}</b>
+                      <span className="meta">
+                        {project.status === "next_up" ? "next up · " : ""}
+                        {progressLabel(project)}
+                        {project.week_min ? ` · ${hoursLabel(project.week_min)} this week` : ""}
+                        {project.forecast_finish ? ` · finish ~${project.forecast_finish}` : ""}
+                      </span>
+                    </span>
+                    <span className="pw-actions">
+                      {project.status === "next_up" ? (
+                        <Button
+                          disabled={activeCount >= 2}
+                          title={
+                            activeCount >= 2
+                              ? "Two projects are already active: pause or finish one first"
+                              : undefined
+                          }
+                          onClick={() =>
+                            void write(
+                              projectStatusOps(project.id, "active"),
+                              `project:${project.id}`,
+                            )
+                          }
+                        >
+                          Start
+                        </Button>
+                      ) : (
+                        <Button
+                          onClick={() =>
+                            void write(
+                              projectStatusOps(project.id, "paused"),
+                              `project:${project.id}`,
+                            )
+                          }
+                        >
+                          Pause
+                        </Button>
+                      )}
+                      <Button
+                        onClick={() =>
+                          void write(projectStatusOps(project.id, "done"), `project:${project.id}`)
+                        }
+                      >
+                        Done
+                      </Button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section className="panel pw-insights" aria-labelledby="week-insights">
+              <PanelHead id="week-insights" title="Insights" sub="From the last 4 weeks" />
+              <InsightList today={today} />
+            </section>
+
+            {isFirstSunday(today) && (
+              <MonthReviewCard month={previousMonthStart(today)} today={today} />
+            )}
           </div>
-        </section>
-      )}
+        </div>
+      </div>
     </main>
   );
+}
+
+const SHORT_DATE = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+
+/** "16 – 22 Nov", or "30 Nov – 6 Dec" across a month end. */
+function weekRange(monday: string): string {
+  const start = SHORT_DATE.format(Date.parse(`${monday}T00:00:00Z`));
+  const end = SHORT_DATE.format(Date.parse(`${shiftDate(monday, 6)}T00:00:00Z`));
+  const [startDay = "", startMonth = ""] = start.split(" ");
+  return end.endsWith(` ${startMonth}`) ? `${startDay} – ${end}` : `${start} – ${end}`;
 }

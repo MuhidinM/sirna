@@ -1,3 +1,5 @@
+import "../theme/pages/plan-review.css";
+
 import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 
@@ -14,6 +16,8 @@ import {
   search,
   tokens,
 } from "../features/notes/cheat";
+import { IconSearch } from "./icons";
+import { type Tone, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -38,7 +42,17 @@ interface LastSave {
   title: string;
 }
 
-function CardView({ card, onSaved }: { card: Card; onSaved: (save: LastSave) => void }) {
+const AREA_COLORS_SQL = "SELECT id, color FROM area_items WHERE deleted_at IS NULL";
+
+function CardView({
+  card,
+  tone,
+  onSaved,
+}: {
+  card: Card;
+  tone: Tone;
+  onSaved: (save: LastSave) => void;
+}) {
   // The card as it was when Edit was pressed: a pin that arrives while the
   // editor is open is not in the text, so it must not be in the diff either.
   const [editing, setEditing] = useState<{ text: string; base: Card }>();
@@ -58,15 +72,23 @@ function CardView({ card, onSaved }: { card: Card; onSaved: (save: LastSave) => 
   };
 
   return (
-    <section className="cheat card" aria-label={card.title}>
-      <header className="row">
-        <h2>{card.title}</h2>
+    <section className={`card pr-card pr-cheat tone-${tone}`} aria-label={card.title}>
+      <header className="pr-cheat-head">
+        <span className="pr-cheat-mark" aria-hidden="true">
+          {card.title.charAt(0).toUpperCase() || "#"}
+        </span>
+        <div className="grow">
+          <h2>{card.title}</h2>
+          <span className="panel-sub">
+            {card.lines.length} line{card.lines.length === 1 ? "" : "s"}
+          </span>
+        </div>
         {editing === undefined && (
           <Button onClick={() => setEditing({ text: cardText(card), base: card })}>Edit</Button>
         )}
       </header>
       {editing === undefined ? (
-        <ul className="cheat-lines">
+        <ul className="cheat-lines pr-lines">
           {card.lines.map((line) => (
             <li key={line.id}>
               <Line text={line.body} />
@@ -88,16 +110,18 @@ function CardView({ card, onSaved }: { card: Card; onSaved: (save: LastSave) => 
               onChange={(event) => setEditing({ ...editing, text: event.target.value })}
             />
           </label>
-          <div className="row">
-            <Button type="submit" primary>
+          <div className="pr-card-foot">
+            <Button className="btn-ghost" onClick={() => setEditing(undefined)}>
+              Cancel
+            </Button>
+            <Button type="submit" className="rv-dark">
               Save
             </Button>
-            <Button onClick={() => setEditing(undefined)}>Cancel</Button>
           </div>
         </form>
       )}
       {card.lines.length > LONG_CARD && (
-        <p className="meta">
+        <p className="hint pr-long">
           {card.lines.length} lines: cheat sheets work best short. Split it with a new #tag?
         </p>
       )}
@@ -137,68 +161,90 @@ export function Notes({
     }
   };
 
+  const colors = useLiveQuery<{ id: string; color: string }>(AREA_COLORS_SQL);
+  const colorOf = new Map(colors.rows.map((area) => [area.id, area.color]));
+
   return (
-    <main className="review notes">
-      <header className="review-head">
-        <h1>Cheat sheets</h1>
-        <p className="meta">
+    <main className="page plan-review">
+      <section className="canvas pr notes" aria-labelledby="notes-title">
+        <header className="canvas-head">
+          <h1 id="notes-title" className="page-title">
+            Cheat <span className="soft">sheets</span>
+          </h1>
+          <label className="search pr-search">
+            <IconSearch size={16} />
+            <span className="visually-hidden">Search</span>
+            <input
+              type="search"
+              value={queryText}
+              placeholder="Search cheat lines"
+              onChange={(event) => setQueryText(event.target.value)}
+            />
+          </label>
+          <span className="spacer" />
+          <Button onClick={onClose}>Back to today</Button>
+        </header>
+        <p className="pr-intro meta">
           Add a line from anywhere: <code>pin: git undo = git reset --soft HEAD~1 #coding</code>
         </p>
-        <Button onClick={onClose}>Back to today</Button>
-      </header>
-      <label className="field">
-        <span>Search</span>
-        <input
-          type="search"
-          value={queryText}
-          placeholder="reset"
-          onChange={(event) => setQueryText(event.target.value)}
-        />
-      </label>
-      {rows.error && (
-        <p role="alert" className="error">
-          Couldn&apos;t load the notes: {rows.error}
-        </p>
-      )}
-      {(lastSave ?? message) && (
-        <p className="row meta" role="status">
-          {lastSave ? `Saved ${lastSave.title}` : message}
-          {lastSave && <Button onClick={() => void undo()}>Undo</Button>}
-        </p>
-      )}
-      {queryText.trim() !== "" ? (
-        <section aria-label="Search results">
-          {hits.length === 0 ? (
-            <p className="empty">No cheat line matches.</p>
-          ) : (
-            <ul className="cheat-lines">
-              {hits.map((hit) => (
-                <li key={hit.line.id} className="task">
-                  <span>
-                    <Line text={hit.line.body} />
-                  </span>
-                  <span className="meta">{hit.card.title}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ) : !rows.loading && cards.length === 0 ? (
-        <p className="empty">
-          No cheat sheets yet. Type <code>pin: …</code> in the capture box to start one.
-        </p>
-      ) : (
-        cards.map((card) => (
-          <CardView
-            key={card.key}
-            card={card}
-            onSaved={(save) => {
-              setLastSave(save);
-              setMessage(undefined);
-            }}
-          />
-        ))
-      )}
+        {rows.error && (
+          <p role="alert" className="error">
+            Couldn&apos;t load the notes: {rows.error}
+          </p>
+        )}
+        {(lastSave ?? message) && (
+          <p className="notice pr-status" role="status">
+            {lastSave ? `Saved ${lastSave.title}` : message}
+            {lastSave && <Button onClick={() => void undo()}>Undo</Button>}
+          </p>
+        )}
+        {queryText.trim() !== "" ? (
+          <section className="card pr-card pr-results" aria-label="Search results">
+            <div className="panel-head">
+              <div className="grow">
+                <h2>Matches</h2>
+                <span className="panel-sub">
+                  {hits.length} line{hits.length === 1 ? "" : "s"} for “{queryText.trim()}”
+                </span>
+              </div>
+            </div>
+            {hits.length === 0 ? (
+              <p className="empty">No cheat line matches.</p>
+            ) : (
+              <ul className="cheat-lines pr-lines">
+                {hits.map((hit) => (
+                  <li key={hit.line.id} className="pr-hit">
+                    <span className="grow">
+                      <Line text={hit.line.body} />
+                    </span>
+                    <span className={`chip tone-${toneOf(colorOf.get(hit.card.key))} pr-chip`}>
+                      {hit.card.title}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : !rows.loading && cards.length === 0 ? (
+          <p className="empty">
+            No cheat sheets yet. Type <code>pin: …</code> in the capture box to start one.
+          </p>
+        ) : (
+          <div className="pr-grid">
+            {cards.map((card) => (
+              <CardView
+                key={card.key}
+                card={card}
+                tone={toneOf(colorOf.get(card.key))}
+                onSaved={(save) => {
+                  setLastSave(save);
+                  setMessage(undefined);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </main>
   );
 }

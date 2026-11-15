@@ -43,14 +43,25 @@ export default defineConfig([
   },
   // The clock module itself, tests and build tooling may read real time.
   {
-    files: ["**/kernel/clock.ts", "**/*.test.{ts,tsx}", "**/*.config.{ts,mts,mjs}", "scripts/**"],
+    files: [
+      "**/kernel/clock.ts",
+      "**/*.test.{ts,tsx}",
+      "**/*.config.{ts,mts,mjs}",
+      "scripts/**",
+      "apps/desktop/scripts/**",
+      // The dev-only browser preview fakes the clock on purpose.
+      "apps/desktop/src/dev/**",
+    ],
     rules: { "no-restricted-syntax": ["error", noClassComponents] },
   },
   {
-    files: ["**/*.config.{ts,mts,mjs}", "scripts/**"],
+    files: ["**/*.config.{ts,mts,mjs}", "scripts/**", "apps/desktop/scripts/**"],
     languageOptions: { globals: { ...globals.node } },
   },
   // Dev scripts print their results.
-  { files: ["scripts/**"], rules: { "no-console": "off" } },
+  {
+    files: ["scripts/**", "apps/desktop/scripts/**", "apps/desktop/src/dev/**"],
+    rules: { "no-console": "off" },
+  },
   prettier,
 ]);

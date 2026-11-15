@@ -1,139 +1,155 @@
 /*
- * Sirna's design tokens (plan §3.14). Dark is the default; light follows the
- * same names. Components use only these variables, never raw colours.
+ * Sirna's design tokens (docs/design.md). Two themes, Night (default) and
+ * Forest, share one palette of loud colours and one white canvas. Colours
+ * were sampled from the Neura reference. Components use only these names.
  *
- * Accent (lime) is reserved for "now" and the one primary action per screen.
- * Area colours mark blocks, chips and bars.
+ * The older names (--surface-*, --text-*, --accent…) stay as aliases so every
+ * screen keeps working; inside `.canvas` they switch to the white surface.
  */
 
 :root,
-[data-theme="dark"] {
+[data-theme="night"] {
   color-scheme: dark;
 
-  /* Surfaces: 0 is the page, higher is raised. */
-  --surface-0: #121212;
-  --surface-1: #1b1b1a;
-  --surface-2: #232321;
-  --surface-3: #2c2c2a;
-
-  --text-primary: #ecebe6;
-  --text-secondary: #a8a7a1;
-  --text-muted: #7d7c77;
-  --border: #2f2f2d;
-  --border-strong: #444441;
-
-  --accent: #c0dd97;
-  --accent-strong: #97c459;
-  --on-accent: #173404;
-  --danger: #f09595;
-  --warning: #fac775;
-  --success: #97c459;
-
-  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent-strong);
+  --frame: #0e0e0e;
+  --panel: #161616;
+  --panel-line: #262626;
+  --raised: #2a2a28;
+  --chip: #30302e;
+  --bar: #373632;
+  --bar-top: #45443f;
+  --ink: #f4f2ec;
+  --ink-2: #a3a29c;
+  --ink-3: #8a8984;
+  --stars: #e9c46a;
 }
 
-[data-theme="light"] {
-  color-scheme: light;
+[data-theme="forest"] {
+  color-scheme: dark;
 
-  --surface-0: #f6f4ef;
-  --surface-1: #fbfaf7;
-  --surface-2: #ffffff;
-  --surface-3: #efece5;
-
-  --text-primary: #23221f;
-  --text-secondary: #5f5e5a;
-  --text-muted: #85847e;
-  --border: #e3e0d8;
-  --border-strong: #cfcbc1;
-
-  --accent: #3b6d11;
-  --accent-strong: #27500a;
-  --on-accent: #ffffff;
-  --danger: #a32d2d;
-  --warning: #854f0b;
-  --success: #3b6d11;
-
-  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent-strong);
+  --frame: #0f2a17;
+  --panel: #133c1e;
+  --panel-line: #1f4a2a;
+  --raised: #2c5036;
+  --chip: #2c5036;
+  --bar: #2c5036;
+  --bar-top: #3a6a48;
+  --ink: #fef4dc;
+  --ink-2: #b4d3bb;
+  --ink-3: #8fb59a;
+  --stars: #fef4dc;
 }
 
 :root {
-  /* Area colours (same in both themes; text on them uses --area-ink). */
-  --area-work: #85b7eb;
-  --area-jobhunt: #f0997b;
-  --area-coding: #97c459;
-  --area-experiments: #afa9ec;
-  --area-gym: #ed93b1;
-  --area-quran: #5dcaa5;
-  --area-admin: #b4b2a9;
-  --area-rest: #3a3a38;
-  --area-ink: #121212;
+  /* The white working surface (both themes). */
+  --canvas: #ffffff;
+  --canvas-2: #f4f4f1;
+  --canvas-3: #eaeae6;
+  --canvas-line: #e2e2de;
+  --canvas-ink: #141414;
+  --canvas-ink-2: #55554f;
+  --canvas-ink-3: #8a8a84;
 
-  /* Sizing */
-  --radius: 8px;
-  --radius-card: 12px;
+  /* The loud palette. */
+  --cream: #fdf1da;
+  --cream-ink: #2f2319;
+  --pink: #f66399;
+  --pink-soft: #ffd9e7;
+  --yellow: #ffb413;
+  --orange: #ee6300;
+  --orange-soft: #f9a761;
+  --purple: #bd9af1;
+  --mint: #dff1e6;
+  --mint-ink: #1f8f50;
+  --sky: #8ec5ff;
+  --leaf: #8fd6a8;
+  --on-loud: #141414;
+  --danger-loud: #e5484d;
+
+  /* Area colours (blocks, chips, bars). Text on them is --area-ink. */
+  --area-work: var(--orange);
+  --area-jobhunt: var(--pink);
+  --area-coding: var(--purple);
+  --area-experiments: var(--yellow);
+  --area-gym: var(--leaf);
+  --area-quran: var(--sky);
+  --area-admin: var(--cream);
+  --area-rest: var(--raised);
+  --area-ink: #141414;
+
+  /* Shape and space. */
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-card: 26px;
+  --radius-canvas: 28px;
+  --radius-event: 18px;
+  --pill: 999px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
 
-  --font-sans: system-ui, "Segoe UI", sans-serif;
-  --text-sm: 0.85rem;
-  --text-md: 1rem;
-  --text-lg: 1.4rem;
-  --text-xl: 1.6rem;
+  --font-sans:
+    "Bricolage Grotesque Variable", "Bricolage Grotesque", system-ui, "Segoe UI", sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2.125rem;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* Accents (Settings → Focus and look). Lime is the default above; each pair
-   is tuned for contrast on its theme's surfaces. */
-[data-accent="sky"] {
-  --accent: #85b7eb;
-  --accent-strong: #5b9bdb;
-  --on-accent: #0b2440;
+/*
+ * Aliases for the older names: on dark panels by default …
+ */
+:root,
+[data-theme] {
+  --surface-0: var(--frame);
+  --surface-1: var(--panel);
+  --surface-2: var(--raised);
+  --surface-3: var(--chip);
+  --text-primary: var(--ink);
+  --text-secondary: var(--ink-2);
+  --text-muted: var(--ink-3);
+  --border: var(--panel-line);
+  --border-strong: var(--chip);
+  --accent: var(--yellow);
+  --accent-strong: var(--yellow);
+  --on-accent: var(--on-loud);
+  --danger: #ff8a8a;
+  --warning: var(--yellow);
+  --success: var(--leaf);
+  --focus-ring: 0 0 0 2px var(--frame), 0 0 0 4px var(--yellow);
 }
-[data-theme="light"][data-accent="sky"] {
-  --accent: #1f5f9e;
-  --accent-strong: #154a7c;
-  --on-accent: #ffffff;
-}
-[data-accent="coral"] {
-  --accent: #f0997b;
-  --accent-strong: #e07a57;
-  --on-accent: #3d1306;
-}
-[data-theme="light"][data-accent="coral"] {
-  --accent: #a8431f;
-  --accent-strong: #833216;
-  --on-accent: #ffffff;
-}
-[data-accent="violet"] {
-  --accent: #afa9ec;
-  --accent-strong: #8f87e0;
-  --on-accent: #1c1745;
-}
-[data-theme="light"][data-accent="violet"] {
-  --accent: #5246b3;
-  --accent-strong: #3f358f;
-  --on-accent: #ffffff;
-}
-[data-accent="rose"] {
-  --accent: #ed93b1;
-  --accent-strong: #de6f95;
-  --on-accent: #3d0a1d;
-}
-[data-theme="light"][data-accent="rose"] {
-  --accent: #a32a57;
-  --accent-strong: #821f45;
-  --on-accent: #ffffff;
-}
-[data-accent="teal"] {
-  --accent: #5dcaa5;
-  --accent-strong: #3fae89;
-  --on-accent: #06301f;
-}
-[data-theme="light"][data-accent="teal"] {
-  --accent: #17705a;
-  --accent-strong: #105846;
-  --on-accent: #ffffff;
+
+/* … and on the white canvas. */
+.canvas,
+.on-canvas {
+  color-scheme: light;
+  --surface-0: var(--canvas);
+  --surface-1: var(--canvas);
+  --surface-2: var(--canvas-2);
+  --surface-3: var(--canvas-3);
+  --text-primary: var(--canvas-ink);
+  --text-secondary: var(--canvas-ink-2);
+  --text-muted: var(--canvas-ink-3);
+  --border: var(--canvas-line);
+  --border-strong: #cfcfca;
+  --panel: var(--canvas);
+  --raised: var(--canvas-2);
+  --chip: var(--canvas-2);
+  --panel-line: var(--canvas-line);
+  --ink: var(--canvas-ink);
+  --ink-2: var(--canvas-ink-2);
+  --ink-3: var(--canvas-ink-3);
+  --bar: #e4e4df;
+  --bar-top: #d3d3cd;
+  --danger: #c8333a;
+  --success: var(--mint-ink);
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--canvas-ink);
 }

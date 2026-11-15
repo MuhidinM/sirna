@@ -4,17 +4,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import "@fontsource-variable/bricolage-grotesque";
 import "../theme/tokens.css";
 import "./widget.css";
 import { systemClock } from "../kernel/clock";
 import { query } from "../kernel/db";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import { todayParams, todayTopSql } from "../features/tasks/today";
-import { applyAccent, applyTheme, cachedAccent, cachedTheme } from "../theme/theme";
+import { applyTheme, cachedTheme } from "../theme/theme";
 import { NOTE_SQL, timerSummary, type WidgetFocus, widgetView } from "./view";
 
 applyTheme(cachedTheme());
-applyAccent(cachedAccent());
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
 const now = $("widget-now");
@@ -42,7 +42,15 @@ function draw(): void {
       ? { ...focus, remaining_ms: Math.max(0, focus.remaining_ms - (performance.now() - focusAt)) }
       : focus;
   const view = widgetView({ blocks, top: tasks, focus: shown, note: pinned, nowMs });
-  if (now) now.textContent = view.now;
+  if (now) {
+    now.textContent = view.now;
+    // Colour only: yellow while a block runs, cream for the next one.
+    now.dataset.state = view.now.startsWith("Now")
+      ? "now"
+      : view.now.startsWith("Next")
+        ? "next"
+        : "idle";
+  }
   if (timer) {
     timer.hidden = view.timer === null;
     timer.classList.toggle("paused", view.timer?.paused === true);
@@ -128,7 +136,6 @@ void listen("focus-tick", quietly(loadFocus));
 // The theme or accent changed in the main window.
 window.addEventListener("storage", () => {
   applyTheme(cachedTheme());
-  applyAccent(cachedAccent());
 });
 quietly(loadData)();
 quietly(loadFocus)();
