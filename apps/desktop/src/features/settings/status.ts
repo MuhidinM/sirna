@@ -20,6 +20,9 @@ export interface StatusLine {
   text: string;
 }
 
+/** Sent after the AI key, model or limit changes, so the strip reads ai_usage again. */
+export const AI_CHANGED_EVENT = "sirna:ai-changed";
+
 export const BACKUP_LAST_SQL = "SELECT value_json FROM core_settings WHERE key = 'backup.last'";
 
 /** A backup older than this many days needs a look. */
@@ -41,7 +44,12 @@ export function statusLines(input: {
       text: "Not set up: paste your Google Calendar secret iCal address below.",
     });
   else
-    lines.push({ name: "Calendar", ok: sync.code === "ok" && !sync.held, text: statusText(sync) });
+    lines.push({
+      name: "Calendar",
+      // Offline passes by itself and Sirna retries, so it isn't "needs you" (as in the brief).
+      ok: sync.held ? false : sync.code === "ok" ? true : sync.code === "offline" ? null : false,
+      text: statusText(sync),
+    });
 
   const ai = input.ai;
   if (!ai || !ai.has_key)
@@ -60,7 +68,8 @@ export function statusLines(input: {
     lines.push({
       name: "AI",
       ok: false,
-      text: `Today's limit reached (${ai.used} of ${ai.cap}); it resets tomorrow.`,
+      // The free tier counts by the Pacific day: midnight there is 11:00 here (10:00 in US summer).
+      text: `Today's limit reached (${ai.used} of ${ai.cap}); it resets at 11:00 (10:00 in US summer).`,
     });
   else
     lines.push({

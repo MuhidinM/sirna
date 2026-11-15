@@ -18,7 +18,7 @@ import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
-import { BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
+import { AI_CHANGED_EVENT, BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
 import { SYNC_SQL } from "../features/calendar/sync";
 import { logicalDate } from "../kernel/dates";
 
@@ -51,6 +51,7 @@ function SecretField({ name, label, help, placeholder }: (typeof SECRETS)[number
         setNote(done);
         // A new calendar address is tried at once, so the status says if it works.
         if (name === "ical_url") void syncNow();
+        window.dispatchEvent(new Event(AI_CHANGED_EVENT));
         return refresh();
       })
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
@@ -357,22 +358,31 @@ function AiSetup() {
   const refresh = useCallback(
     () =>
       invoke<AiUsage>("ai_usage")
-        .then((now) => {
-          setUsage(now);
-          setCapText(String(now.cap));
-        })
+        .then(setUsage)
         .catch(() => setUsage(null)),
     [],
   );
+  // The limit field follows the saved limit only when that changes, so a
+  // refresh (a key saved above) doesn't wipe a number you are typing.
+  const [capShown, setCapShown] = useState<number | null>(null);
+  if (usage && usage.cap !== capShown) {
+    setCapShown(usage.cap);
+    setCapText(String(usage.cap));
+  }
   useEffect(() => {
     void refresh();
+    // A key saved or removed above.
+    const again = () => void refresh();
+    window.addEventListener(AI_CHANGED_EVENT, again);
+    return () => window.removeEventListener(AI_CHANGED_EVENT, again);
   }, [refresh]);
   if (!usage) return null;
   const save = (ops: ReturnType<typeof setting>[], done: string) =>
     transact("user", ops, "settings")
       .then(() => {
         setNote(done);
-        return refresh();
+        // Both this section and the status strip read it again.
+        window.dispatchEvent(new Event(AI_CHANGED_EVENT));
       })
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
   return (
@@ -473,9 +483,19 @@ function StatusStrip() {
   const backup = useLiveQuery<{ value_json: string | null }>(BACKUP_LAST_SQL);
   const [ai, setAi] = useState<AiUsage | null>(null);
   useEffect(() => {
-    invoke<AiUsage>("ai_usage")
-      .then(setAi)
-      .catch(() => setAi(null));
+    const read = () =>
+      void invoke<AiUsage>("ai_usage")
+        .then(setAi)
+        .catch(() => setAi(null));
+    read();
+    // A key saved, or a model or limit picked, further down this page; and
+    // once a minute, so the limit line clears when the count resets.
+    window.addEventListener(AI_CHANGED_EVENT, read);
+    const timer = window.setInterval(read, 60_000);
+    return () => {
+      window.removeEventListener(AI_CHANGED_EVENT, read);
+      window.clearInterval(timer);
+    };
   }, []);
   if (sync.loading || backup.loading) return null;
   const lines = statusLines({

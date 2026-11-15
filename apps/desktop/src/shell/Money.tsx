@@ -745,20 +745,44 @@ export function MonthReviewCard({ month, today }: { month: string; today: string
   );
 }
 
-/** Birr per hour for each job (T-073): this month's pay over its blocks' hours. */
+/**
+ * Birr per hour for each job (T-073): a whole month's pay over its blocks'
+ * hours. While a month is running, the last full one is shown, so a job paid
+ * on the 21st isn't missing and one paid on the 10th isn't counted early.
+ */
 function JobRatesCard({ month, today }: { month: string; today: string }) {
-  const { from, to } = monthOf(month);
+  const running = monthOf(month).to >= today;
+  const shown = running ? monthOf(previousMonthStart(month)) : monthOf(month);
+  const { from, to } = shown;
   const [nowMs] = useState(() => systemClock.now());
   const minutes = useLiveQuery<{ area_id: string; name: string; minutes: number }>(
     JOB_MINUTES_SQL,
     [from, to, nowMs],
   );
   const pay = useLiveQuery<{ area_id: string; minor: number }>(JOB_PAY_SQL, [from, to]);
-  if (minutes.loading || pay.loading || minutes.rows.length === 0) return null;
+  // This month's hours, only to say why there is nothing yet in your first month.
+  const thisMonth = monthOf(month);
+  const current = useLiveQuery<{ area_id: string }>(JOB_MINUTES_SQL, [
+    thisMonth.from,
+    thisMonth.to,
+    nowMs,
+  ]);
+  if (minutes.loading || pay.loading || current.loading) return null;
+  if (minutes.rows.length === 0) {
+    if (!running || current.rows.length === 0) return null;
+    return (
+      <section className="card" aria-labelledby="job-rates">
+        <h2 id="job-rates">Your jobs</h2>
+        <p className="meta">
+          Birr per hour shows once {monthLabel(thisMonth.key)} is over, so both pay days are in.
+        </p>
+      </section>
+    );
+  }
   const rates = jobRates(minutes.rows, pay.rows);
   return (
     <section className="card" aria-labelledby="job-rates">
-      <h2 id="job-rates">Your jobs</h2>
+      <h2 id="job-rates">Your jobs in {monthLabel(shown.key)}</h2>
       <ul className="plain-list">
         {rates.map((rate) => (
           <li key={rate.areaId} className="row money-line">
@@ -771,8 +795,8 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
         ))}
       </ul>
       <p className="meta">
-        Hours are the job&apos;s blocks {to < today ? "that month" : "so far this month"} (skipped
-        or moved ones left out); pay is income you recorded for that job.
+        Hours are the job&apos;s blocks that month (skipped or moved ones left out); pay is income
+        you recorded for that job.{running ? " This month shows once it is over." : ""}
       </p>
     </section>
   );
@@ -1680,10 +1704,10 @@ const JOBS_SQL =
 export function useDue(today: string) {
   // From a little before the month, so pay due at the end of last month that
   // is still open (or arrives now) is settled against the right date.
-  const { from, to, shownFrom } = dueWindow(today);
+  const { from, txnFrom, to, shownFrom } = dueWindow(today);
   const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
   const txns = useLiveQuery<RegularTxn & Record<string, string | number | null>>(REGULAR_TXNS_SQL, [
-    from,
+    txnFrom,
     to,
   ]);
   return {

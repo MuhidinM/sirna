@@ -61,5 +61,16 @@ describe("the Settings status strip (T-075)", () => {
         today: TODAY,
       }).map((l) => l.ok),
     ).toEqual([false, false, true]);
+    // Offline fixes itself: not "needs you" (the brief stays quiet too).
+    const offline = statusLines({ syncJson: sync("offline"), ai, backupJson: null, today: TODAY });
+    expect(offline[0]?.ok).toBeNull();
+    expect(
+      statusLines({
+        syncJson: sync("ok"),
+        ai: { ...ai, used: 20 },
+        backupJson: null,
+        today: TODAY,
+      })[1]?.text,
+    ).toBe("Today's limit reached (20 of 20); it resets at 11:00 (10:00 in US summer).");
   });
 });

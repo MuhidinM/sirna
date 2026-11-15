@@ -38,7 +38,7 @@ export async function affordAnswer(
       query<{ goal_id: string; minor: number }>(GOAL_MONTH_SQL, [from, to]),
       query<{ minor: number; n: number }>(UNASSIGNED_SQL),
       query<Rows<RegularRow>>(REGULARS_SQL),
-      query<Rows<RegularTxn>>(REGULAR_TXNS_SQL, [window.from, window.to]),
+      query<Rows<RegularTxn>>(REGULAR_TXNS_SQL, [window.txnFrom, window.to]),
       query<Rows<TxnRow>>(TXNS_SQL, [from, to]),
       query<{ minor: number }>(SAVED_SQL, [from, to]),
     ]);

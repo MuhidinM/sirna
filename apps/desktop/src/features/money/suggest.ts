@@ -6,14 +6,14 @@
 import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim } from "../../kernel/money";
 import { monthOf, previousMonthStart } from "./money";
-import { type RegularRow, regularOps } from "./regulars";
+import { paysBill, type RegularRow, regularOps } from "./regulars";
 
 /** Spending from ?1 on, grouped by description and amount (transfers, loans and bills left out). */
 export const SUGGEST_SQL = `
   SELECT lower(trim(description)) AS key, max(description) AS description,
          -amount_minor AS amount, max(category_id) AS category_id, max(account) AS account,
          count(DISTINCT substr(local_date, 1, 7)) AS months, count(*) AS times,
-         max(local_date) AS last_date
+         max(local_date) AS last_date, group_concat(local_date) AS dates
   FROM money_txns
   WHERE deleted_at IS NULL AND transfer_id IS NULL AND regular_id IS NULL
     AND amount_minor < 0 AND local_date >= ?1
@@ -28,6 +28,8 @@ export interface SuggestRow {
   months: number;
   times: number;
   last_date: string;
+  /** Every date it was paid, comma-separated. */
+  dates: string;
 }
 
 export interface Suggestion {
@@ -42,6 +44,20 @@ export interface Suggestion {
 
 export const DISMISSED_SUGGESTIONS_KEY = "money.regular_dismissed";
 
+/** About a month between two payments: the shortest and longest gap that counts. */
+const MONTHLY_GAP = { min: 20, max: 40 };
+
+const dayNumber = (date: string) => Date.parse(`${date}T00:00:00Z`) / 86_400_000;
+
+/** Paid about a month apart at least once, and on which day of the month usually (the median). */
+function monthly(row: SuggestRow): { day: number } | null {
+  const dates = [...new Set(row.dates.split(","))].sort();
+  const gaps = dates.slice(1).map((date, i) => dayNumber(date) - dayNumber(dates[i] ?? date));
+  if (!gaps.some((gap) => gap >= MONTHLY_GAP.min && gap <= MONTHLY_GAP.max)) return null;
+  const days = dates.map((date) => Number(date.slice(8, 10))).sort((a, b) => a - b);
+  return { day: days[Math.floor((days.length - 1) / 2)] ?? Number(row.last_date.slice(8, 10)) };
+}
+
 /** The first day of the month two months back: three months of history with this one. */
 export function suggestSince(today: string): string {
   return previousMonthStart(previousMonthStart(monthOf(today).from));
@@ -51,23 +67,29 @@ const suggestionKey = (row: { key: string; amount: Santim }) => `${row.key}|${ro
 
 export function suggestRegulars(
   rows: SuggestRow[],
-  regulars: Pick<RegularRow, "name" | "amount_minor" | "kind">[],
+  regulars: Pick<RegularRow, "name" | "amount_minor" | "kind" | "category_id">[],
   dismissed: string[],
 ): Suggestion[] {
+  // Already a bill if the Money page would count it as paying one.
   const tracked = (row: SuggestRow) =>
     regulars.some(
       (regular) =>
         regular.kind === "bill" &&
-        (regular.name.trim().toLowerCase() === row.key || regular.amount_minor === row.amount) &&
-        (regular.name.trim().toLowerCase() === row.key ||
-          row.key.includes(regular.name.trim().toLowerCase())),
+        paysBill(regular, {
+          amount_minor: -row.amount,
+          description: row.description,
+          category_id: row.category_id,
+        }),
     );
   return rows
     .filter((row) => row.months >= 2 && row.times <= row.months + 1) // about once a month
     .filter((row) => !tracked(row) && !dismissed.includes(suggestionKey(row)))
-    .sort((a, b) => b.amount - a.amount)
-    .map((row) => {
-      const day = Number(row.last_date.slice(8, 10));
+    .flatMap((row) => {
+      const found = monthly(row);
+      return found ? [{ row, day: found.day }] : [];
+    })
+    .sort((a, b) => b.row.amount - a.row.amount)
+    .map(({ row, day }) => {
       const trimmed = row.description.trim();
       // Typed in different cases over the months: show it with a capital.
       const name = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
