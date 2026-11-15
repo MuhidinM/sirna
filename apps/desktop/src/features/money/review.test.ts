@@ -167,6 +167,49 @@ describe("pay that comes after its month ends", () => {
     ]);
   });
 
+  it("gives late pay to its own date, not a nearer pay day of the same job (third review)", () => {
+    const pay = (id: string, day: number, minor: number) =>
+      regular({
+        id,
+        name: `Job A ${day}th`,
+        amount_minor: minor,
+        rule_json: JSON.stringify({ every: "month", day }),
+      });
+    const items = dueItems(
+      [pay("a10", 10, 1_800_000), pay("a21", 21, 900_000)],
+      [txn({ area_id: "joba", amount_minor: 1_800_000, local_date: "2026-11-16" })],
+      "2026-11-01",
+      "2026-11-30",
+      "2026-11-16",
+    );
+    expect(view(items)).toEqual([
+      ["a10", "2026-11-10", "paid", 0],
+      ["a21", "2026-11-21", "upcoming", 900_000],
+    ]);
+    // Bills whose names overlap: the one named exactly takes it.
+    const bill = (id: string, name: string, day: number) =>
+      regular({
+        id,
+        kind: "bill",
+        name,
+        amount_minor: 30_000,
+        rule_json: JSON.stringify({ every: "month", day }),
+        category_id: "cat_phone",
+        area_id: null,
+      });
+    const bills = dueItems(
+      [bill("phone", "Phone", 1), bill("mom", "Mom phone", 15)],
+      [txn({ amount_minor: -30_000, local_date: "2026-11-09", description: "phone" })],
+      "2026-11-01",
+      "2026-11-30",
+      "2026-11-09",
+    );
+    expect(view(bills)).toEqual([
+      ["phone", "2026-11-01", "paid", 0],
+      ["mom", "2026-11-15", "upcoming", 30_000],
+    ]);
+  });
+
   it("fills two pay days from one job in date order, not by name", () => {
     const bonus = regular({ id: "bonus", name: "A bonus", amount_minor: 500_000 });
     const salary = regular({

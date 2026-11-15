@@ -168,7 +168,10 @@ pub fn window(tomorrow: &str) -> (String, String, String) {
     let month_start = format!("{}-01", &tomorrow[..7.min(tomorrow.len())]);
     let last_month = format!("{}-01", &shift(&month_start, -1)[..7]);
     let entries_from = shift(&last_month, -EARLY_DAYS);
-    (last_month, entries_from, tomorrow.to_string())
+    // To the end of tomorrow's month, as the Money page loads it, so a payment
+    // dated later in the month counts here too.
+    let month_end = shift(&format!("{}-01", &shift(&month_start, 31)[..7]), -1);
+    (last_month, entries_from, month_end)
 }
 
 /// Same-day order, shared with regulars.ts: name ignoring case, then exactly, then id.
@@ -182,9 +185,9 @@ fn by_name(a: &Bill, b: &Bill) -> std::cmp::Ordering {
 
 /// Bills due on `tomorrow` that aren't paid yet, with what is left of each.
 /// The matching is `dueItems` in regulars.ts: an entry that fits counts for
-/// the due date it is nearest to, from EARLY_DAYS before it until the next
-/// due date, and what is left over catches up the oldest open date it could
-/// pay.
+/// each bill's due date nearest to it (from EARLY_DAYS before it until that
+/// bill's next date); between bills, one named exactly goes first, then the
+/// oldest date; what is left over catches up the oldest open date it could pay.
 pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String, i64)> {
     struct Item<'a> {
         bill: &'a Bill,
@@ -238,21 +241,43 @@ pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String
                 shift(&items[i].date, -EARLY_DAYS).as_str() <= day && pays_bill(items[i].bill, txn)
             })
             .collect();
-        // The date it is for: the nearest one, up to the next due date.
-        let nearest = candidates
+        // Each bill's own date for it: the nearest one, up to that bill's next date.
+        let mut own: Vec<usize> = Vec::new();
+        for &i in &candidates {
+            if items[i].next.as_deref().is_some_and(|next| day >= next) {
+                continue;
+            }
+            match own
+                .iter()
+                .position(|&j| items[j].bill.id == items[i].bill.id)
+            {
+                Some(at) if gap(day, &items[i].date) < gap(day, &items[own[at]].date) => {
+                    own[at] = i
+                }
+                Some(_) => {}
+                None => own.push(i),
+            }
+        }
+        // Between bills: one named exactly, then the oldest date. Anything left
+        // over catches up the oldest open dates.
+        let words = txn
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+        let named =
+            |i: usize| !words.is_empty() && items[i].bill.name.trim().to_lowercase() == words;
+        own.sort_by(|&a, &b| {
+            named(b)
+                .cmp(&named(a))
+                .then_with(|| items[a].date.cmp(&items[b].date))
+                .then_with(|| by_name(items[a].bill, items[b].bill))
+        });
+        let order: Vec<usize> = own
             .iter()
             .copied()
-            .filter(|&i| items[i].next.as_deref().is_none_or(|next| day < next))
-            .min_by(|&a, &b| {
-                gap(day, &items[a].date)
-                    .cmp(&gap(day, &items[b].date))
-                    .then_with(|| items[a].date.cmp(&items[b].date))
-                    .then_with(|| by_name(items[a].bill, items[b].bill))
-            });
-        // Anything left over catches up the oldest dates still open.
-        let order: Vec<usize> = nearest
-            .into_iter()
-            .chain(candidates.iter().copied().filter(|&i| Some(i) != nearest))
+            .chain(candidates.iter().copied().filter(|i| !own.contains(i)))
             .collect();
         let mut amount = txn.amount.abs();
         for i in order {
@@ -607,6 +632,37 @@ mod tests {
             ),
             [("Iddir".to_string(), 30_000)]
         );
+    }
+
+    /// The same cases as review.test.ts (third review).
+    #[test]
+    fn overlapping_names_and_later_payments() {
+        let mut phone = bill("phone", "Phone", 30_000, r#"{"every":"month","day":1}"#);
+        let mut mom = bill("mom", "Mom phone", 30_000, r#"{"every":"month","day":15}"#);
+        phone.since = "2026-11-01".into();
+        mom.since = "2026-11-01".into();
+        // "phone" on Nov 9 is the Phone bill's, so Mom phone is still due on the 15th.
+        assert_eq!(
+            due_tomorrow(
+                &[phone, mom],
+                &[spend("2026-11-09", 30_000, "phone")],
+                "2026-11-15"
+            ),
+            [("Mom phone".to_string(), 30_000)]
+        );
+        // Entries dated later in the month count, as on the Money page.
+        let rent = bill("rent", "Rent", 600_000, r#"{"every":"month","day":20}"#);
+        assert_eq!(
+            due_tomorrow(
+                &[rent],
+                &[spend("2026-11-22", 600_000, "rent")],
+                "2026-11-20"
+            ),
+            []
+        );
+        assert_eq!(window("2026-11-20").2, "2026-11-30");
+        assert_eq!(window("2028-02-01").2, "2028-02-29");
+        assert_eq!(window("2026-12-31").2, "2026-12-31");
     }
 
     #[test]

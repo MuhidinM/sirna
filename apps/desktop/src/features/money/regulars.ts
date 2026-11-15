@@ -236,9 +236,10 @@ const daysBetween = (a: string, b: string) =>
  * Each occurrence from `from` to `to` and where it stands. Entries marked
  * with a regular settle that occurrence. Any other entry that fits (pay:
  * income from that job; bills: spending that names the bill or matches its
- * category and amount) counts for the due date it is nearest to, from
- * EARLY_DAYS before it until the next due date; what is left over (catching
- * up) goes to the oldest open date it could pay. So pay that comes late settles last
+ * category and amount) counts for each regular's due date nearest to it, from
+ * EARLY_DAYS before it until that regular's next date; between regulars, a
+ * bill named exactly goes first, then the oldest date. What is left over
+ * (catching up) goes to the oldest open date it could pay. So pay that comes late settles last
  * month's date, rent paid a few days early counts for the coming date, and
  * a month you never recorded doesn't take the next month's payment. Dates
  * up to EARLY_DAYS after `to` are worked out too, so an early payment at the
@@ -293,19 +294,28 @@ export function dueItems(
           txn.area_id === item.regular.area_id
         : paysBill(item.regular, txn));
     const candidates = items.filter(fits);
-    // The date it is for: the nearest one, up to the next due date.
-    const nearest = candidates
-      .filter((item) => item.next === null || day < item.next)
-      .sort(
-        (a, b) =>
-          Math.abs(daysBetween(day, a.date)) - Math.abs(daysBetween(day, b.date)) ||
-          compareCodePoints(a.date, b.date) ||
-          compareRegulars(a.regular, b.regular),
-      )[0];
-    // Anything left over catches up the oldest dates still open.
-    const order = nearest
-      ? [nearest, ...candidates.filter((item) => item !== nearest)]
-      : candidates;
+    // Each regular's own date for it: the nearest one, up to that regular's next date.
+    const distance = (item: Work) => Math.abs(daysBetween(day, item.date));
+    const own = new Map<string, Work>();
+    for (const item of candidates) {
+      if (item.next !== null && day >= item.next) continue;
+      const best = own.get(item.regular.id);
+      if (!best || distance(item) < distance(best)) own.set(item.regular.id, item);
+    }
+    // Between regulars: a bill named exactly, then the oldest date (so the 10th's
+    // late pay isn't taken by the 21st). Anything left catches up the oldest open dates.
+    const words = (txn.description ?? "").trim().toLowerCase();
+    const named = (item: Work) =>
+      item.regular.kind === "bill" &&
+      words !== "" &&
+      item.regular.name.trim().toLowerCase() === words;
+    const first = [...own.values()].sort(
+      (x, y) =>
+        Number(named(y)) - Number(named(x)) ||
+        compareCodePoints(x.date, y.date) ||
+        compareRegulars(x.regular, y.regular),
+    );
+    const order = [...first, ...candidates.filter((item) => !first.includes(item))];
     let amount = Math.abs(txn.amount_minor);
     for (const item of order) {
       if (amount === 0) break;

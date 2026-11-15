@@ -358,13 +358,17 @@ function AiSetup() {
   const refresh = useCallback(
     () =>
       invoke<AiUsage>("ai_usage")
-        .then((now) => {
-          setUsage(now);
-          setCapText(String(now.cap));
-        })
+        .then(setUsage)
         .catch(() => setUsage(null)),
     [],
   );
+  // The limit field follows the saved limit only when that changes, so a
+  // refresh (a key saved above) doesn't wipe a number you are typing.
+  const [capShown, setCapShown] = useState<number | null>(null);
+  if (usage && usage.cap !== capShown) {
+    setCapShown(usage.cap);
+    setCapText(String(usage.cap));
+  }
   useEffect(() => {
     void refresh();
     // A key saved or removed above.
