@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { echo, toOps } from "../../capture/ops";
 import { parseCapture } from "../../capture/parse";
+import { parseRule, type Rule, ruleText } from "../money/regulars";
 import { type Op } from "../../kernel/db";
 import { openTestDb } from "../../test/sqlite";
 import {
@@ -44,11 +45,11 @@ describe("repeating tasks (T-068)", () => {
       due_date: "2026-11-13",
       completed_at: 0,
     };
-    expect(nextCopyOps(task, "2026-11-15", "t2")).toEqual([
+    expect(nextCopyOps(task, "2026-11-15")).toEqual([
       {
-        op: "insert",
+        op: "upsert",
         table: "task_items",
-        id: "t2",
+        id: "t1~next",
         values: {
           title: "Timesheet",
           status: "todo",
@@ -84,28 +85,60 @@ describe("repeating tasks (T-068)", () => {
     add.run("open", "Apply", "todo", "2026-11-16", JSON.stringify({ every: "week", days: [1] }));
     const query = <T>(sql: string, params: (string | number | null)[] = []) =>
       Promise.resolve(db.prepare(sql).all(...params) as T[]);
+    // Like db_tx: an upsert inserts or updates (and revives); a delete is soft.
     const transact = (ops: Op[]) => {
       for (const op of ops) {
-        if (op.op !== "insert") throw new Error("insert only");
+        if (op.op === "delete") {
+          db.prepare("UPDATE task_items SET deleted_at = 1 WHERE id = ?").run(op.id);
+          continue;
+        }
+        if (op.op !== "upsert") throw new Error(`unexpected ${op.op}`);
         const cols = Object.keys(op.values);
-        db.prepare(
-          `INSERT INTO task_items (id, ${cols.join(", ")}, created_at, updated_at) VALUES (?, ${cols.map(() => "?").join(", ")}, 0, 0)`,
-        ).run(op.id, ...(Object.values(op.values) as (string | number | null)[]));
+        const vals = Object.values(op.values) as (string | number | null)[];
+        if (db.prepare("SELECT 1 FROM task_items WHERE id = ?").get(op.id))
+          db.prepare(
+            `UPDATE task_items SET ${cols.map((c) => `${c} = ?`).join(", ")}, deleted_at = NULL WHERE id = ?`,
+          ).run(...vals, op.id);
+        else
+          db.prepare(
+            `INSERT INTO task_items (id, ${cols.join(", ")}, created_at, updated_at) VALUES (?, ${cols.map(() => "?").join(", ")}, 0, 0)`,
+          ).run(op.id, ...vals);
       }
       return Promise.resolve();
     };
-    let n = 0;
-    expect(await ensureRepeats(query as never, transact, "2026-11-15", () => `n${++n}`)).toBe(1);
-    expect(await ensureRepeats(query as never, transact, "2026-11-15", () => `n${++n}`)).toBe(0);
+    // Two runs at once (React runs effects twice) still make one copy.
+    const [first, second] = await Promise.all([
+      ensureRepeats(query as never, transact, "2026-11-15"),
+      ensureRepeats(query as never, transact, "2026-11-15"),
+    ]);
+    expect([first, second]).toEqual([1, 1]);
+    expect(await ensureRepeats(query as never, transact, "2026-11-15")).toBe(0);
     expect(db.prepare(REPEAT_DUE_SQL).all()).toEqual([]);
-    expect(
-      db.prepare("SELECT title, status, due_date, repeat_of FROM task_items WHERE id = 'n1'").get(),
-    ).toEqual({
+    const copy = () =>
+      db
+        .prepare(
+          "SELECT title, status, due_date, repeat_of, deleted_at FROM task_items WHERE id = 'done~next'",
+        )
+        .get();
+    expect(copy()).toEqual({
       title: "Timesheet",
       status: "todo",
       due_date: "2026-11-20",
       repeat_of: "done",
+      deleted_at: null,
     });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM task_items WHERE repeat_of = 'done'").get(),
+    ).toEqual({ n: 1 });
+
+    // Un-tick the timesheet: its untouched copy goes, so there aren't two open.
+    db.prepare("UPDATE task_items SET status = 'todo' WHERE id = 'done'").run();
+    await ensureRepeats(query as never, transact, "2026-11-15");
+    expect(copy()).toMatchObject({ deleted_at: 1 });
+    // Tick it again: the copy comes back.
+    db.prepare("UPDATE task_items SET status = 'done' WHERE id = 'done'").run();
+    await ensureRepeats(query as never, transact, "2026-11-15");
+    expect(copy()).toMatchObject({ status: "todo", deleted_at: null });
   });
 });
 
@@ -137,6 +170,12 @@ describe("repeats in capture and the Tasks page (T-068)", () => {
     expect(op).toMatchObject({ values: { repeat_json: JSON.stringify(FRI), status: "todo" } });
     // Not a repeat: stays a plain task.
     expect(parseCapture("t: read every page", { nowMs })).not.toHaveProperty("repeat");
+    // "every month" isn't Monday, "every sunset" isn't Sunday.
+    expect(parseCapture("t: pay rent every month", { nowMs })).not.toHaveProperty("repeat");
+    expect(parseCapture("t: water plants every sunset", { nowMs })).not.toHaveProperty("repeat");
+    expect(parseCapture("t: gym every mon, thursday", { nowMs })).toMatchObject({
+      repeat: { every: "week", days: [1, 4] },
+    });
   });
 
   it("sets and clears the repeat in the edit form", () => {
@@ -156,6 +195,15 @@ describe("repeats in capture and the Tasks page (T-068)", () => {
       values: { repeat_json: null },
     });
     expect(repeatText(JSON.stringify(FRI))).toBe("every fri");
+    // Every rule's words read back as the same rule, so a saved form saves again.
+    const rules: Rule[] = [
+      { every: "month", day: 31 },
+      { every: "month", day: 1 },
+      { every: "month", day: 22 },
+      { every: "week", days: [1, 2, 3, 4, 5] },
+      { every: "week", days: [1, 4] },
+    ];
+    for (const rule of rules) expect(parseRule(ruleText(rule))).toEqual(rule);
     expect(repeatText(null)).toBe("");
   });
 });

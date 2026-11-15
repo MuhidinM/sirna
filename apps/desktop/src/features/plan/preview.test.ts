@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { type AreaInput, type PlanInput, type TaskInput } from "./generate";
 import { shiftDate } from "./dayplan";
-import { planTodayOps, previewWeek, pushDeadlineOps } from "./preview";
+import { fromNow, planTodayOps, previewWeek, pushDeadlineOps } from "./preview";
 
 const coding: AreaInput = {
   id: "coding",
@@ -79,5 +79,23 @@ describe("the week ahead (T-069)", () => {
     expect(pushDeadlineOps({ id: "t", dueDate: "2026-11-18" })[0]).toMatchObject({
       values: { due_date: "2026-11-25", deadline_stale: 0 },
     });
+  });
+
+  it("judges only tasks the planner places, not a job's or the gym's", () => {
+    const job = task({ id: "j", title: "Report", areaId: "joba", dueDate: MON, remainingMin: 60 });
+    const loose = task({ id: "l", title: "Loose", areaId: null, dueDate: MON, remainingMin: 600 });
+    const input = {
+      ...day(0, [job, loose]),
+      areas: [coding, { ...coding, id: "joba", kind: "work" as const }],
+    };
+    expect(previewWeek([input]).late.map((t) => t.id)).toEqual(["l"]);
+  });
+
+  it("plans today only from now on", () => {
+    const today = fromNow(day(0, []), 18 * 60 + 30);
+    expect(today.template).toEqual([
+      { startMin: 18 * 60 + 30, durationMin: 90, kind: "area", areaId: null, title: "Focus block" },
+    ]);
+    expect(fromNow(day(0, []), 21 * 60).template).toEqual([]);
   });
 });

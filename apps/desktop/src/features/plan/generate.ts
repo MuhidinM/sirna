@@ -93,7 +93,8 @@ export interface DayPlan {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const BUFFER_SHARE = 0.2;
-const FILLABLE_KINDS = new Set(["growth", "admin"]);
+/** Areas the planner fills free time with; others (jobs, gym, prayer) have their own blocks. */
+export const FILLABLE_KINDS = new Set(["growth", "admin"]);
 
 function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);

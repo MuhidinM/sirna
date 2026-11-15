@@ -234,12 +234,9 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
       () => ulid(),
     ).catch((error: unknown) => console.error("could not plan the day", error));
     // The next copy of each repeating task that was finished (T-068).
-    void ensureRepeats(
-      query,
-      (ops) => transact("system", ops, "repeat"),
-      today,
-      () => ulid(),
-    ).catch(() => undefined);
+    void ensureRepeats(query, (ops) => transact("system", ops, "repeat"), today).catch(
+      () => undefined,
+    );
   }, [today, nowMs]);
   const top = useLiveQuery<TaskRow>(todayTopSql, [today, dayStart]);
   const due = useLiveQuery<TaskRow>(DUE_SQL, [today]);

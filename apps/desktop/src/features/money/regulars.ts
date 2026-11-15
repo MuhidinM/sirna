@@ -16,6 +16,8 @@ import { monthOf } from "./money";
 export type Rule = { every: "month"; day: number } | { every: "week"; days: number[] };
 
 const DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const DAY_WORD =
+  /^(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)s?$/;
 
 /**
  * `monthly 10`, `monthly 1st`, `monthly last`, `every mon`, `every mon, thu`,
@@ -37,7 +39,10 @@ export function parseRule(text: string): Rule | null {
     const days = weekly[1]
       .split(/\s*(?:,|and)\s*|\s+/)
       .filter(Boolean)
-      .map((word) => DAY_NAMES.findIndex((name) => word.startsWith(name)) + 1);
+      // A day name or its short form only: "every month" is not Monday.
+      .map((word) =>
+        DAY_WORD.test(word) ? DAY_NAMES.findIndex((name) => word.startsWith(name)) + 1 : 0,
+      );
     if (days.length > 0 && days.every((day) => day > 0))
       return { every: "week", days: [...new Set(days)].sort((a, b) => a - b) };
   }
@@ -46,7 +51,8 @@ export function parseRule(text: string): Rule | null {
 
 export function ruleText(rule: Rule): string {
   if (rule.every === "month") {
-    if (rule.day >= 31) return "monthly, last day";
+    // Reads back with parseRule, so a form can show it and save it again.
+    if (rule.day >= 31) return "monthly last";
     const suffix =
       rule.day % 10 === 1 && rule.day !== 11
         ? "st"

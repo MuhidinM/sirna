@@ -15,6 +15,10 @@ export const MISSED_SQL = `
   LEFT JOIN task_items t ON t.id = b.task_id
   WHERE b.logical_date = ?1 AND b.deleted_at IS NULL AND b.kind = 'area'
     AND b.status = 'planned' AND b.end_at <= ?2
+    -- A block made after its time (the day planned late) wasn't missed.
+    AND b.created_at < b.end_at
+    -- Nor one whose task you finished another way.
+    AND (b.task_id IS NULL OR t.status NOT IN ('done', 'dropped'))
     AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = b.id)
   ORDER BY b.start_at`;
 

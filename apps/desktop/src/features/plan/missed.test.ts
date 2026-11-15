@@ -23,6 +23,17 @@ describe("missed blocks (T-070)", () => {
     add.run("ticked", at("11:00"), at("12:00"), "area", "Admin", "done");
     add.run("routine", at("07:00"), at("07:30"), "routine", "Quran", "planned");
     add.run("later", at("15:00"), at("16:00"), "area", "Coding", "planned");
+    // Planned at 12:30 for a slot that had already passed: not missed.
+    db.prepare(
+      "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, title, status, created_at, updated_at) VALUES ('late-plan', '2026-11-16', ?, ?, 'area', 'Coding', 'planned', ?, 0)",
+    ).run(at("08:00"), at("09:00"), at("12:30"));
+    // Its task was finished another way: not missed.
+    db.prepare(
+      "INSERT INTO task_items (id, title, status, created_at, updated_at) VALUES ('t-done', 'Done', 'done', 0, 0)",
+    ).run();
+    db.prepare(
+      "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, title, status, task_id, created_at, updated_at) VALUES ('finished', '2026-11-16', ?, ?, 'area', 'Coding', 'planned', 't-done', 0, 0)",
+    ).run(at("12:00"), at("12:45"));
     db.prepare(
       "INSERT INTO focus_sessions (id, block_id, kind, planned_min, started_at) VALUES ('f', 'focused', 'focus', 50, ?)",
     ).run(at("10:00"));

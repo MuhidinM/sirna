@@ -5,7 +5,8 @@
  * deadline. Read-only: nothing is written until you act. Pure, plus a loader.
  */
 import { type Op } from "../../kernel/db";
-import { generateDay, type PlanInput, type TaskInput } from "./generate";
+import { localToEpoch } from "../../capture/when";
+import { FILLABLE_KINDS, generateDay, type PlanInput, type TaskInput } from "./generate";
 import { loadPlanInput, type Query, shiftDate, weekStart } from "./dayplan";
 
 export const PREVIEW_DAYS = 7;
@@ -94,8 +95,13 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
 
   const last = inputs[inputs.length - 1]?.date ?? "";
   const late: LateTask[] = [];
+  const kinds = new Map(inputs.flatMap((input) => input.areas.map((area) => [area.id, area.kind])));
   for (const task of allTasks.values()) {
     if (!task.dueDate || task.dueDate > last) continue; // past the week: can't tell yet
+    // Only tasks the planner places can be judged here; a job's or the gym's
+    // tasks are done inside their own blocks.
+    const kind = task.areaId ? kinds.get(task.areaId) : undefined;
+    if (task.areaId !== null && (kind === undefined || !FILLABLE_KINDS.has(kind))) continue;
     const finishedOn = finished.get(task.id) ?? null;
     if (finishedOn !== null && finishedOn <= task.dueDate) continue;
     // What was still missing at the end of the due day (or now, if already overdue).
@@ -117,10 +123,31 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
 }
 
 /** Loads the next 7 days' inputs and runs them. */
-export async function loadPreview(query: Query, today: string): Promise<WeekPreview> {
+/** Today's free slots from now on: time already gone can't be planned. */
+export function fromNow(input: PlanInput, nowMin: number): PlanInput {
+  return {
+    ...input,
+    template: input.template.flatMap((block) => {
+      if (block.kind !== "area") return [block];
+      const end = block.startMin + block.durationMin;
+      if (end <= nowMin) return [];
+      if (block.startMin >= nowMin) return [block];
+      return [{ ...block, startMin: nowMin, durationMin: end - nowMin }];
+    }),
+  };
+}
+
+/** Loads the next 7 days' inputs and runs them, today from `nowMs` on. */
+export async function loadPreview(
+  query: Query,
+  today: string,
+  nowMs: number,
+): Promise<WeekPreview> {
   const inputs: PlanInput[] = [];
   for (let i = 0; i < PREVIEW_DAYS; i++)
     inputs.push(await loadPlanInput(query, shiftDate(today, i)));
+  const first = inputs[0];
+  if (first) inputs[0] = fromNow(first, Math.round((nowMs - localToEpoch(today, 0)) / 60_000));
   return previewWeek(inputs);
 }
 
