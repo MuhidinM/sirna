@@ -41,6 +41,7 @@ import { shiftDate } from "../features/plan/dayplan";
 import { weekSummary } from "../features/dashboard/insights";
 import { InsightList } from "./Insights";
 import { MonthReviewCard } from "./Money";
+import { WeekPreview } from "./WeekPreview";
 import { isFirstSunday } from "../features/money/review";
 import { previousMonthStart } from "../features/money/money";
 import { type AreaColor, Bar, Button } from "./ui";
@@ -319,6 +320,8 @@ export function WeekCard() {
           {error}
         </p>
       )}
+
+      <WeekPreview today={today} />
 
       <section className="card" aria-labelledby="time">
         <h2 id="time">Where time went</h2>

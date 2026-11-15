@@ -165,7 +165,7 @@ Milestone 4 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | ID    | Issue                                                | Task                                                            | Reqs      | Size | Status |
 | ----- | ---------------------------------------------------- | --------------------------------------------------------------- | --------- | ---- | ------ |
 | T-067 | [#139](https://github.com/MuhidinM/sirna/issues/139) | Show each job's tasks inside its blocks, for any number of jobs | R-PLAN-06 | M    | done   |
-| T-068 | [#140](https://github.com/MuhidinM/sirna/issues/140) | Repeating tasks                                                 | R-PLAN-07 | M    | todo   |
-| T-069 | [#141](https://github.com/MuhidinM/sirna/issues/141) | A 7-day preview that flags tasks that will miss their deadline  | R-PLAN-08 | M    | todo   |
+| T-068 | [#140](https://github.com/MuhidinM/sirna/issues/140) | Repeating tasks                                                 | R-PLAN-07 | M    | done   |
+| T-069 | [#141](https://github.com/MuhidinM/sirna/issues/141) | A 7-day preview that flags tasks that will miss their deadline  | R-PLAN-08 | M    | done   |
 | T-070 | [#142](https://github.com/MuhidinM/sirna/issues/142) | Missed blocks: later today, tomorrow or skip                    | R-PLAN-09 | S    | todo   |
 | T-071 | [#143](https://github.com/MuhidinM/sirna/issues/143) | A shorter sidebar with one Plan page                            | R-UX-01   | S    | todo   |
