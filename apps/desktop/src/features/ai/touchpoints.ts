@@ -295,3 +295,28 @@ export const WEEK: AiTask<WeekFacts, { paragraph: string }> = {
       ? "longer than 80 words"
       : groundText([output.paragraph], WEEK.facts(input)),
 };
+
+// --- Money advisor tip (proposal 3.1; T-064) ---------------------------------------
+
+/** Names and ratios only: never an amount of money (R-AI-02). */
+export type MoneyFacts = Record<string, string | number>;
+
+export const MONEY: AiTask<MoneyFacts, { tip: string }> = {
+  id: "money",
+  version: "1",
+  schema: s.object({
+    tip: s.string({ maxLength: 160, description: "One practical sentence, at most 22 words" }),
+  }),
+  system: SYSTEM,
+  facts: (f) =>
+    Object.entries(f)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n"),
+  ask: () =>
+    "Give one calm, practical suggestion (at most 22 words) for this money finding. No amounts of money, no currency, no blame.",
+  ground: (output, input) => {
+    if (/\b(?:birr|etb|br)\b|\$|santim/i.test(output.tip)) return "names an amount of money";
+    if (output.tip.split(/\s+/).length > 26) return "longer than 22 words";
+    return groundText([output.tip], MONEY.facts(input));
+  },
+};

@@ -1163,3 +1163,18 @@ input[type="number"] {
   height: 14px;
   background: var(--text-secondary);
 }
+
+/* The advisor (T-064). */
+.advisor .finding {
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border-left: 3px solid var(--border-strong);
+  margin-bottom: var(--space-3);
+}
+
+.advisor .finding.urgent {
+  border-left-color: var(--warning);
+}
+
+.advisor .finding p {
+  margin: 0 0 var(--space-2);
+}

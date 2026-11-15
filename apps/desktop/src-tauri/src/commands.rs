@@ -565,8 +565,8 @@ fn write_away(app: &AppHandle, db: &Db, date: &str, context: &str, now: i64) -> 
 }
 
 /// The task names the AI gate accepts (plan §7.3); each is logged by name.
-const AI_TASKS: [&str; 7] = [
-    "timing", "estimate", "brief", "week", "review", "capture", "split",
+const AI_TASKS: [&str; 8] = [
+    "timing", "estimate", "brief", "week", "review", "capture", "split", "money",
 ];
 
 /// Sends one model request through the gate (ai.rs). The webview builds the
