@@ -3,6 +3,7 @@
 mod ai;
 mod away;
 mod backup;
+mod bills;
 mod calendar;
 mod clock;
 mod commands;

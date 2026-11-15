@@ -185,6 +185,7 @@ pub fn start(app: AppHandle, logon: bool) {
                 if was_locked && !locked {
                     handle(&app, Trigger::Unlock);
                     crate::review::tick(&app);
+                    crate::bills::tick(&app);
                 }
                 was_locked = locked;
                 polls += 1;
@@ -193,6 +194,7 @@ pub fn start(app: AppHandle, logon: bool) {
                     if !locked {
                         handle(&app, Trigger::Tick);
                         crate::review::tick(&app);
+                        crate::bills::tick(&app);
                         crate::guard::tick(&app);
                         crate::focus::sync_dnd(&app);
                     }

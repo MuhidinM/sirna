@@ -181,4 +181,4 @@ The smaller items of [docs/proposals/money-and-planning.md](proposals/money-and-
 | T-074 | [#152](https://github.com/MuhidinM/sirna/issues/152) | Ask "afford 4500 shoes" in the capture box  | R-MON-10  | S    | done   |
 | T-075 | [#153](https://github.com/MuhidinM/sirna/issues/153) | A status strip at the top of Settings       | R-UX-02   | S    | done   |
 | T-076 | [#154](https://github.com/MuhidinM/sirna/issues/154) | A Sunday planning step                      | R-PLAN-10 | M    | done   |
-| T-077 | [#155](https://github.com/MuhidinM/sirna/issues/155) | Remind me the day before a bill is due      | R-MON-14  | M    | todo   |
+| T-077 | [#155](https://github.com/MuhidinM/sirna/issues/155) | Remind me the day before a bill is due      | R-MON-14  | M    | done   |

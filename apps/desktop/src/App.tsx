@@ -35,6 +35,7 @@ type Screen = "loading" | "setup" | Page;
  */
 export function readPending(pending: string | null): { screen?: Screen; notesQuery: string } {
   if (pending === "review") return { screen: "review", notesQuery: "" };
+  if (pending === "money") return { screen: "money", notesQuery: "" };
   if (pending?.startsWith("notes:")) return { screen: "notes", notesQuery: pending.slice(6) };
   return { notesQuery: "" };
 }

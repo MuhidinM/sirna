@@ -27,7 +27,7 @@ pub fn logical_day(now_ms: i64) -> (String, i64) {
 }
 
 /// Days since 1970-01-01 to a calendar date (Howard Hinnant's algorithm).
-fn civil_date(days: i64) -> String {
+pub(crate) fn civil_date(days: i64) -> String {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;

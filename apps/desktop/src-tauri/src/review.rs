@@ -55,7 +55,7 @@ pub fn tray_offers(local_min: u32, review_min: u32, finished: bool) -> bool {
     !finished && logical_minutes(local_min) >= logical_minutes(review_min)
 }
 
-fn minutes_setting(conn: &Connection, key: &str, default: u32) -> u32 {
+pub(crate) fn minutes_setting(conn: &Connection, key: &str, default: u32) -> u32 {
     crate::db::setting_string(conn, key)
         .and_then(|text| session::parse_hhmm(&text))
         .unwrap_or(default)
@@ -84,7 +84,13 @@ pub fn offered(conn: &Connection, now_ms: i64) -> bool {
     )
 }
 
-fn upsert(conn: &mut Connection, table: &str, id: &str, key: &str, value: serde_json::Value) {
+pub(crate) fn upsert(
+    conn: &mut Connection,
+    table: &str,
+    id: &str,
+    key: &str,
+    value: serde_json::Value,
+) {
     let result = (|| -> Result<(), String> {
         let txn = conn.transaction().map_err(|error| error.to_string())?;
         let mut values = serde_json::Map::new();

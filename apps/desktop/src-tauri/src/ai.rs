@@ -78,7 +78,7 @@ fn civil(days: i64) -> (i64, u32, u32) {
 }
 
 /// Day number of (year, month, day).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+pub(crate) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
     let era = y.div_euclid(400);
     let yoe = y.rem_euclid(400);
