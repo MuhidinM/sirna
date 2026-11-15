@@ -31,6 +31,7 @@ export function parseRule(text: string): Rule | null {
   if (/^(?:monthly|every month)(?: on)?(?: the)? last(?: day)?$/.test(t))
     return { every: "month", day: 31 };
   if (/^every (?:weekday|work ?day)s?$/.test(t)) return { every: "week", days: [1, 2, 3, 4, 5] };
+  if (/^(?:daily|every ?day)$/.test(t)) return { every: "week", days: [1, 2, 3, 4, 5, 6, 7] };
   const weekly = /^(?:every|weekly)(?: on)? (.+)$/.exec(t);
   if (weekly?.[1]) {
     const days = weekly[1]

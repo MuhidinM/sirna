@@ -6,6 +6,8 @@
 import { logicalDate } from "../kernel/dates";
 import { parseAmount, type Santim } from "../kernel/money";
 import { type ClockStyle, localToEpoch, readWhen } from "./when";
+import { parseRule, type Rule } from "../features/money/regulars";
+import { onOrAfter } from "../features/tasks/repeat";
 
 export const PARSER_ID = "capture@1";
 
@@ -19,6 +21,8 @@ export type Parsed =
       dueAt?: number;
       area?: string;
       waitingOn?: string;
+      /** `every fri`: a new copy comes once this one is done (T-068). */
+      repeat?: Rule;
     }
   | MoneyItem
   /** Several entries on one line: `lunch 120, taxi 40`. */
@@ -682,7 +686,24 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   return withArea({ kind: "inbox", body: untagged }, area);
 }
 
+/** A repeat at the end of a task: `every fri`, `monthly 1`, `every weekday`, `daily`. */
+const REPEAT_TAIL =
+  /\s+((?:every|weekly|monthly|daily)\b(?:\s+(?:on\s+)?(?:the\s+)?[\w,]+(?:\s*(?:,|and)\s*\w+)*)?)$/i;
+
 function readTask(raw: string, nowMs: number, clockStyle: ClockStyle): Parsed {
+  // `t: timesheet every fri`: the repeat comes off before the date words.
+  const tail = REPEAT_TAIL.exec(raw);
+  const rule = tail?.[1] ? parseRule(tail[1]) : null;
+  if (rule && tail) {
+    const task = readTask(raw.slice(0, tail.index), nowMs, clockStyle);
+    if (task.kind !== "task") return task;
+    task.repeat = rule;
+    if (!task.dueDate) {
+      const first = onOrAfter(rule, logicalDate(nowMs));
+      if (first) task.dueDate = first;
+    }
+    return task;
+  }
   // Only a marked estimate (`~3h`, `about 2 hours`) on a task: a bare "2h" is too
   // easily part of the title.
   const estimate = MARKED_ESTIMATE.exec(raw);

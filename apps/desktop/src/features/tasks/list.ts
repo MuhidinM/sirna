@@ -2,6 +2,7 @@
  * The Tasks page: every task in one place, to find, edit, finish, park or
  * bring back (plan §3.5 captures land here too). Pure and tested.
  */
+import { parseRule, readRule, ruleText } from "../money/regulars";
 import { type Op } from "../../kernel/db";
 import { realDate } from "../projects/projects";
 
@@ -25,6 +26,7 @@ export interface TaskListRow {
   deadline_stale: number;
   step_no: number | null;
   step_total: number | null;
+  repeat_json: string | null;
   estimate_min: number | null;
   area_id: string | null;
   area_name: string | null;
@@ -48,7 +50,7 @@ export function stepLabel(
 /** ?1 status list as JSON; done and dropped show the last 60 days. */
 export const TASKS_SQL = `
 SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.deadline_stale,
-       t.step_no, (SELECT count(*) FROM task_items AS step
+       t.step_no, t.repeat_json, (SELECT count(*) FROM task_items AS step
                    WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total,
        t.estimate_min, t.area_id,
        a.name AS area_name, a.color AS area_color, t.project_id, p.title AS project_title,
@@ -94,6 +96,8 @@ export interface TaskDraft {
   projectId: string;
   due: string;
   estimateHours: string;
+  /** `every fri`, `monthly 1`…; "" for none (T-068). */
+  repeat: string;
   waitingOn: string;
   followUp: string;
   notes: string;
@@ -114,12 +118,21 @@ export function taskDraftOf(row: TaskListRow): TaskDraft {
     waitingOn: row.waiting_on ?? "",
     followUp: row.follow_up_date ?? "",
     notes: row.notes ?? "",
+    repeat: repeatText(row.repeat_json),
   };
+}
+
+/** The repeat in words for a form or a label; "" for none. */
+export function repeatText(json: string | null | undefined): string {
+  const rule = json ? readRule(json) : null;
+  return rule ? ruleText(rule) : "";
 }
 
 export function checkTask(draft: TaskDraft): string | null {
   if (!draft.title.trim()) return "Give the task a name.";
   if (draft.due && !realDate(draft.due)) return "Due: a date like 2026-11-20.";
+  if (draft.repeat.trim() && !parseRule(draft.repeat))
+    return "Repeat: every fri, every weekday, daily, monthly 1 or monthly last.";
   if (draft.followUp && !realDate(draft.followUp)) return "Follow up: a date like 2026-11-20.";
   const hours = draft.estimateHours.trim();
   if (hours) {
@@ -153,6 +166,7 @@ export function taskEditOps(row: TaskListRow, draft: TaskDraft, nowMs: number): 
     follow_up_date: waiting ? orNull(draft.followUp) : null,
     notes: orNull(draft.notes),
     deadline_stale: 0,
+    repeat_json: draft.repeat.trim() ? JSON.stringify(parseRule(draft.repeat)) : null,
   };
   if ((orNull(draft.due) ?? null) !== row.due_date) {
     values.due_at = null;

@@ -11,6 +11,7 @@ import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/tou
 import { ulid } from "../kernel/ulid";
 import { statusOps, stepLabel } from "../features/tasks/list";
 import { JOB_TASKS_SQL, type JobTask, listBlockIds, tasksByJob } from "../features/plan/jobs";
+import { ensureRepeats } from "../features/tasks/repeat";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan, shiftDate } from "../features/plan/dayplan";
 import {
@@ -231,6 +232,13 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
       nowMs,
       () => ulid(),
     ).catch((error: unknown) => console.error("could not plan the day", error));
+    // The next copy of each repeating task that was finished (T-068).
+    void ensureRepeats(
+      query,
+      (ops) => transact("system", ops, "repeat"),
+      today,
+      () => ulid(),
+    ).catch(() => undefined);
   }, [today, nowMs]);
   const top = useLiveQuery<TaskRow>(todayTopSql, [today, dayStart]);
   const due = useLiveQuery<TaskRow>(DUE_SQL, [today]);
