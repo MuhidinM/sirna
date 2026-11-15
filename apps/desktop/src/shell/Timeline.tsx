@@ -1,5 +1,6 @@
 import { type CSSProperties } from "react";
 
+import { type JobTask } from "../features/plan/jobs";
 import { type BlockRow, firstStep, formatMinutes, nowAndNext } from "../features/plan/now";
 import { type FocusStatus, startFocus } from "./Focus";
 import { Button, Card } from "./ui";
@@ -58,7 +59,20 @@ export function NowCards({
 }
 
 /** Today's blocks in order, past ones faded, the current one marked. */
-export function Timeline({ blocks, nowMs }: { blocks: BlockRow[]; nowMs: number }) {
+export function Timeline({
+  blocks,
+  nowMs,
+  jobTasks,
+  listUnder,
+  onDone,
+}: {
+  blocks: BlockRow[];
+  nowMs: number;
+  /** Each job's open tasks (T-067), shown under that job's next block. */
+  jobTasks?: Map<string, JobTask[]>;
+  listUnder?: Set<string>;
+  onDone?: (task: JobTask) => void;
+}) {
   const { now } = nowAndNext(blocks, nowMs);
   if (blocks.length === 0) {
     return <p className="empty">No plan yet. Finish setup and today&apos;s blocks appear here.</p>;
@@ -88,6 +102,19 @@ export function Timeline({ blocks, nowMs }: { blocks: BlockRow[]; nowMs: number 
             <span className="block-title">{block.title}</span>
             {block.task_title && block.kind === "area" && (
               <span className="meta">{block.task_title}</span>
+            )}
+            {block.area_id && listUnder?.has(block.id) && (
+              <ul className="job-tasks" aria-label={`${block.title} tasks`}>
+                {(jobTasks?.get(block.area_id) ?? []).map((task) => (
+                  <li key={task.id}>
+                    <label>
+                      <input type="checkbox" checked={false} onChange={() => onDone?.(task)} />
+                      {task.title}
+                      {task.due_date && <span className="meta"> · due {task.due_date}</span>}
+                    </label>
+                  </li>
+                ))}
+              </ul>
             )}
           </li>
         );

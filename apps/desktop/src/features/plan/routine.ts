@@ -6,7 +6,8 @@
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7; // Monday = 1 … Sunday = 7
 
 export interface JobAnswer {
-  areaId: "joba" | "jobb";
+  /** Any work area: Job A, Job B, a third job… */
+  areaId: string;
   name: string;
   days: Weekday[];
   start: string; // "08:00"

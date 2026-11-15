@@ -1,0 +1,65 @@
+import { describe, expect, it } from "vitest";
+
+import { openTestDb } from "../../test/sqlite";
+import { JOB_TASKS_SQL, type JobTask, listBlockIds, tasksByJob } from "./jobs";
+
+describe("work tasks inside job blocks (T-067)", () => {
+  it("lists each job's open tasks, deadline first, then planned, then oldest", () => {
+    const task = (
+      id: string,
+      area: string,
+      due: string | null,
+      planned: string | null,
+      created: number,
+    ): JobTask => ({
+      id,
+      title: id,
+      area_id: area,
+      status: "todo",
+      due_date: due,
+      planned_date: planned,
+      created_at: created,
+    });
+    const byJob = tasksByJob([
+      task("later", "joba", null, null, 1),
+      task("soon", "joba", "2026-11-16", null, 5),
+      task("planned", "joba", null, "2026-11-15", 9),
+      task("b1", "jobb", null, null, 1),
+      ...["x1", "x2", "x3", "x4", "x5", "x6"].map((id, i) => task(id, "jobc", null, null, 10 + i)),
+    ]);
+    expect(byJob.get("joba")?.map((t) => t.id)).toEqual(["soon", "planned", "later"]);
+    expect(byJob.get("jobb")?.map((t) => t.id)).toEqual(["b1"]);
+    expect(byJob.get("jobc")).toHaveLength(5);
+  });
+
+  it("puts the list under the job's next block that hasn't ended", () => {
+    const blocks = [
+      { id: "a1", area_id: "joba", kind: "fixed", end_at: 100 },
+      { id: "a2", area_id: "joba", kind: "fixed", end_at: 300 },
+      { id: "b1", area_id: "jobb", kind: "fixed", end_at: 50 },
+      { id: "g", area_id: "gym", kind: "routine", end_at: 400 },
+    ];
+    expect([...listBlockIds(blocks, new Set(["joba", "jobb"]), 150)]).toEqual(["a2"]);
+    expect([...listBlockIds(blocks, new Set(["joba", "jobb"]), 0)].sort()).toEqual(["a1", "b1"]);
+  });
+
+  it("reads tasks of any work area, a third job included", () => {
+    const db = openTestDb();
+    db.prepare(
+      "INSERT INTO area_items (id, name, kind, color, priority_rank, created_at, updated_at) VALUES ('jobc', 'Job C', 'work', 'work', 9, 0, 0)",
+    ).run();
+    const add = db.prepare(
+      "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, 0)",
+    );
+    add.run("c1", "Report", "todo", "jobc", "2026-11-17");
+    add.run("far", "Far", "todo", "jobc", "2026-12-30");
+    add.run("done", "Done", "done", "jobc", null);
+    add.run("gym", "Gym task", "todo", "gym", null);
+    add.run("nodate", "Inbox", "todo", "joba", null);
+    const ids = (db.prepare(JOB_TASKS_SQL).all("2026-11-22") as { id: string }[])
+      .map((r) => r.id)
+      .sort();
+    // A third job counts; too far ahead, done, or not a job: left out.
+    expect(ids).toEqual(["c1", "nodate"]);
+  });
+});
