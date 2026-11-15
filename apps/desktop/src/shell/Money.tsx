@@ -118,6 +118,16 @@ import {
 } from "../features/money/advisor";
 import { type Afford, afford } from "../features/money/afford";
 import { monthReview } from "../features/money/review";
+import {
+  DISMISSED_SUGGESTIONS_KEY,
+  notAgainOps,
+  readDismissed,
+  suggestRegulars,
+  suggestSince,
+  SUGGEST_SQL,
+  type SuggestRow,
+  trackOps,
+} from "../features/money/suggest";
 import { ask } from "../features/ai/ask";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { MONEY } from "../features/ai/touchpoints";
@@ -1849,6 +1859,49 @@ function RegularForm() {
   );
 }
 
+/** Payments that look regular (T-072): Track it adds the bill; No stops asking. */
+function SuggestedRegulars({ today, regulars }: { today: string; regulars: RegularRow[] }) {
+  const rows = useLiveQuery<SuggestRow & Record<string, string | number | null>>(SUGGEST_SQL, [
+    suggestSince(today),
+  ]);
+  const dismissed = useLiveQuery<{ value_json: string }>(
+    "SELECT value_json FROM core_settings WHERE key = ?",
+    [DISMISSED_SUGGESTIONS_KEY],
+  );
+  const [error, setError] = useState<string | null>(null);
+  if (rows.loading || dismissed.loading) return null;
+  const json = dismissed.rows[0]?.value_json;
+  const suggestions = suggestRegulars(rows.rows, regulars, readDismissed(json));
+  if (suggestions.length === 0) return null;
+  const write = (ops: Op[]) =>
+    void transact("user", ops, "regular").catch((failure: unknown) =>
+      setError(`Couldn't save: ${message(failure)}`),
+    );
+  return (
+    <section className="card" aria-labelledby="regular-suggest">
+      <h2 id="regular-suggest">Track these?</h2>
+      <ul className="task-list">
+        {suggestions.slice(0, 3).map((suggestion) => (
+          <li key={suggestion.key} className="task">
+            <span>{suggestion.text}</span>
+            <span className="row task-meta">
+              <Button primary onClick={() => write(trackOps(suggestion, ulid()))}>
+                Track it
+              </Button>
+              <Button onClick={() => write(notAgainOps(json, suggestion.key))}>No</Button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** Regulars (T-059, T-060): pay you expect and bills you pay, this month. */
 function RegularsView({ today }: { today: string }) {
   const { items, regulars, loading } = useDue(today);
@@ -1892,6 +1945,7 @@ function RegularsView({ today }: { today: string }) {
           </ul>
         )}
       </section>
+      <SuggestedRegulars today={today} regulars={regulars} />
       <RegularForm />
       {regulars.length > 0 && (
         <section className="card" aria-labelledby="regular-all">
