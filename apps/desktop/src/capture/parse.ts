@@ -97,6 +97,8 @@ export interface ParseOptions {
   jobs?: { id: string; name: string }[];
   /** Your accounts, so `@telebirr` and transfers know them (T-058). */
   accounts?: { id: string; name: string; kind: string; pays_in: number }[];
+  /** People with an open loan, so "abel paid back 400" is read only when Abel owes you. */
+  loanPeople?: { name: string; owedToMe: number; iOwe: number }[];
 }
 
 type AccountOption = NonNullable<ParseOptions["accounts"]>[number];
@@ -186,6 +188,21 @@ const LOAN_FORMS: [
 ];
 
 /** `lent 1000 abel`, `borrowed 500 from sara`, `abel paid back 400`, `paid back sara 500`. */
+/** Words that are never a person: days, fillers, things. */
+const NOT_A_PERSON =
+  /^(?:today|tonight|tomorrow|yesterday|now|later|next|this|last|week|month|morning|evening|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|the|a|an|my|your|his|her|their|it|him|them|me|you|loan|money|back|cash|some|all|shoes|book|books|item|items|order)$/i;
+
+function isPerson(name: string, options: ParseOptions): boolean {
+  const words = name.trim().split(/\s+/);
+  if (words.some((word) => NOT_A_PERSON.test(word))) return false;
+  const key = squash(name);
+  const named = (list: { name: string }[] | undefined) =>
+    (list ?? []).some((item) => squash(item.name) === key);
+  // A job, account or category is not someone you lend to.
+  if (named(options.jobs) || named(options.accounts) || named(options.categories)) return false;
+  return true;
+}
+
 function readLoan(text: string, options: ParseOptions): Parsed | undefined {
   const { rest, account } = readAccount(text, options.accounts ?? []);
   for (const [pattern, loanKind, order] of LOAN_FORMS) {
@@ -194,7 +211,13 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
     const [amountText, person] =
       order === "amount-first" ? [match[1], match[2]] : [match[2], match[1]];
     const amount = parseAmount(amountText ?? "");
-    if (amount === null || amount <= 0 || !person) continue;
+    if (amount === null || amount <= 0 || !person || !isPerson(person, options)) continue;
+    // Being paid back, or paying back, needs a loan that is open that way:
+    // "job a paid me 18k" is pay, "returned shoes 500" is a refund.
+    if (loanKind === "paid_me" || loanKind === "i_paid") {
+      const open = (options.loanPeople ?? []).find((p) => squash(p.name) === squash(person));
+      if (!open || (loanKind === "paid_me" ? open.owedToMe : open.iOwe) <= 0) continue;
+    }
     const fallback = (options.accounts ?? []).find((a) => a.kind === "cash");
     const chosen = account ?? fallback;
     return {
@@ -492,7 +515,18 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
   // before a digit is a thousands separator (`rent 1,200`), not a split.
   const pieces = raw.split(/\s*,\s*(?=\D)/).filter((piece) => piece.trim());
   if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
-    const items = pieces.map((piece) => parseMoneyLine(piece, options));
+    // "lunch 120, taxi 40 @telebirr": an account on the last piece only is
+    // for the whole line.
+    const accounts = options.accounts ?? [];
+    const own = pieces.map((piece) => readAccount(piece, accounts).account);
+    const shared =
+      own.length > 1 && own.slice(0, -1).every((a) => !a) ? own[own.length - 1] : undefined;
+    const items = pieces.map((piece) =>
+      parseMoneyLine(
+        shared && !readAccount(piece, accounts).account ? `${piece} @${shared.id}` : piece,
+        options,
+      ),
+    );
     if (items.every(isMoney)) return { kind: "money", items };
   }
   return parsed;
@@ -502,8 +536,19 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
 function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
   const { rest, account } = readAccount(raw, accounts);
-  const parsed = parseOne(rest, options);
-  if (!isMoney(parsed)) return account ? parseOne(raw, options) : parsed;
+  let parsed = parseOne(rest, options);
+  // "got 5000 @telebirr": without the account nothing names the money, so
+  // read the whole line and keep the account.
+  if (!isMoney(parsed) && account) {
+    const whole = parseOne(raw, options);
+    if (!isMoney(whole)) return whole;
+    parsed = {
+      ...whole,
+      description:
+        whole.description.replace(/(?:^|\s)@[\p{L}\p{N}_-]+/gu, "").trim() || whole.description,
+    };
+  }
+  if (!isMoney(parsed)) return parsed;
   const item = finishMoney(parsed, options);
   const chosen =
     account ??
@@ -563,7 +608,9 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   // Income: "got 18k job a", "received 5000 freelance", "earned 3000 tutoring".
   const got = /^(?:got paid|got|received|earned)\s+(.+)$/i.exec(untagged);
   if (got?.[1]) {
-    const money = readMoney(got[1], true);
+    // "got 5000" with nothing after it is income all the same.
+    const bare = /^\S+$/.test(got[1].trim()) ? parseAmount(got[1].trim()) : null;
+    const money = readMoney(got[1], true) ?? (bare ? { label: "income", amount: bare } : undefined);
     // "got 3 tickets" isn't pay: the amount must look like money (100 birr or
     // more, or marked with k, birr or ETB) or the words must say pay or a job.
     const looksPaid =

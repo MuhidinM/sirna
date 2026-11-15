@@ -125,6 +125,11 @@ describe("loans in the capture box (T-061)", () => {
   const options: ParseOptions = {
     nowMs: Date.parse("2026-11-14T12:00:00+03:00"),
     accounts: db.prepare(ACCOUNTS_SQL).all() as unknown as AccountRow[],
+    jobs: [{ id: "joba", name: "Job A" }],
+    loanPeople: [
+      { name: "Abel", owedToMe: 100_000, iOwe: 0 },
+      { name: "Sara", owedToMe: 0, iOwe: 200_000 },
+    ],
   };
   const read = (text: string) => parseCapture(text, options);
 
@@ -156,6 +161,22 @@ describe("loans in the capture box (T-061)", () => {
     expect(read("paid back sara 500")).toMatchObject({ loanKind: "i_paid", person: "sara" });
     expect(read("paid sara back 500")).toMatchObject({ loanKind: "i_paid", person: "sara" });
     expect(read("lent 1000 abel @telebirr")).toMatchObject({ account: "telebirr" });
+  });
+
+  it("reads paying back only when a loan is open that way", () => {
+    // Nobody owes you as "job a" or "client"; shoes aren't a person.
+    expect(read("job a paid me 18k").kind).not.toBe("loan");
+    expect(read("client paid me 5000").kind).not.toBe("loan");
+    expect(read("returned shoes 500").kind).not.toBe("loan");
+    // Sara doesn't owe you; you owe her.
+    expect(read("sara paid back 400").kind).not.toBe("loan");
+    expect(read("paid back abel 500").kind).not.toBe("loan");
+  });
+
+  it("keeps date words and fillers out of names", () => {
+    expect(read("lent 1000 to abel tomorrow").kind).not.toBe("loan");
+    expect(read("lent 500 the shop").kind).not.toBe("loan");
+    expect(read("borrowed 500 from job a").kind).not.toBe("loan");
   });
 
   it("leaves ordinary spending and pay alone", () => {

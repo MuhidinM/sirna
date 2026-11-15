@@ -204,6 +204,23 @@ export function renameAccountOps(id: string, name: string): Op[] {
   return [{ op: "update", table: "money_accounts", id, values: { name: name.trim() } }];
 }
 
+/**
+ * Why an account can't be hidden yet: hiding drops it from every total, so
+ * it must be empty, not where pay lands, and not used by a bill or pay day.
+ */
+export function checkHide(
+  account: AccountRow,
+  regulars: { account: string; name: string; active: number }[],
+): string | null {
+  const balance = balanceOf(account);
+  if (balance !== null && balance !== 0)
+    return `${account.name} still holds ${formatAmount(balance)}: move it out first.`;
+  if (account.pays_in === 1) return "Pay lands here: pick another account for pay first.";
+  const used = regulars.find((regular) => regular.active === 1 && regular.account === account.id);
+  if (used) return `${used.name} uses ${account.name}: change it first.`;
+  return null;
+}
+
 export function hideAccountOps(id: string): Op[] {
   return [{ op: "delete", table: "money_accounts", id }];
 }

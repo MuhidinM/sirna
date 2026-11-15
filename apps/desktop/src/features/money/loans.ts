@@ -158,6 +158,49 @@ export function followUpOps(eventId: string, date: string | null): Op[] {
   return [{ op: "update", table: "money_loans", id: eventId, values: { follow_up_date: date } }];
 }
 
+/**
+ * One follow-up date per person: set on the latest event, cleared on the
+ * others, so it can be moved earlier or removed.
+ */
+export function personFollowUpOps(person: PersonBalance, date: string | null): Op[] {
+  const last = person.events[person.events.length - 1];
+  if (!last) return [];
+  return person.events.flatMap((event) =>
+    event.id === last.id
+      ? followUpOps(event.id, date)
+      : event.follow_up_date !== null
+        ? followUpOps(event.id, null)
+        : [],
+  );
+}
+
+/** The loan event behind a ledger entry (`transfer_id = loan:<id>`), if it is one. */
+export const loanIdOf = (transferId: string | null | undefined) =>
+  transferId?.startsWith("loan:") ? transferId.slice(5) : null;
+
+export const LOAN_SQL = `SELECT id, person, kind, amount_minor, local_date, account, note, follow_up_date
+  FROM money_loans WHERE id = ?`;
+
+/** Puts a deleted loan event back as it was. */
+export function loanRestoreOps(event: LoanEvent): Op[] {
+  return [
+    {
+      op: "upsert",
+      table: "money_loans",
+      id: event.id,
+      values: {
+        person: event.person,
+        kind: event.kind,
+        amount_minor: event.amount_minor,
+        local_date: event.local_date,
+        account: event.account,
+        note: event.note,
+        follow_up_date: event.follow_up_date,
+      },
+    },
+  ];
+}
+
 /** "Abel owes you 600 ETB since 2026-11-01" for the brief, when a follow-up is due. */
 export function followUpLines(people: PersonBalance[], today: string): string[] {
   return people
