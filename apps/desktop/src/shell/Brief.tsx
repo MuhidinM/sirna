@@ -25,6 +25,8 @@ import { dueLines } from "../features/money/regulars";
 import { useInsights } from "./Insights";
 import { followUpLines } from "../features/money/loans";
 import { useDue, useLoans } from "./Money";
+import { useWeekOutcomes } from "./WeekAhead";
+import { weekStart as mondayOf } from "../features/plan/dayplan";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -89,6 +91,7 @@ export function Brief({
   const checks = useChecks();
   const due = useDue(today);
   const loans = useLoans();
+  const outcomes = useWeekOutcomes(mondayOf(today));
   const [reopened, setReopened] = useState(false);
   const ready =
     !settings.loading &&
@@ -98,6 +101,7 @@ export function Brief({
     found !== null &&
     !due.loading &&
     !loans.loading &&
+    outcomes !== null &&
     checks !== undefined;
 
   useEffect(() => {
@@ -128,6 +132,7 @@ export function Brief({
     changed: changed.rows[0],
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
+    outcomes,
     due: [...dueLines(due.items), ...followUpLines(loans.people, today)],
     calendar: calendarCheck(
       readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),

@@ -46,6 +46,8 @@ export interface BriefInput {
   calendar?: string | null;
   /** Bills due or late and pay that is late (T-059, T-060). */
   due?: string[];
+  /** The week's outcomes from the Sunday step (T-076). */
+  outcomes?: string[] | null;
 }
 
 export interface BriefLine {
@@ -158,6 +160,9 @@ export function buildBrief(input: BriefInput): BriefLine[] {
       label: "LOAD",
       text: `${formatMinutes(plannedMin)} planned of ${formatMinutes(freeMin)} free · ${loadLabel(plannedMin, freeMin)}`,
     });
+
+  if (input.outcomes && input.outcomes.length > 0)
+    lines.push({ label: "OUTCOMES", text: input.outcomes.join(" · ") });
 
   // The three areas furthest behind their weekly target.
   const behind = input.week

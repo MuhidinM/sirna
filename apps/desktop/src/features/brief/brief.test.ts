@@ -75,6 +75,15 @@ describe("buildBrief", () => {
     ]);
   });
 
+  it("shows the week's outcomes after the load (T-076)", () => {
+    const lines = render(buildBrief({ ...input, outcomes: ["Ship the invoice", "Gym 3 times"] }));
+    expect(lines.slice(7, 9)).toEqual([
+      "OUTCOMES | Ship the invoice · Gym 3 times",
+      "THIS WEEK | Gym 0 / 2 h 15 min · Job hunt 1 h 30 min / 4 h · Coding 2 h / 4 h",
+    ]);
+    expect(render(buildBrief({ ...input, outcomes: [] }))).toHaveLength(8);
+  });
+
   it("puts the checks first and stays within 12 lines", () => {
     const lines = buildBrief({
       ...input,
