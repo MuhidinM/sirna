@@ -2,7 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { MONEY } from "../ai/touchpoints";
 import { type AccountRow } from "./accounts";
-import { dismissedToday, dismissOps, type Finding, findings, shownToday } from "./advisor";
+import {
+  dismissedToday,
+  dismissOps,
+  type Finding,
+  findings,
+  safeName,
+  shownToday,
+  tipFacts,
+  tipOps,
+  tipsToday,
+} from "./advisor";
 import { type MonthSummary } from "./money";
 import { type DueItem, type RegularRow } from "./regulars";
 import { type SafeToSpend } from "./safe";
@@ -231,5 +241,63 @@ describe("the AI tip (T-064)", () => {
       /numbers not in the facts/,
     );
     expect(MONEY.ground({ tip: "Spend under 200 birr a day." }, facts)).toMatch(/amount of money/);
+  });
+});
+
+describe("after the Milestone 3 review", () => {
+  it("checks bills due from one account together", () => {
+    const accounts = [
+      account({ id: "cbe", name: "CBE", opening_minor: 500_000 }),
+      account({ id: "cbo", name: "CBO", opening_minor: 2_000_000 }),
+    ];
+    const rent = item({
+      regular: regular({ id: "rent", name: "Rent", amount_minor: 400_000 }),
+      left: 400_000,
+    });
+    const net = item({
+      regular: regular({ id: "net", name: "Internet" }),
+      date: "2026-11-18",
+      left: 200_000,
+    });
+    const [finding] = findings({ ...base, accounts, due: [rent, net] });
+    // 6,000 owed, 5,000 there: one finding for CBE, moving the 1,000 gap.
+    expect(finding?.text).toBe(
+      "Rent and Internet (6,000 ETB) are due by 2026-11-18; CBE has 5,000 ETB.",
+    );
+    expect(finding?.actions[0]?.label).toBe("Move 1,000 ETB from CBO");
+  });
+
+  it("offers no cap for uncategorized or hidden spending, or once you're past your usual", () => {
+    const s = summary({
+      categories: [
+        { id: "", name: "Other", spent: 250_000, usual: 300_000 },
+        { id: "cat_taxi", name: "Taxi", spent: 90_000, usual: 100_000 },
+        { id: "cat_food", name: "Food", spent: 450_000, usual: 400_000 },
+      ],
+    });
+    const list = findings({ ...base, summary: s, hidden: ["cat_taxi"] });
+    expect(list.map((f) => f.key)).toEqual(["pace:cat_food"]);
+    expect(list[0]?.actions).toEqual([]);
+  });
+
+  it("keeps digits and, in strict mode, names away from the AI", () => {
+    expect(safeName("Job 2 pay 5000")).toBe("Job pay");
+    expect(safeName("123")).toBe("it");
+    const facts = { finding: "pay late", job: "Job A", daysLate: 3 };
+    expect(tipFacts(facts, true)).toEqual({ finding: "pay late", daysLate: 3 });
+    expect(tipFacts(facts, false)).toBe(facts);
+  });
+
+  it("keeps one tip per finding for the day", () => {
+    const [op] = tipOps(null, TODAY, "short", "Hold off on extras this week.");
+    const json = String(op?.op === "upsert" ? op.values.value_json : "");
+    expect(tipsToday(json, TODAY)).toEqual({ short: "Hold off on extras this week." });
+    const [next] = tipOps(json, TODAY, "pace:cat_food", "");
+    const both = String(next?.op === "upsert" ? next.values.value_json : "");
+    expect(tipsToday(both, TODAY)).toEqual({
+      short: "Hold off on extras this week.",
+      "pace:cat_food": "",
+    });
+    expect(tipsToday(both, "2026-11-16")).toEqual({});
   });
 });

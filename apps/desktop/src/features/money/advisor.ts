@@ -41,6 +41,13 @@ export const PACE_LIMIT = 1.3;
 const days = (from: string, to: string) =>
   Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
+/** A name for the AI, with any digits taken out so no amount can slip through. */
+export const safeName = (name: string) =>
+  name
+    .replace(/\d+([.,]\d+)*/g, "")
+    .replace(/\s+/g, " ")
+    .trim() || "it";
+
 const roundUpBirr = (minor: Santim, step = 100) =>
   Math.ceil(minor / (step * SANTIM_PER_BIRR)) * step * SANTIM_PER_BIRR;
 
@@ -49,12 +56,15 @@ export function findings(input: {
   due: DueItem[];
   accounts: AccountRow[];
   caps: { id: string; name: string; cap_minor: number }[];
+  /** Hidden categories: no cap buttons for them. */
+  hidden?: string[];
   summary: MonthSummary;
   today: string;
   nowMs: number;
   newId: () => string;
 }): Finding[] {
   const { safe, due, accounts, caps, summary, today, nowMs, newId } = input;
+  const hidden = new Set(input.hidden ?? []);
   const out: Finding[] = [];
 
   // 1. Short this month.
@@ -78,7 +88,7 @@ export function findings(input: {
       text: `${item.regular.job ?? item.regular.name} pay is ${late} day${late === 1 ? "" : "s"} late: ${formatAmount(item.left)} still to come.`,
       facts: {
         finding: "pay late",
-        job: item.regular.job ?? item.regular.name,
+        job: safeName(item.regular.job ?? item.regular.name),
         daysLate: late,
         percentReceived: Math.round((item.done / item.regular.amount_minor) * 100),
       },
@@ -86,31 +96,39 @@ export function findings(input: {
     });
   }
 
-  // 3. A bill coming soon from an account that can't cover it.
-  for (const item of due.filter(
+  // 3. Bills coming soon from an account that can't cover them all.
+  const soon = due.filter(
     (d) => d.regular.kind === "bill" && d.state !== "paid" && d.date <= shiftDate(today, SOON_DAYS),
-  )) {
-    const from = accounts.find((account) => account.id === item.regular.account);
+  );
+  for (const accountId of [...new Set(soon.map((item) => item.regular.account))]) {
+    const bills = soon.filter((item) => item.regular.account === accountId);
+    const from = accounts.find((account) => account.id === accountId);
     const balance = from ? balanceOf(from) : null;
-    if (!from || balance === null || balance >= item.left) continue;
-    const short = item.left - Math.max(0, balance);
-    const move = roundUpBirr(short);
+    const owed = bills.reduce((sum, item) => sum + item.left, 0);
+    if (!from || balance === null || balance >= owed) continue;
+    const move = roundUpBirr(owed - Math.max(0, balance));
+    const first = bills[0];
+    if (!first) continue;
     const richest = accounts
       .filter((account) => account.id !== from.id)
       .map((account) => ({ account, balance: balanceOf(account) }))
       .filter((row): row is { account: AccountRow; balance: number } => row.balance !== null)
       .sort((a, b) => b.balance - a.balance)[0];
+    const names =
+      bills.length === 1
+        ? `${first.regular.name} ${formatAmount(first.left)} is due ${first.date === today ? "today" : `on ${first.date}`}`
+        : `${bills.map((item) => item.regular.name).join(" and ")} (${formatAmount(owed)}) are due by ${bills[bills.length - 1]?.date ?? first.date}`;
     out.push({
-      key: `bill_short:${item.regular.id}:${item.date}`,
+      key: `bill_short:${from.id}:${first.date}`,
       kind: "bill_short",
       rank: 3,
-      text: `${item.regular.name} ${formatAmount(item.left)} is due ${item.date === today ? "today" : `on ${item.date}`}; ${from.name} has ${formatAmount(Math.max(0, balance))}.`,
+      text: `${names}; ${from.name} has ${formatAmount(Math.max(0, balance))}.`,
       facts: {
-        finding: "bill due soon, account short",
-        bill: item.regular.name,
-        account: from.name,
-        percentCovered: Math.max(0, Math.round((balance / item.left) * 100)),
-        daysUntilDue: Math.max(0, days(today, item.date)),
+        finding: "bills due soon, account short",
+        bills: bills.map((item) => safeName(item.regular.name)).join(", "),
+        account: safeName(from.name),
+        percentCovered: Math.max(0, Math.round((balance / owed) * 100)),
+        daysUntilDue: Math.max(0, days(today, first.date)),
       },
       actions:
         richest && richest.balance >= move
@@ -146,7 +164,7 @@ export function findings(input: {
         text: `${cap.name} is over its cap: ${formatAmount(used)} of ${formatAmount(cap.cap_minor)}, with ${summary.days - summary.day} days to go.`,
         facts: {
           finding: "over its cap",
-          category: cap.name,
+          category: safeName(cap.name),
           percentOfCap: Math.round(status.share * 100),
           daysLeft: summary.days - summary.day,
         },
@@ -165,7 +183,7 @@ export function findings(input: {
         text: `${cap.name}: ${Math.round(status.share * 100)}% of its cap with ${Math.round(status.pace * 100)}% of the month gone.`,
         facts: {
           finding: "spending fast against its cap",
-          category: cap.name,
+          category: safeName(cap.name),
           percentOfCap: Math.round(status.share * 100),
           percentOfMonth: Math.round(status.pace * 100),
         },
@@ -174,6 +192,8 @@ export function findings(input: {
   }
   // Uncapped categories well past their usual month at this point in it.
   for (const line of summary.categories) {
+    // Uncategorized spending ("") and hidden categories can't take a cap.
+    if (line.id === "" || hidden.has(line.id)) continue;
     if (capped.has(line.id) || line.usual === null || line.usual <= 0) continue;
     const share = line.spent / line.usual;
     const pace = summary.day / summary.days;
@@ -187,13 +207,20 @@ export function findings(input: {
       text: `${line.name}: ${formatAmount(line.spent)} so far, ${Math.round(share * 100)}% of a usual month with ${Math.round(pace * 100)}% of it gone.`,
       facts: {
         finding: "spending fast against the usual month",
-        category: line.name,
+        category: safeName(line.name),
         percentOfUsual: Math.round(share * 100),
         percentOfMonth: Math.round(pace * 100),
       },
-      actions: cap
-        ? [{ label: `Cap ${line.name} at ${formatAmount(cap)}`, ops: capOps(line.id, cap) }]
-        : [],
+      // A cap at your usual only helps while you are still under it.
+      actions:
+        cap && line.spent < cap
+          ? [
+              {
+                label: `Cap ${line.name} at ${formatAmount(cap)}`,
+                ops: capOps(line.id, cap, today),
+              },
+            ]
+          : [],
     });
   }
 
@@ -231,4 +258,52 @@ export function dismissOps(valueJson: string | null | undefined, today: string, 
 /** The top findings not hidden today, at most two. */
 export function shownToday(all: Finding[], hidden: string[]): Finding[] {
   return all.filter((finding) => !hidden.includes(finding.key)).slice(0, SHOWN_PER_DAY);
+}
+
+// --- AI tips, asked once a day per finding ---------------------------------------------
+
+export const TIPS_KEY = "advisor.tips";
+const NAME_FACTS = ["job", "bill", "bills", "account", "category"];
+
+/** In strict mode the AI sees what kind of finding it is and the ratios, never names. */
+export function tipFacts(facts: Record<string, string | number>, strict: boolean) {
+  return strict
+    ? Object.fromEntries(Object.entries(facts).filter(([key]) => !NAME_FACTS.includes(key)))
+    : facts;
+}
+
+/** Today's tips by finding key ("" = asked, no usable tip: don't ask again today). */
+export function tipsToday(
+  valueJson: string | null | undefined,
+  today: string,
+): Record<string, string> {
+  try {
+    const value = JSON.parse(valueJson ?? "null") as { date?: unknown; byKey?: unknown } | null;
+    if (value?.date === today && value.byKey && typeof value.byKey === "object")
+      return Object.fromEntries(
+        Object.entries(value.byKey as Record<string, unknown>).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+export function tipOps(
+  valueJson: string | null | undefined,
+  today: string,
+  key: string,
+  tip: string,
+): Op[] {
+  const byKey = { ...tipsToday(valueJson, today), [key]: tip };
+  return [
+    {
+      op: "upsert",
+      table: "core_settings",
+      id: TIPS_KEY,
+      values: { value_json: JSON.stringify({ date: today, byKey }) },
+    },
+  ];
 }

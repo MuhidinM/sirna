@@ -85,4 +85,33 @@ describe("the month review (T-066)", () => {
     expect(review.savingsRate).toBeNull();
     expect(review.netWorth).toBeNull();
   });
+
+  it("counts a category you stopped spending on, and only caps that existed then", () => {
+    const review = monthReview({
+      summary: {
+        ...summary,
+        categories: [{ id: "cat_food", name: "Food", spent: 400_000, usual: 380_000 }],
+      },
+      caps: [
+        { id: "cat_food", name: "Food", cap_minor: 300_000, cap_since: "2026-11-02" },
+        { id: "cat_x", name: "X", cap_minor: 1, cap_since: null },
+      ],
+      accounts: [],
+      people: [],
+      usual: new Map<string, number | null>([
+        ["cat_food", 380_000],
+        ["cat_transport", 300_000],
+        ["", 50_000],
+      ]),
+      names: new Map([["cat_transport", "Transport"]]),
+      monthEnd: "2026-10-31",
+    });
+    // Transport dropped from 3,000 to 0: the biggest change.
+    expect(review.changes.map((change) => [change.name, change.diff])).toEqual([
+      ["Transport", -300_000],
+      ["Food", 20_000],
+    ]);
+    // The Food cap began in November, so October isn't judged by it.
+    expect(review.capsOver).toEqual([]);
+  });
 });

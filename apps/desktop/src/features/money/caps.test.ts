@@ -42,7 +42,7 @@ describe("spending caps (T-063)", () => {
     };
     apply(capOps("cat_food", 400_000));
     expect(db.prepare(CAPS_SQL).all()).toEqual([
-      { id: "cat_food", name: "Food", cap_minor: 400_000 },
+      { id: "cat_food", name: "Food", cap_minor: 400_000, cap_since: null },
     ]);
     const usual = new Map<string, number | null>([
       ["cat_food", 380_000],
@@ -67,5 +67,20 @@ describe("spending caps (T-063)", () => {
     ]);
     apply(capOps("cat_food", null));
     expect(db.prepare(CAPS_SQL).all()).toEqual([]);
+  });
+
+  it("starts a first cap on a day and keeps it when the cap changes", () => {
+    expect(capOps("cat_food", 400_000, "2026-11-02")[0]).toMatchObject({
+      values: { cap_minor: 400_000, cap_since: "2026-11-02" },
+    });
+    expect(capOps("cat_food", 500_000)[0]).toEqual({
+      op: "update",
+      table: "money_categories",
+      id: "cat_food",
+      values: { cap_minor: 500_000 },
+    });
+    expect(capOps("cat_food", null)[0]).toMatchObject({
+      values: { cap_minor: null, cap_since: null },
+    });
   });
 });
