@@ -103,6 +103,16 @@ import {
   renameCategoryOps,
 } from "../features/money/categories";
 import { acceptAllOps, CAPS_SQL, capOps, capStatus, suggestCap } from "../features/money/caps";
+import {
+  DISMISSED_KEY,
+  dismissedToday,
+  dismissOps,
+  type Finding,
+  findings,
+  shownToday,
+} from "../features/money/advisor";
+import { useAsk } from "../features/ai/ask";
+import { MONEY } from "../features/ai/touchpoints";
 import { Savings } from "./Savings";
 import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -314,6 +324,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
           Day {summary.day} of {summary.days}. Left = in − out − saved this month.
         </p>
       )}
+      {current && <Advisor today={today} />}
       {current && <SafeCard today={today} />}
       {current && <EmergencyCard today={today} />}
 
@@ -418,6 +429,97 @@ function CapsCard({ summary }: { summary: ReturnType<typeof monthSummary> }) {
         })}
       </ul>
       <p className="meta">The mark is how far through the month you are.</p>
+    </section>
+  );
+}
+
+/** Today's findings (T-064): calculated, ranked, at most two. */
+export function useAdvisor(today: string) {
+  const { summary, loading: monthLoading } = useMonth(monthOf(today).from, today);
+  const { safe, loading: safeLoading } = useSafe(today);
+  const { items, loading: dueLoading } = useDue(today);
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const caps = useLiveQuery<{ id: string; name: string; cap_minor: number }>(CAPS_SQL);
+  const hidden = useLiveQuery<{ value_json: string }>(
+    "SELECT value_json FROM core_settings WHERE key = ?",
+    [DISMISSED_KEY],
+  );
+  const loading =
+    monthLoading || safeLoading || dueLoading || accounts.loading || caps.loading || hidden.loading;
+  const all = loading
+    ? []
+    : findings({
+        safe,
+        due: items,
+        accounts: accounts.rows,
+        caps: caps.rows,
+        summary,
+        today,
+        nowMs: systemClock.now(),
+        newId: () => ulid(),
+      });
+  const hiddenJson = hidden.rows[0]?.value_json;
+  return {
+    shown: shownToday(all, dismissedToday(hiddenJson, today)),
+    hiddenJson,
+    loading,
+  };
+}
+
+function FindingCard({
+  finding,
+  today,
+  hiddenJson,
+}: {
+  finding: Finding;
+  today: string;
+  hiddenJson: string | undefined;
+}) {
+  const tip = useAsk(MONEY, finding.facts);
+  const [error, setError] = useState<string | null>(null);
+  const write = (ops: Op[], context: string) =>
+    void transact("user", ops, context).catch((failure: unknown) =>
+      setError(`Couldn't do it: ${message(failure)}`),
+    );
+  return (
+    <li className={finding.rank <= 2 ? "finding urgent" : "finding"}>
+      <p>{finding.text}</p>
+      {tip?.tip && <p className="meta">{tip.tip}</p>}
+      <span className="row">
+        {finding.actions.map((action) => (
+          <Button
+            key={action.label}
+            primary
+            onClick={() => write(action.ops, `advisor:${finding.key}`)}
+          >
+            {action.label}
+          </Button>
+        ))}
+        <Button onClick={() => write(dismissOps(hiddenJson, today, finding.key), "advisor")}>
+          Not now
+        </Button>
+      </span>
+      {error && (
+        <span role="alert" className="error">
+          {error}
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** The advisor: what needs you about money today, if anything. */
+export function Advisor({ today }: { today: string }) {
+  const { shown, hiddenJson, loading } = useAdvisor(today);
+  if (loading || shown.length === 0) return null;
+  return (
+    <section className="card advisor" aria-labelledby="advisor">
+      <h2 id="advisor">Worth a look</h2>
+      <ul className="plain-list">
+        {shown.map((finding) => (
+          <FindingCard key={finding.key} finding={finding} today={today} hiddenJson={hiddenJson} />
+        ))}
+      </ul>
     </section>
   );
 }
@@ -1038,6 +1140,7 @@ export function TodayMoney({
         {onOpen && <Button onClick={onOpen}>Money</Button>}
       </p>
       <TodayDue today={today} />
+      <Advisor today={today} />
     </>
   );
 }

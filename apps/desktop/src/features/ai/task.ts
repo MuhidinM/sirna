@@ -7,7 +7,8 @@
  */
 import { type JsonSchema, parseReply, type Schema, toJsonSchema } from "./schema";
 
-export type AiTaskId = "timing" | "estimate" | "brief" | "week" | "review" | "capture" | "split";
+export type AiTaskId =
+  "timing" | "estimate" | "brief" | "week" | "review" | "capture" | "split" | "money";
 
 export interface AiTask<I, O> {
   id: AiTaskId;
