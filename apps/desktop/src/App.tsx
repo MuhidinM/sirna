@@ -14,7 +14,7 @@ import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { useCalendarSync } from "./shell/Calendar";
 import { Kits } from "./shell/Kits";
 import { Money } from "./shell/Money";
-import { Nav, type Page } from "./shell/Nav";
+import { isPlanPage, Nav, type Page, PlanTabs } from "./shell/Nav";
 import { Dashboard } from "./shell/Dashboard";
 import { Notes } from "./shell/Notes";
 import { Projects } from "./shell/Projects";
@@ -124,6 +124,7 @@ export function App() {
       <Nav current={screen} onGo={go} />
       {/* Keyed by page, so each page opens at the top. */}
       <div className="app-page" key={screen}>
+        {isPlanPage(screen) && <PlanTabs current={screen} onGo={go} />}
         {page}
       </div>
     </div>
