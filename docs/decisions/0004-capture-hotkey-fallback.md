@@ -17,3 +17,7 @@ Opening the box: the window is focused again from Rust once the page has loaded 
 - Capture always has a key when any candidate is free, and the user can see which one.
 - The key can differ between machines; docs and onboarding say "your capture key", not a fixed combination.
 - `capture_ready` also logs the time from key press to ready-to-type, which `scripts/hotkey-check.ps1` reads for the T-010 measurements.
+
+## Update (2026-11-15)
+
+Ctrl+Alt+Space belongs to the Claude desktop app, so trying it first only logged a warning on every start. It is no longer a candidate: Ctrl+Alt+J comes first, then Ctrl+Shift+Alt+Space. A key set in Settings still comes before both.

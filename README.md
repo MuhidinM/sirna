@@ -2,7 +2,7 @@
 
 _Sirna_ (Oromo: order, system) is a small Windows tray app that keeps your day in order:
 
-- **One capture box** (Ctrl+Alt+Space) for tasks, ideas, spending and cheat-sheet notes.
+- **One capture box** (Ctrl+Alt+J) for tasks, ideas, spending and cheat-sheet notes.
 - **A weekly routine** across life areas (jobs, job hunt, coding, gym, Quran…) that becomes each day's plan.
 - **Focus sessions** with breaks, a set-up sheet (Do not disturb, distracting apps minimized, your work opened) and a daily cap, so you start easily and stop before you burn out.
 - **Morning brief and night review**, a Sunday week card, and a dashboard with a forgiving streak, a year chart and a savings plant.
