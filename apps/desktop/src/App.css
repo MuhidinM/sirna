@@ -406,7 +406,7 @@ input[type="number"] {
   width: 100%;
   padding: var(--space-2);
   border: 0;
-  border-radius: var(--radius);
+  border-radius: 6px;
   background: none;
   color: var(--text-secondary);
   font: inherit;
@@ -460,7 +460,7 @@ input[type="number"] {
   color: var(--text-primary);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 6px;
   padding: var(--space-2);
 }
 
