@@ -406,7 +406,7 @@ input[type="number"] {
   width: 100%;
   padding: var(--space-2);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: none;
   color: var(--text-secondary);
   font: inherit;
@@ -460,7 +460,7 @@ input[type="number"] {
   color: var(--text-primary);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: var(--space-2);
 }
 
@@ -1198,4 +1198,29 @@ input[type="number"] {
 /* Plan tabs (T-071). */
 .plan-tabs {
   padding: var(--space-4) var(--space-6) 0;
+}
+
+/* Settings status strip (T-075) */
+.status-strip {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.status-strip li {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--border);
+  background: var(--surface-1);
+}
+.status-strip li.fine {
+  border-left-color: var(--success, var(--accent));
+}
+.status-strip li.needs {
+  border-left-color: var(--warning);
+}
+.status-strip li strong {
+  display: inline-block;
+  min-width: 5.5rem;
 }
