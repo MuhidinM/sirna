@@ -1,7 +1,9 @@
+/* The capture box (560 x 72, frameless): one dark rounded panel with a big
+   input, a pink + mark at the left and the echo as a cream chip at the right. */
 :root {
   font-family: var(--font-sans);
-  background: var(--surface-0);
-  color: var(--text-primary);
+  background: var(--frame);
+  color: var(--ink);
 }
 
 body {
@@ -12,32 +14,70 @@ body {
 .capture {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   height: 72px;
-  padding: 0 20px;
+  padding: 0 var(--space-4) 0 var(--space-3);
   box-sizing: border-box;
-  border: 1px solid var(--accent-strong);
-  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--radius-card);
+}
+
+.capture:focus-within {
+  border-color: var(--chip);
+}
+
+.capture-mark {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--pink);
+  color: var(--canvas);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .capture-input {
   flex: 1;
   min-width: 0;
   font: inherit;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: inherit;
+  caret-color: var(--yellow);
   background: transparent;
   border: none;
   outline: none;
 }
 
 .capture-input::placeholder {
-  color: var(--text-muted);
+  color: var(--ink-3);
+  font-weight: 400;
 }
 
+/* What the box understood: a cream chip, hidden while empty. */
 .capture-echo {
-  font-size: 13px;
-  color: var(--accent);
+  flex-shrink: 1;
+  max-width: 48%;
+  padding: 6px 12px;
+  border-radius: var(--pill);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capture-echo:empty {
+  display: none;
 }
 
 .visually-hidden {

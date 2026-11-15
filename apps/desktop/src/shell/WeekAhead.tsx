@@ -60,102 +60,130 @@ export function WeekAhead({ today }: { today: string }) {
   const sunday = isoWeekday(today) === 7;
 
   return (
-    <section className="card week-ahead" aria-labelledby="week-ahead">
-      <h2 id="week-ahead">{sunday ? "Plan next week" : "This week's plan"}</h2>
-      <p className="meta">Week of {monday} · every step can be skipped.</p>
+    <section className="pw-section week-ahead" id="week-plan" aria-labelledby="week-ahead">
+      <div className="pw-section-head">
+        <div>
+          <h2 id="week-ahead">{sunday ? "Plan next week" : "This week's plan"}</h2>
+          <p className="meta">Week of {monday} · every step can be skipped.</p>
+        </div>
+      </div>
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
 
-      {showTriage && (
-        <>
-          <h3>Loose ends</h3>
-          <ul>
-            {inbox.rows.map((note) => (
-              <li key={note.id} className="task">
-                <span>{note.body}</span>
-                <span className="row">
-                  {(["task", "note", "drop"] as const).map((choice) => (
-                    <Button
-                      key={choice}
-                      onClick={() => void write(sortInboxOps(note, choice, () => ulid()))}
-                    >
-                      {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
-                    </Button>
-                  ))}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <Button onClick={() => void write(skipStepOps(json, monday, "triage"))}>
-            Skip the rest
-          </Button>
-        </>
-      )}
-
-      <h3>Up to {MAX_OUTCOMES} outcomes</h3>
-      {showForm ? (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void write(outcomeOps(json, monday, lines)).then((saved) => {
-              if (!saved) return;
-              setEditing(false);
-              setDrafts(null);
-            });
-          }}
-        >
-          {lines.map((line, index) => (
-            <input
-              key={index}
-              aria-label={`Outcome ${index + 1}`}
-              placeholder={index === 0 ? "What would make this week a good one?" : ""}
-              maxLength={120}
-              value={line}
-              onChange={(event) =>
-                setDrafts(lines.map((old, at) => (at === index ? event.target.value : old)))
-              }
-            />
-          ))}
-          <div className="row">
-            <Button type="submit" primary>
-              Save
+      <div className="pw-ahead-cols">
+        {showTriage && (
+          <div className="pw-step">
+            <h3>
+              <span className="pw-step-no" aria-hidden="true">
+                1
+              </span>
+              Loose ends <span className="badge">{inbox.rows.length}</span>
+            </h3>
+            <ul className="pw-loose">
+              {inbox.rows.map((note) => (
+                <li key={note.id}>
+                  <span className="pw-loose-body">{note.body}</span>
+                  <span className="pw-actions">
+                    {(["task", "note", "drop"] as const).map((choice) => (
+                      <Button
+                        key={choice}
+                        onClick={() => void write(sortInboxOps(note, choice, () => ulid()))}
+                      >
+                        {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
+                      </Button>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <Button
+              className="btn-ghost"
+              onClick={() => void write(skipStepOps(json, monday, "triage"))}
+            >
+              Skip the rest
             </Button>
-            {!plan.skipped.includes("outcomes") && plan.outcomes.length === 0 && (
-              <Button onClick={() => void write(skipStepOps(json, monday, "outcomes"))}>
-                Skip
-              </Button>
-            )}
-            {editing && (
-              <Button
-                onClick={() => {
+          </div>
+        )}
+
+        <div className="pw-step">
+          <h3>
+            <span className="pw-step-no" aria-hidden="true">
+              {showTriage ? 2 : 1}
+            </span>
+            Up to {MAX_OUTCOMES} outcomes
+          </h3>
+          {showForm ? (
+            <form
+              className="pw-outcome-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void write(outcomeOps(json, monday, lines)).then((saved) => {
+                  if (!saved) return;
                   setEditing(false);
                   setDrafts(null);
-                }}
-              >
-                Cancel
-              </Button>
-            )}
-          </div>
-        </form>
-      ) : (
-        <>
-          {plan.outcomes.length > 0 ? (
-            <ol className="outcomes">
-              {plan.outcomes.map((outcome) => (
-                <li key={outcome}>{outcome}</li>
+                });
+              }}
+            >
+              {lines.map((line, index) => (
+                <label key={index} className="pw-outcome-field">
+                  <span className="pw-outcome-no" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <input
+                    aria-label={`Outcome ${index + 1}`}
+                    placeholder={index === 0 ? "What would make this week a good one?" : ""}
+                    maxLength={120}
+                    value={line}
+                    onChange={(event) =>
+                      setDrafts(lines.map((old, at) => (at === index ? event.target.value : old)))
+                    }
+                  />
+                </label>
               ))}
-            </ol>
+              <div className="pw-actions">
+                <Button type="submit" primary>
+                  Save
+                </Button>
+                {!plan.skipped.includes("outcomes") && plan.outcomes.length === 0 && (
+                  <Button onClick={() => void write(skipStepOps(json, monday, "outcomes"))}>
+                    Skip
+                  </Button>
+                )}
+                {editing && (
+                  <Button
+                    onClick={() => {
+                      setEditing(false);
+                      setDrafts(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            </form>
           ) : (
-            <p className="meta">Skipped for this week.</p>
+            <>
+              {plan.outcomes.length > 0 ? (
+                <ol className="pw-outcomes">
+                  {plan.outcomes.map((outcome) => (
+                    <li key={outcome}>{outcome}</li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="meta">Skipped for this week.</p>
+              )}
+              <div className="pw-actions">
+                <Button onClick={() => setEditing(true)}>
+                  {plan.outcomes.length > 0 ? "Change" : "Add outcomes"}
+                </Button>
+              </div>
+            </>
           )}
-          <Button onClick={() => setEditing(true)}>
-            {plan.outcomes.length > 0 ? "Change" : "Add outcomes"}
-          </Button>
-        </>
-      )}
+        </div>
+      </div>
     </section>
   );
 }

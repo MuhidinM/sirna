@@ -1,0 +1,610 @@
+/*
+ * Plan → Night review, Cheat sheets and Focus kits (docs/design.md).
+ * One white canvas per page; cards wrap in grids; nothing scrolls inside.
+ * `rv-` is the review, `pr-` is shared by cheat sheets and kits.
+ */
+
+/* --- Shared ------------------------------------------------------------------------------ */
+
+.plan-review .canvas-head {
+  margin-bottom: var(--space-4);
+}
+
+.plan-review .panel-head h2,
+.plan-review .card h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.plan-review .card {
+  padding: var(--space-5);
+}
+
+.plan-review .panel-head {
+  margin-bottom: var(--space-3);
+}
+
+/* App.css gives every field a big top margin; here fields sit in cards. */
+.plan-review .field {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 var(--space-3);
+}
+
+.plan-review .field > span {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--canvas-ink-2);
+}
+
+.plan-review textarea {
+  width: 100%;
+  flex: none;
+}
+
+.page.plan-review code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--canvas-2);
+  color: var(--canvas-ink);
+  padding: 1px 6px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+/* A dark pill: the card's own save, quieter than the one yellow action. */
+.plan-review .rv-dark {
+  background: var(--canvas-ink);
+  color: var(--canvas);
+}
+
+.plan-review .rv-dark:hover {
+  background: var(--canvas-ink-2);
+}
+
+.plan-review .btn-ghost {
+  background: transparent;
+  color: var(--canvas-ink-2);
+}
+
+.plan-review .btn-ghost:hover {
+  background: var(--canvas-2);
+  color: var(--canvas-ink);
+}
+
+/* --- Night review: the step pills ---------------------------------------------------------- */
+
+.rv-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 22px;
+  background: var(--canvas-2);
+  max-width: 100%;
+}
+
+.rv-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 14px 5px 5px;
+  border: 0;
+  border-radius: var(--pill);
+  background: transparent;
+  color: var(--canvas-ink-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+
+.rv-step:hover {
+  color: var(--canvas-ink);
+}
+
+.rv-step-n {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--canvas);
+  color: var(--canvas-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rv-step.past .rv-step-n {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.rv-step.current {
+  background: var(--canvas-ink);
+  color: var(--canvas);
+}
+
+.rv-step.current .rv-step-n {
+  background: var(--yellow);
+  color: var(--on-loud);
+}
+
+/* --- Night review: steps as cards ----------------------------------------------------------- */
+
+.rv-step-body {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.rv-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xl);
+  letter-spacing: -0.02em;
+}
+
+.rv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.rv-grid > .rv-wide {
+  grid-column: 1 / -1;
+}
+
+.rv-card .badge {
+  align-self: flex-start;
+}
+
+/* The day's blocks as small event cards that wrap. */
+.rv-blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rv-blocks > li {
+  min-width: 0;
+}
+
+.rv-blocks .event {
+  min-height: 78px;
+  height: 100%;
+}
+
+.rv-blocks .event .done {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.rv-done-mark {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--canvas);
+  color: var(--canvas-ink);
+}
+
+.rv-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.plan-review .rv-pill {
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  background: var(--canvas-2);
+  color: var(--canvas-ink);
+  font-size: var(--text-xs);
+}
+
+.plan-review .rv-pill:hover {
+  background: var(--canvas-3);
+}
+
+.rv-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+}
+
+.rv-inline input {
+  flex: 1 1 180px;
+  border-radius: var(--pill) !important;
+}
+
+.rv-add {
+  margin-top: var(--space-3);
+}
+
+/* Loose ends: each row has Task / Note / Drop on one small track. */
+.rv-ai {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+}
+
+.plan-review .rv-ai-btn {
+  background: color-mix(in srgb, var(--purple) 30%, var(--canvas));
+}
+
+.plan-review .rv-ai-btn:hover {
+  background: var(--purple);
+}
+
+.rv-sort-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rv-sort-rows > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  min-height: 52px;
+  padding: 8px 4px;
+  border-bottom: 1.5px dashed var(--canvas-line);
+}
+
+.rv-sort-rows > li:last-child {
+  border-bottom: 0;
+}
+
+.rv-sort-body {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.rv-sort {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 20px;
+  background: var(--canvas-2);
+  max-width: 100%;
+}
+
+.plan-review .rv-pick {
+  min-height: 28px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--canvas-ink-2);
+  font-size: var(--text-xs);
+}
+
+.plan-review .rv-pick-task:hover {
+  background: var(--canvas-ink);
+  color: var(--canvas);
+}
+
+.plan-review .rv-pick-note:hover {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.plan-review .rv-pick-drop:hover {
+  background: var(--pink);
+  color: var(--canvas);
+}
+
+.plan-review .rv-guess {
+  min-height: 28px;
+  padding: 0 12px;
+  background: var(--purple);
+  color: var(--on-loud);
+  font-size: var(--text-xs);
+  white-space: normal;
+  text-align: left;
+}
+
+.plan-review .rv-guess:hover {
+  background: color-mix(in srgb, var(--purple) 80%, var(--canvas-ink));
+}
+
+/* Spending. */
+.rv-amount {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rv-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.plan-review .rv-chip {
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+}
+
+.plan-review .rv-chip:hover {
+  background: color-mix(in srgb, var(--cream) 80%, var(--orange));
+}
+
+/* Energy: three loud tiles. */
+.rv-energy {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: var(--space-3);
+}
+
+.plan-review .rv-energy-pick {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-height: 140px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-event);
+  background: var(--tone);
+  color: var(--tone-ink, var(--on-loud));
+  font-size: var(--text-lg);
+  font-weight: 700;
+  white-space: normal;
+  transition:
+    transform 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.plan-review .rv-energy-pick:hover {
+  background: var(--tone);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 10%);
+}
+
+.rv-energy-n {
+  font-size: 2.6rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The Top 3 for tomorrow: numbers in cream circles. */
+.rv-top {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: top;
+}
+
+.rv-top > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  font-weight: 500;
+  counter-increment: top;
+  overflow-wrap: anywhere;
+}
+
+.rv-top > li::before {
+  content: counter(top);
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.rv-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1.5px dashed var(--canvas-line);
+}
+
+.rv-foot .btn {
+  min-height: 42px;
+  padding: 0 var(--space-5);
+}
+
+/* The short reply before the review closes. */
+.rv-reply {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.rv-reply .page-title {
+  margin: 0 0 var(--space-2);
+}
+
+.rv-mind {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-event);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* --- Cheat sheets and kits ------------------------------------------------------------------ */
+
+.pr-intro {
+  margin: 0 0 var(--space-5);
+  overflow-wrap: anywhere;
+}
+
+.pr-search {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+
+.pr-search input {
+  min-height: 40px;
+}
+
+.pr-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.pr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.pr-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* A cheat sheet: a tinted letter circle, then its lines. */
+.pr-cheat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.pr-cheat-head .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.pr-cheat-head h2 {
+  overflow-wrap: anywhere;
+}
+
+.pr-cheat-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--tone);
+  color: var(--tone-ink, var(--on-loud));
+  font-weight: 700;
+}
+
+.pr-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pr-lines > li {
+  padding: 9px 2px;
+  border-bottom: 1.5px dashed var(--canvas-line);
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+
+.pr-lines > li:last-child {
+  border-bottom: 0;
+}
+
+.pr-hit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.pr-hit .grow {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.plan-review .pr-chip {
+  background: var(--tone);
+  color: var(--tone-ink, var(--on-loud));
+}
+
+.pr-long {
+  margin: var(--space-3) 0 0;
+}
+
+.pr-results {
+  max-width: 820px;
+}
+
+/* A focus kit: the area's colour as a header band. */
+.plan-review .pr-kit {
+  padding: 0;
+  overflow: hidden;
+}
+
+.pr-kit-head {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-4) var(--space-5);
+  background: var(--tone);
+  color: var(--tone-ink, var(--on-loud));
+}
+
+.plan-review .pr-kit-head h2 {
+  color: inherit;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.pr-kit-label,
+.pr-kit-count {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.pr-kit-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-kit-body {
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}

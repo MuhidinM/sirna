@@ -1,0 +1,540 @@
+/*
+ * Plan → This week (docs/design.md → Pages). The week preview and the
+ * planning step sit on the white canvas; the review lives in dark panels.
+ * Everything is scoped under .plan-week so older rules in App.css lose.
+ */
+
+.plan-week ul,
+.plan-week ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.plan-week .pw-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.plan-week .pw-actions .btn {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+}
+
+/* --- Canvas head ------------------------------------------------------------------------ */
+
+.plan-week .pw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 14px;
+  border-radius: var(--pill);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.plan-week .pw-chip.warn {
+  background: var(--pink-soft);
+  color: var(--canvas-ink);
+}
+
+/* --- Sections on the canvas -------------------------------------------------------------- */
+
+.plan-week .pw-section + .pw-section {
+  margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: 1.5px dashed var(--canvas-line);
+}
+
+.plan-week .pw-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.plan-week .pw-section-head h2 {
+  margin: 0 0 2px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.plan-week .pw-section-head .meta {
+  margin: 0;
+}
+
+/* --- Next 7 days: a strip of day columns ------------------------------------------------------ */
+
+.plan-week .pw-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 92px), 1fr));
+  gap: var(--space-2);
+}
+
+.plan-week .pw-day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border-radius: 20px;
+  background: var(--canvas-2);
+}
+
+.plan-week .pw-day.today {
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1.5px var(--canvas-ink);
+}
+
+.plan-week .pw-day-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 2px;
+}
+
+.plan-week .pw-day-name {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--canvas-ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.plan-week .pw-day-num {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-week .pw-day.today .pw-day-num {
+  background: var(--yellow);
+  color: var(--on-loud);
+}
+
+.plan-week .pw-day.today .pw-day-name {
+  color: var(--canvas-ink);
+}
+
+.plan-week .pw-day-cards {
+  display: grid;
+  gap: 6px;
+}
+
+.plan-week .pw-day .event {
+  min-height: 0;
+  border-radius: 14px;
+  box-shadow: 0 1px 0 var(--canvas-line);
+}
+
+.plan-week .pw-day .event-body {
+  padding: 8px 10px;
+}
+
+.plan-week .pw-day .event-label {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-week .pw-day .event-title {
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.plan-week .pw-day-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 64px;
+  margin: 0;
+  padding: var(--space-2);
+  border: 1.5px dashed var(--canvas-line);
+  border-radius: 14px;
+  color: var(--canvas-ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Tasks that won't make their deadline. */
+.plan-week .pw-late {
+  margin-top: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: 20px;
+  background: var(--pink-soft);
+  color: var(--canvas-ink);
+}
+
+.plan-week .pw-late-lead {
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+}
+
+.plan-week .pw-late-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 10px 0;
+  border-top: 1.5px dashed color-mix(in srgb, var(--pink) 35%, transparent);
+}
+
+.plan-week .pw-late-row:first-child {
+  border-top: 0;
+}
+
+.plan-week .pw-late-text {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.plan-week .pw-late .meta {
+  color: var(--canvas-ink-2);
+}
+
+.plan-week .pw-late .btn {
+  background: var(--canvas);
+}
+
+.plan-week .pw-late .btn:hover {
+  background: var(--cream);
+}
+
+.plan-week .pw-late .error {
+  flex-basis: 100%;
+}
+
+.plan-week .pw-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--pink);
+}
+
+/* --- The planning step ------------------------------------------------------------------ */
+
+.plan-week .pw-ahead-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.plan-week .pw-step h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+}
+
+.plan-week .pw-step-no {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--canvas-ink);
+  color: var(--canvas);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.plan-week .pw-loose li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  padding: 10px 2px;
+  border-bottom: 1.5px dashed var(--canvas-line);
+}
+
+.plan-week .pw-loose-body {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.plan-week .pw-loose + .btn {
+  margin-top: var(--space-2);
+}
+
+.plan-week .pw-outcome-form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.plan-week .pw-outcome-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.plan-week .pw-outcome-field input {
+  flex: 1;
+  width: 100%;
+}
+
+.plan-week .pw-outcome-no,
+.plan-week .pw-outcomes li::before {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--pink);
+  color: var(--canvas);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.plan-week .pw-outcome-form .pw-actions {
+  margin-top: var(--space-2);
+  padding-left: 38px;
+}
+
+.plan-week .pw-outcomes {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  counter-reset: outcome;
+}
+
+.plan-week .pw-outcomes li {
+  counter-increment: outcome;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.plan-week .pw-outcomes li::before {
+  content: counter(outcome);
+}
+
+/* --- Dark panels ----------------------------------------------------------------------------- */
+
+.plan-week .pw-big {
+  margin: 0 0 var(--space-3);
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-week .pw-big .soft {
+  font-size: var(--text-md);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+.plan-week .pw-big.over {
+  color: var(--pink);
+}
+
+.plan-week .panel .bar {
+  height: 10px;
+  background: var(--bar);
+}
+
+.plan-week .pw-next .bar {
+  margin-bottom: var(--space-3);
+}
+
+.plan-week .pw-big.over + .bar > span {
+  background: var(--pink);
+}
+
+.plan-week .panel .warn-text {
+  color: var(--pink);
+  font-size: var(--text-sm);
+}
+
+.plan-week .panel-icon .pw-one {
+  font-weight: 800;
+  font-size: var(--text-md);
+}
+
+.plan-week .one-change {
+  border-left: 1px solid var(--panel-line);
+}
+
+.plan-week .one-change > p {
+  margin-bottom: var(--space-3);
+}
+
+/* Bars per area and per spending category. */
+.plan-week .pw-bars,
+.plan-week .pw-spend {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.plan-week .pw-bars li,
+.plan-week .pw-spend li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px var(--space-3);
+}
+
+.plan-week .pw-bars .bar,
+.plan-week .pw-spend-pair {
+  grid-column: 1 / -1;
+}
+
+.plan-week .pw-bar-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.plan-week .pw-bar-value {
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-week .pw-swatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 3px;
+}
+
+.plan-week .pw-time > .ai-text,
+.plan-week .pw-time > .meta {
+  margin: var(--space-4) 0 0;
+}
+
+.plan-week .pw-spend-pair {
+  display: grid;
+  gap: 3px;
+}
+
+.plan-week .pw-spend-bar {
+  display: block;
+  height: 9px;
+  min-width: 2px;
+  border-radius: var(--pill);
+  background: var(--cream);
+}
+
+.plan-week .pw-spend-bar.usual {
+  height: 5px;
+  background: var(--bar-top);
+}
+
+.plan-week .pw-spend li.over .pw-spend-bar:not(.usual) {
+  background: var(--pink);
+}
+
+.plan-week .pw-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.plan-week .pw-legend .sq + .sq,
+.plan-week .pw-legend .sq.usual {
+  margin-left: var(--space-2);
+}
+
+.plan-week .sq.usual {
+  background: var(--bar-top);
+}
+
+/* Projects as list rows. */
+.plan-week .pw-project-rows > li {
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px var(--space-3);
+}
+
+.plan-week .pw-project-rows .grow {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 160px;
+  gap: 2px;
+}
+
+.plan-week .pw-project-rows .meta {
+  font-size: var(--text-xs);
+}
+
+.plan-week .pw-status {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--yellow);
+}
+
+.plan-week .pw-status.next_up {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--cream);
+}
+
+/* Insights. */
+.plan-week .pw-insights .insights li {
+  padding: 10px 0;
+  border-bottom: 1.5px dashed var(--panel-line);
+  font-size: var(--text-sm);
+}
+
+.plan-week .pw-insights .insights li:last-child {
+  border-bottom: 0;
+}
+
+/* The Saturday and Sunday saving question. */
+.plan-week .pw-saving-form {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.plan-week .pw-saving-form input,
+.plan-week .pw-saving-form select {
+  width: 100%;
+}
+
+.plan-week .pw-saving .pw-big {
+  color: var(--yellow);
+  margin-bottom: 2px;
+}

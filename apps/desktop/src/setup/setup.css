@@ -1,92 +1,155 @@
+/* The focus set-up sheet (480 x 300): a white canvas card on the dark frame.
+   Big title with the minutes in a yellow pill, a big intent field, the kit
+   checklist as cream chips, the cheat sheet in a soft card and a yellow Start
+   pill. The window itself is the only scroll. */
 :root {
   font-family: var(--font-sans);
-  background: var(--surface-0);
-  color: var(--text-primary);
+  background: var(--frame);
+  color: var(--canvas-ink);
 }
 
 body {
   margin: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .setup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  height: 300px;
-  padding: 16px 20px;
+  gap: var(--space-2);
+  min-height: 100vh;
+  padding: var(--space-4) var(--space-5);
   box-sizing: border-box;
-  border: 1px solid var(--accent-strong);
-  border-radius: 12px;
+  background: var(--canvas);
+  color: var(--canvas-ink);
+  border-radius: var(--radius-canvas);
 }
 
 .setup-head {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .setup-head h1 {
   margin: 0;
-  font-size: 18px;
+  min-width: 0;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The minutes: a yellow time pill. */
+.setup-head .setup-meta {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: var(--pill);
+  background: var(--yellow);
+  color: var(--on-loud);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .setup-label {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--canvas-ink-2);
 }
 
 .setup-intent {
   font: inherit;
-  font-size: 16px;
+  font-size: var(--text-lg);
+  font-weight: 500;
   color: inherit;
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 6px 10px;
+  background: var(--canvas-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 10px 14px;
   outline: none;
 }
 
 .setup-intent:focus {
-  border-color: var(--accent-strong);
+  background: var(--canvas);
+  border-color: var(--canvas-ink);
 }
 
-/* A long checklist scrolls inside the fixed sheet so the message and hint
-   below it always stay visible. */
 .setup-checklist {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: 14px;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  gap: 6px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.setup-checklist:empty {
+  display: none;
+}
+
+.setup-checklist label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 8px;
+  border-radius: var(--pill);
+  background: var(--cream);
+  color: var(--cream-ink);
+  cursor: pointer;
 }
 
 .setup-checklist input {
-  accent-color: var(--accent-strong);
+  appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--cream-ink);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
 }
 
-/* The area's cheat sheet: a short, scrolling card. */
+.setup-checklist input:checked {
+  background: var(--cream-ink);
+}
+
+.setup-checklist input:checked::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--cream);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.setup-checklist input:focus-visible {
+  outline: 2px solid var(--canvas-ink);
+  outline-offset: 2px;
+}
+
+/* The area's cheat sheet: a soft card in the flow (no inner scroll). */
 .setup-notes {
-  flex: 0 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   margin: 0;
-  padding: 6px 10px;
+  padding: var(--space-2) var(--space-3);
   list-style: none;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--surface-2);
-  border-radius: 8px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--canvas-ink-2);
+  background: var(--canvas-2);
+  border-radius: var(--radius);
 }
 
 .setup-notes:empty {
@@ -96,14 +159,60 @@ body {
 .setup-meta {
   flex-shrink: 0;
   margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  color: var(--canvas-ink-2);
+}
+
+.setup-meta:empty {
+  display: none;
 }
 
 .setup-message {
   flex-shrink: 0;
   margin: 0;
-  font-size: 13px;
-  color: var(--warning);
-  min-height: 1em;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--danger-loud);
+}
+
+.setup-message:empty {
+  display: none;
+}
+
+.setup-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-1);
+}
+
+.setup-foot .setup-meta {
+  color: var(--canvas-ink-3);
+  font-size: var(--text-xs);
+}
+
+.setup-start {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--on-loud);
+  background: var(--yellow);
+  border: none;
+  border-radius: var(--pill);
+  padding: 8px 20px;
+  cursor: pointer;
+}
+
+.setup-start:hover {
+  filter: brightness(1.05);
+}
+
+.setup-start:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--canvas),
+    0 0 0 4px var(--canvas-ink);
 }

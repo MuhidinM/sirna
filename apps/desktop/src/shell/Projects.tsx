@@ -1,5 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import "../theme/pages/projects.css";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
@@ -27,6 +29,7 @@ import {
 } from "../features/projects/projects";
 import {
   hoursLabel,
+  LOAD_LIMIT,
   loadWeek,
   type PlannedProject,
   type Query,
@@ -42,6 +45,10 @@ import { estimateFacts, timingFacts } from "../features/ai/facts";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { ESTIMATE, type EstimateReply, TIMING } from "../features/ai/touchpoints";
 import { weekStart } from "../features/plan/dayplan";
+import { statusOps } from "../features/tasks/list";
+import { IconClock, IconPlus, IconProjects } from "./icons";
+import { EventCard, GhostCard, PanelHead, toneOf } from "./kit";
+import { Segmented } from "./Nav";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -99,7 +106,7 @@ function TimingCard({ timing, reasons }: { timing: Timing; reasons?: string[] | 
     // The numbers always show; the AI's wording, once it arrives, sits under them.
     return (
       <div className={`timing timing-${check.verdict}`} role="status">
-        <strong>{VERDICT[check.verdict]}</strong>
+        <strong className="timing-verdict">{VERDICT[check.verdict]}</strong>
         <ul>
           {check.reasons.map((reason) => (
             <li key={reason}>{reason}</li>
@@ -153,6 +160,11 @@ function ProjectForm({
 }) {
   const [draft, setDraft] = useState<ProjectDraft>(project ? draftOf(project) : EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  // A new project's form opens under the board: bring it into view.
+  useEffect(() => {
+    formRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, []);
   const set = (change: Partial<ProjectDraft>) => {
     setError(null);
     setDraft({ ...draft, ...change });
@@ -163,7 +175,9 @@ function ProjectForm({
       : null;
   return (
     <form
-      className="card project-form"
+      ref={formRef}
+      className="project-form proj-form"
+      aria-labelledby="proj-form-title"
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkDraft(draft);
@@ -197,20 +211,22 @@ function ProjectForm({
           .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
       }}
     >
-      <h2>{project ? "Edit project" : "New project"}</h2>
-      <label className="field">
-        <span>Name</span>
-        <input value={draft.title} onChange={(e) => set({ title: e.target.value })} />
-      </label>
-      <label className="field">
-        <span>Next step</span>
-        <input
-          value={draft.nextStep}
-          placeholder="The very next thing to do; it goes on the board"
-          onChange={(e) => set({ nextStep: e.target.value })}
-        />
-      </label>
-      <div className="row">
+      <h2 id="proj-form-title">{project ? "Edit project" : "New project"}</h2>
+      <div className="proj-fields proj-fields-wide">
+        <label className="field">
+          <span>Name</span>
+          <input value={draft.title} onChange={(e) => set({ title: e.target.value })} />
+        </label>
+        <label className="field">
+          <span>Next step</span>
+          <input
+            value={draft.nextStep}
+            placeholder="The very next thing to do; it goes on the board"
+            onChange={(e) => set({ nextStep: e.target.value })}
+          />
+        </label>
+      </div>
+      <div className="proj-fields">
         <label className="field">
           <span>Area</span>
           <select value={draft.areaId} onChange={(e) => set({ areaId: e.target.value })}>
@@ -275,7 +291,7 @@ function ProjectForm({
           {error}
         </p>
       )}
-      <div className="row">
+      <div className="proj-actions">
         <Button type="submit" primary>
           Save
         </Button>
@@ -289,11 +305,11 @@ function Card({ task, onMove }: { task: ProjectTask; onMove: (to: Column) => voi
   const column = columnOf(task);
   return (
     <li
-      className="board-card"
+      className={`board-card col-${column ?? "none"}`}
       draggable
       onDragStart={(event) => event.dataTransfer.setData("text/plain", task.id)}
     >
-      <span>{task.title}</span>
+      <span className="board-card-title">{task.title}</span>
       {task.waiting_on && <span className="meta">Waiting on {task.waiting_on}</span>}
       {task.due_date && <span className="meta">Due {task.due_date}</span>}
       <select
@@ -330,7 +346,7 @@ function Board({ project, tasks }: { project: ProjectRow; tasks: ProjectTask[] }
         {COLUMNS.map(({ column, label }) => (
           <section
             key={column}
-            className="board-column"
+            className={`board-column col-${column}`}
             aria-label={label}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
@@ -340,13 +356,17 @@ function Board({ project, tasks }: { project: ProjectRow; tasks: ProjectTask[] }
             }}
           >
             <h3>
-              {label} <span className="meta">{board[column].length}</span>
+              <span className="board-dot" aria-hidden="true" />
+              {label} <span className="board-count">{board[column].length}</span>
             </h3>
             <ul>
               {board[column].map((task) => (
                 <Card key={task.id} task={task} onMove={(to) => void move(task, to)} />
               ))}
             </ul>
+            {board[column].length === 0 && column !== "todo" && (
+              <p className="board-empty">Drop a card here</p>
+            )}
             {column === "todo" && (
               <form
                 onSubmit={(event) => {
@@ -373,7 +393,7 @@ function Board({ project, tasks }: { project: ProjectRow; tasks: ProjectTask[] }
 }
 
 function List({ tasks }: { tasks: ProjectTask[] }) {
-  if (tasks.length === 0) return <p className="meta">No cards yet.</p>;
+  if (tasks.length === 0) return <p className="empty">No cards yet.</p>;
   return (
     <table className="project-list">
       <thead>
@@ -387,7 +407,11 @@ function List({ tasks }: { tasks: ProjectTask[] }) {
         {tasks.map((task) => (
           <tr key={task.id}>
             <td>{task.title}</td>
-            <td>{columnLabel(columnOf(task))}</td>
+            <td>
+              <span className={`list-col col-${columnOf(task) ?? "none"}`}>
+                {columnLabel(columnOf(task))}
+              </span>
+            </td>
             <td>{task.due_date ?? ""}</td>
           </tr>
         ))}
@@ -473,14 +497,22 @@ function IdeaCard({
     });
   };
   return (
-    <section className="card idea-card" aria-label="Timing check">
-      <h3>Idea</h3>
+    <section className="panel idea-card" aria-label="Timing check">
+      <div className="panel-head">
+        <span className="panel-icon" aria-hidden="true">
+          <IconClock size={18} />
+        </span>
+        <div className="grow">
+          <h3>Idea</h3>
+          <span className="panel-sub">Where it fits in your weeks</span>
+        </div>
+      </div>
       {timing ? (
         <TimingCard timing={timing} reasons={reasons?.reasons ?? null} />
       ) : (
         <p className="meta">How big is it? Pick an estimate to see where it fits.</p>
       )}
-      <div className="row">
+      <div className="idea-actions">
         {!project.estimate_min &&
           ESTIMATE_CHIPS.map((hours) => (
             <Button key={hours} onClick={() => act({ kind: "estimate", minutes: hours * 60 })}>
@@ -513,7 +545,9 @@ function IdeaCard({
             <Button onClick={() => act({ kind: "suggested" })}>Use suggested dates</Button>
           </>
         )}
-        <Button onClick={() => act({ kind: "drop" })}>Drop</Button>
+        <Button className="btn-ghost" onClick={() => act({ kind: "drop" })}>
+          Drop
+        </Button>
       </div>
       {error && (
         <p role="alert" className="error">
@@ -551,85 +585,227 @@ function ProjectView({
   const [editing, setEditing] = useState(false);
   if (editing)
     return (
-      <ProjectForm
-        project={project}
-        areas={areas}
-        openTasks={tasks.rows.filter((task) => task.status !== "done")}
-        plan={plan}
-        onSaved={(_id, note) => {
-          setEditing(false);
-          onNote(note ?? null);
-        }}
-        onCancel={() => setEditing(false)}
-      />
+      <section className="canvas proj-edit">
+        <ProjectForm
+          project={project}
+          areas={areas}
+          openTasks={tasks.rows.filter((task) => task.status !== "done")}
+          plan={plan}
+          onSaved={(_id, note) => {
+            setEditing(false);
+            onNote(note ?? null);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </section>
     );
   const nextDone = project.next_step_task_id && project.next_step_status === "done";
+  const area = project.area_id ? areaNames.get(project.area_id) : undefined;
+  const open = tasks.rows.filter((task) => task.status !== "done").length;
+  const done = tasks.rows.length - open;
   return (
-    <section className="project-view">
-      <header className="row">
-        <h2>{project.title}</h2>
-        <Chip area={(project.area_color ?? "admin") as AreaColor}>
-          {statusLabel(project.status)}
-        </Chip>
-        <span className="meta">{weeklyLabel(project.weekly_min)}</span>
-        {project.deadline && <span className="meta">by {project.deadline}</span>}
-        {risk && (
-          <span className="at-risk" role="status">
-            At risk · {hoursLabel(risk.shortMin)} {risk.overdue ? "left, past the date" : "short"}
-          </span>
+    <div className="project-view proj-detail">
+      <aside className="proj-side" aria-label="About this project">
+        <section className="panel proj-about" aria-labelledby="proj-name">
+          <PanelHead
+            id="proj-name"
+            icon={<IconProjects size={18} />}
+            title={project.title}
+            sub={area ?? "No area"}
+            action={<Button onClick={() => setEditing(true)}>Edit</Button>}
+          />
+          <dl className="proj-facts">
+            <div>
+              <dt>Status</dt>
+              <dd>
+                <Chip area={(project.area_color ?? "admin") as AreaColor}>
+                  {statusLabel(project.status)}
+                </Chip>
+              </dd>
+            </div>
+            {project.weekly_min ? (
+              <div>
+                <dt>Time</dt>
+                <dd>{weeklyLabel(project.weekly_min)}</dd>
+              </div>
+            ) : null}
+            {project.deadline && (
+              <div>
+                <dt>Deadline</dt>
+                <dd>by {day(project.deadline)}</dd>
+              </div>
+            )}
+            {project.forecast_finish && (
+              <div>
+                <dt>Finishes</dt>
+                <dd>~{day(project.forecast_finish)}</dd>
+              </div>
+            )}
+          </dl>
+          {risk && (
+            <p className="at-risk" role="status">
+              At risk · {hoursLabel(risk.shortMin)} {risk.overdue ? "left, past the date" : "short"}
+            </p>
+          )}
+          {project.goal && <p className="proj-goal">{project.goal}</p>}
+          <div className="proj-next">
+            {openStep(project) ? (
+              <p>
+                <span className="proj-next-label">Next step</span>
+                <strong>{project.next_step_title}</strong>
+                {project.next_step_status === "waiting" && <span className="meta"> · waiting</span>}
+              </p>
+            ) : (
+              <p className="meta">
+                {nextDone
+                  ? "Next step done. What's the next one? (Edit)"
+                  : "No next step. Add one with Edit."}
+              </p>
+            )}
+          </div>
+        </section>
+        {project.status === "idea" && (
+          <IdeaCard
+            project={project}
+            plan={plan}
+            others={others}
+            strict={strict}
+            areaNames={areaNames}
+          />
         )}
-        <Button onClick={() => setEditing(true)}>Edit</Button>
-      </header>
-      {project.goal && <p className="meta">{project.goal}</p>}
-      {project.status === "idea" && (
-        <IdeaCard
-          project={project}
-          plan={plan}
-          others={others}
-          strict={strict}
-          areaNames={areaNames}
-        />
-      )}
-      <p>
-        {openStep(project) ? (
+      </aside>
+
+      <section className="canvas proj-work" aria-labelledby="proj-cards">
+        <header className="canvas-head">
+          <h2 id="proj-cards" className="proj-work-title">
+            Cards,{" "}
+            <span className="soft">
+              {open} open · {done} done
+            </span>
+          </h2>
+          <span className="spacer" />
+          <Segmented
+            label="View"
+            options={[
+              { value: "board", label: "Board" },
+              { value: "list", label: "List" },
+            ]}
+            value={tab}
+            onChange={setTab}
+          />
+        </header>
+        {tasks.error && (
+          <p role="alert" className="error">
+            Couldn&apos;t load the cards: {tasks.error}
+          </p>
+        )}
+        {!tasks.loading &&
+          (tab === "board" ? (
+            <Board project={project} tasks={tasks.rows} />
+          ) : (
+            <List tasks={tasks.rows} />
+          ))}
+      </section>
+    </div>
+  );
+}
+
+/** One project on the board, as a loud event card (docs/design.md). */
+function ProjectCard({
+  project,
+  area,
+  risk,
+  picked,
+  onPick,
+}: {
+  project: ProjectRow;
+  area: string | undefined;
+  risk: boolean;
+  picked: boolean;
+  onPick: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const total = project.open_count + project.done_count;
+  const share = total > 0 ? project.done_count / total : 0;
+  const step = openStep(project);
+  const stepId = project.next_step_task_id;
+  const stepDone = stepId !== null && project.next_step_status === "done";
+  const toggleStep = () => {
+    if (!stepId) return;
+    setError(null);
+    transact(
+      "user",
+      statusOps({ id: stepId }, stepDone ? "todo" : "done", systemClock.now()),
+      `project:${project.id}`,
+    ).catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+  };
+  const when = project.deadline
+    ? `Due ${day(project.deadline)}`
+    : project.forecast_finish
+      ? `Finishes ~${day(project.forecast_finish)}`
+      : "No date yet";
+  return (
+    <li className="proj-item">
+      <EventCard
+        tone={toneOf(project.area_color)}
+        className={picked ? "proj-card picked" : "proj-card"}
+        faded={project.status === "done" || project.status === "dropped"}
+        label={
           <>
-            <strong>Next step:</strong> {project.next_step_title}
-            {project.next_step_status === "waiting" && <span className="meta"> · waiting</span>}
+            {statusLabel(project.status)}
+            {area ? ` · ${area}` : ""}
           </>
-        ) : (
-          <span className="meta">
-            {nextDone
-              ? "Next step done. What's the next one? (Edit)"
-              : "No next step. Add one with Edit."}
-          </span>
-        )}
-      </p>
-      <div className="row" role="tablist" aria-label="View">
-        {(["board", "list"] as const).map((name) => (
+        }
+        title={
           <button
-            key={name}
             type="button"
-            role="tab"
-            aria-selected={tab === name}
-            className={tab === name ? "step current" : "step"}
-            onClick={() => setTab(name)}
+            className="proj-open"
+            aria-current={picked ? "page" : undefined}
+            onClick={onPick}
           >
-            {name === "board" ? "Board" : "List"}
+            {project.title}
           </button>
-        ))}
-      </div>
-      {tasks.error && (
-        <p role="alert" className="error">
-          Couldn&apos;t load the cards: {tasks.error}
-        </p>
-      )}
-      {!tasks.loading &&
-        (tab === "board" ? (
-          <Board project={project} tasks={tasks.rows} />
+        }
+      >
+        {risk && <span className="proj-risk">At risk</span>}
+        {step || stepDone ? (
+          <ul className="event-check">
+            <li>
+              <label>
+                <input type="checkbox" checked={stepDone} onChange={toggleStep} />
+                <span className={stepDone ? "proj-step done" : "proj-step"}>
+                  {step || project.next_step_title}
+                </span>
+              </label>
+            </li>
+          </ul>
         ) : (
-          <List tasks={tasks.rows} />
-        ))}
-    </section>
+          <p className="proj-nostep">No next step yet</p>
+        )}
+        {error && (
+          <p role="alert" className="proj-card-error">
+            {error}
+          </p>
+        )}
+        <div
+          className="event-progress"
+          role="progressbar"
+          aria-label={`${project.title}: ${project.done_count} of ${total} cards done`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(share * 100)}
+        >
+          <span style={{ width: `${share * 100}%` }} />
+        </div>
+        <p className="proj-when">
+          <span>{when}</span>
+          <span>
+            {project.open_count} open
+            {project.weekly_min ? ` · ${weeklyLabel(project.weekly_min)}` : ""}
+          </span>
+        </p>
+      </EventCard>
+    </li>
   );
 }
 
@@ -649,83 +825,92 @@ export function Projects() {
   );
   const current = projects.rows.find((p) => p.id === selected) ?? projects.rows[0] ?? null;
   const load = plan ? weekLoad(plan.week, plan.projects, weekStart(plan.today)) : null;
+  const total = projects.rows.length;
 
   return (
-    <main className="projects">
-      <header className="review-head">
-        <h1>Projects</h1>
-        <Button primary onClick={() => setCreating(true)}>
-          New project
-        </Button>
+    <main className="page projects">
+      <section className="canvas proj-canvas" aria-labelledby="projects-title">
+        <header className="canvas-head">
+          <h1 id="projects-title" className="page-title">
+            Projects{total > 0 && <span className="soft">, {total} in all</span>}
+          </h1>
+          <span className="spacer" />
+          <Button primary onClick={() => setCreating(true)}>
+            <IconPlus size={16} /> New project
+          </Button>
+        </header>
         {load && (
-          <p className="meta" aria-label="This week's load">
-            This week: load {pct(load.ratio)} · {hoursLabel(load.committed)} planned of{" "}
-            {hoursLabel(load.capacity)} free · {load.activeProjects} active project
-            {load.activeProjects === 1 ? "" : "s"}
+          <p className="proj-stats" aria-label="This week's load">
+            <span className={load.ratio > LOAD_LIMIT ? "proj-stat hot" : "proj-stat"}>
+              <b>{pct(load.ratio)}</b> load this week
+            </span>
+            <span className="proj-stat">
+              <b>{hoursLabel(load.committed)}</b> planned of {hoursLabel(load.capacity)} free
+            </span>
+            <span className="proj-stat">
+              <b>{load.activeProjects}</b> active project{load.activeProjects === 1 ? "" : "s"}
+            </span>
           </p>
         )}
-      </header>
-      {note && (
-        <p role="status" className="row meta">
-          {note}
-          <Button onClick={() => setNote(null)}>OK</Button>
-        </p>
-      )}
-      {projects.error && (
-        <p role="alert" className="error">
-          Couldn&apos;t load projects: {projects.error}
-        </p>
-      )}
-      {creating && (
-        <ProjectForm
-          project={null}
+        {note && (
+          <p role="status" className="row meta notice">
+            {note}
+            <Button onClick={() => setNote(null)}>OK</Button>
+          </p>
+        )}
+        {projects.error && (
+          <p role="alert" className="error">
+            Couldn&apos;t load projects: {projects.error}
+          </p>
+        )}
+        {!projects.loading && total === 0 && !creating && (
+          <p className="empty">No projects yet. Start one with New project.</p>
+        )}
+        {!projects.loading && (
+          <ul className="proj-board" aria-label="Projects">
+            {projects.rows.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                area={project.area_id ? areaNames.get(project.area_id) : undefined}
+                risk={riskById.has(project.id)}
+                picked={project.id === current?.id}
+                onPick={() => setSelected(project.id)}
+              />
+            ))}
+            {!creating && (
+              <li className="proj-item">
+                <GhostCard label="Add a project" onClick={() => setCreating(true)} />
+              </li>
+            )}
+          </ul>
+        )}
+        {creating && (
+          <ProjectForm
+            project={null}
+            areas={areas.rows}
+            plan={plan}
+            onSaved={(id, saved) => {
+              setCreating(false);
+              setSelected(id);
+              setNote(saved ?? null);
+            }}
+            onCancel={() => setCreating(false)}
+          />
+        )}
+      </section>
+      {current && (
+        <ProjectView
+          key={current.id}
+          project={current}
           areas={areas.rows}
           plan={plan}
-          onSaved={(id, saved) => {
-            setCreating(false);
-            setSelected(id);
-            setNote(saved ?? null);
-          }}
-          onCancel={() => setCreating(false)}
+          risk={riskById.get(current.id)}
+          others={projects.rows}
+          strict={strict}
+          areaNames={areaNames}
+          onNote={setNote}
         />
-      )}
-      {!projects.loading && projects.rows.length === 0 && !creating && (
-        <p className="meta">No projects yet. Start one with New project.</p>
-      )}
-      {projects.rows.length > 0 && (
-        <div className="projects-layout">
-          <ul className="project-picker" aria-label="Projects">
-            {projects.rows.map((project) => (
-              <li key={project.id}>
-                <button
-                  type="button"
-                  className="sidebar-item"
-                  aria-current={project.id === current?.id ? "page" : undefined}
-                  onClick={() => setSelected(project.id)}
-                >
-                  <span>{project.title}</span>
-                  <span className="meta">
-                    {statusLabel(project.status)} · {project.open_count} open
-                    {riskById.has(project.id) ? " · at risk" : ""}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {current && (
-            <ProjectView
-              key={current.id}
-              project={current}
-              areas={areas.rows}
-              plan={plan}
-              risk={riskById.get(current.id)}
-              others={projects.rows}
-              strict={strict}
-              areaNames={areaNames}
-              onNote={setNote}
-            />
-          )}
-        </div>
       )}
     </main>
   );

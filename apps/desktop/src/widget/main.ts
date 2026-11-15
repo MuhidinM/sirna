@@ -42,7 +42,15 @@ function draw(): void {
       ? { ...focus, remaining_ms: Math.max(0, focus.remaining_ms - (performance.now() - focusAt)) }
       : focus;
   const view = widgetView({ blocks, top: tasks, focus: shown, note: pinned, nowMs });
-  if (now) now.textContent = view.now;
+  if (now) {
+    now.textContent = view.now;
+    // Colour only: yellow while a block runs, cream for the next one.
+    now.dataset.state = view.now.startsWith("Now")
+      ? "now"
+      : view.now.startsWith("Next")
+        ? "next"
+        : "idle";
+  }
   if (timer) {
     timer.hidden = view.timer === null;
     timer.classList.toggle("paused", view.timer?.paused === true);

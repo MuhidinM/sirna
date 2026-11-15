@@ -1,0 +1,724 @@
+/*
+ * Settings, the focus timer panel and the Missed list on Today
+ * (docs/design.md → Pages). This file loads before App.css and the theme
+ * files, so every rule is scoped (e.g. `.page.settings-page`) to win over
+ * the older ones. Nothing here scrolls except the "What was sent" code
+ * blocks, capped at 16 lines.
+ */
+
+/* --- Settings: the page ------------------------------------------------------------------ */
+
+.page.settings-page {
+  padding: 0;
+  max-width: none;
+}
+
+/* The status panels stay above the canvas when the side column drops under it. */
+@media (max-width: 1199px) {
+  .page.settings-page .layout-split > .side {
+    order: 0;
+  }
+
+  .page.settings-page .set-jump {
+    display: none;
+  }
+}
+
+/* --- Settings: status strip as three small panels ---------------------------------------- */
+
+.page.settings-page .set-status {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 14px;
+}
+
+.page.settings-page .set-stat {
+  display: grid;
+  gap: 6px;
+  padding: var(--space-4) var(--space-5);
+}
+
+.page.settings-page .set-stat.needs {
+  border-color: color-mix(in srgb, var(--pink) 55%, var(--panel-line));
+}
+
+.page.settings-page .set-stat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-lg);
+}
+
+.page.settings-page .set-stat-head strong {
+  font-weight: 600;
+  min-width: 0;
+}
+
+.page.settings-page .set-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-3);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink-3) 22%, transparent);
+}
+
+.page.settings-page .set-stat.fine .set-dot {
+  background: var(--leaf);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--leaf) 22%, transparent);
+}
+
+.page.settings-page .set-stat.needs .set-dot {
+  background: var(--pink);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pink) 28%, transparent);
+}
+
+.page.settings-page .set-stat-text {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.page.settings-page .set-stat.needs .set-stat-text {
+  color: var(--ink);
+}
+
+/* --- Settings: the section list in the side column ------------------------------------- */
+
+.page.settings-page .set-jump .list-rows > li {
+  padding: 0;
+  min-height: 0;
+}
+
+.page.settings-page .set-jump button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-md);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.page.settings-page .set-jump button::after {
+  content: "→";
+  color: var(--ink-3);
+  transition: transform 0.15s var(--ease);
+}
+
+.page.settings-page .set-jump button:hover::after {
+  color: var(--ink);
+  transform: translateX(2px);
+}
+
+/* --- Settings: the canvas ------------------------------------------------------------- */
+
+.page.settings-page .set-canvas .canvas-head {
+  margin-bottom: var(--space-2);
+}
+
+.page.settings-page .set-lead {
+  max-width: 68ch;
+  margin: 0 0 var(--space-4);
+  color: var(--canvas-ink-2);
+  font-size: var(--text-md);
+}
+
+.page.settings-page .set-section {
+  display: grid;
+  grid-template-columns: minmax(0, 230px) minmax(0, 1fr);
+  gap: var(--space-4) var(--space-7);
+  padding: var(--space-6) 0;
+  border-top: 1.5px dashed var(--canvas-line);
+  scroll-margin-top: var(--space-4);
+}
+
+.page.settings-page .set-section:last-child {
+  padding-bottom: var(--space-2);
+}
+
+.page.settings-page .set-label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.page.settings-page .set-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--cream);
+  color: var(--pink);
+}
+
+.page.settings-page .set-label h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--canvas-ink);
+}
+
+.page.settings-page .set-sub {
+  margin: 2px 0 0;
+  color: var(--canvas-ink-3);
+  font-size: var(--text-sm);
+}
+
+.page.settings-page .set-body {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.page.settings-page .set-body .meta,
+.page.settings-page .set-body p {
+  overflow-wrap: anywhere;
+}
+
+.page.settings-page .set-aside {
+  margin: 0 0 var(--space-3);
+  max-width: 68ch;
+}
+
+/* One setting: a dashed line between each. */
+.page.settings-page .set-body .setting {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  border-bottom: 1.5px dashed var(--canvas-line);
+  min-width: 0;
+}
+
+.page.settings-page .set-body .setting:first-child {
+  padding-top: 0;
+}
+
+.page.settings-page .set-body .setting:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* The calendar block's name reads as a field label. */
+.page.settings-page .set-body .setting > span:first-child {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--canvas-ink-2);
+}
+
+.page.settings-page .set-body .meta {
+  margin: 0;
+}
+
+.page.settings-page .set-body h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--canvas-ink);
+}
+
+/* Fields */
+.page.settings-page .field {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.page.settings-page .field > span,
+.page.settings-page .field > legend {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--canvas-ink-2);
+  padding: 0;
+}
+
+.page.settings-page .field input:not([type="checkbox"], [type="radio"]),
+.page.settings-page .field select,
+.page.settings-page .set-body .row select {
+  width: 100%;
+  max-width: 560px;
+  min-height: 42px;
+  border-radius: var(--radius);
+}
+
+.page.settings-page .set-body .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-1) 0 0;
+}
+
+.page.settings-page .set-body .row > select {
+  flex: 1 1 260px;
+  width: auto;
+}
+
+/* The daily limit: field and button on one line while there is room. */
+.page.settings-page .set-body .row.set-inline {
+  align-items: flex-end;
+  margin-top: var(--space-2);
+}
+
+.page.settings-page .set-inline .field {
+  flex: 1 1 260px;
+  max-width: 560px;
+}
+
+.page.settings-page .set-note:empty,
+.page.settings-page .set-state:empty {
+  display: none;
+}
+
+/* Saved / not set: a small pill beside the buttons. */
+.page.settings-page .set-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--pill);
+  background: var(--canvas-2);
+  color: var(--canvas-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.page.settings-page .set-state.saved {
+  background: var(--mint);
+  color: var(--mint-ink);
+}
+
+.page.settings-page .set-state.saved::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* Checkboxes as rows. */
+.page.settings-page .check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0;
+  font-weight: 500;
+  color: var(--canvas-ink);
+  cursor: pointer;
+}
+
+.page.settings-page .check input {
+  margin-top: 1px;
+}
+
+/* AI usage: the count and a bar. */
+.page.settings-page .set-usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.page.settings-page .set-usage-count {
+  font-size: var(--text-sm);
+  color: var(--canvas-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.page.settings-page .set-usage-count strong {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--canvas-ink);
+  letter-spacing: -0.02em;
+}
+
+.page.settings-page .set-usage .bar {
+  flex: 1 1 160px;
+  max-width: 320px;
+  height: 10px;
+  background: var(--canvas-2);
+}
+
+/* Theme: a segmented pick between Night and Forest. */
+.page.settings-page fieldset.set-theme {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.page.settings-page .set-theme legend {
+  margin-bottom: 6px;
+}
+
+.page.settings-page .set-theme .seg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.page.settings-page .set-theme .seg-item:has(input:checked) {
+  background: var(--canvas-ink);
+  color: var(--canvas);
+}
+
+.page.settings-page .set-theme .seg-item:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+
+.page.settings-page .set-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: 0 0 0 2px var(--canvas);
+}
+
+.page.settings-page .set-theme-night .set-swatch {
+  background: var(--canvas-ink);
+  outline: 1.5px solid var(--canvas-ink-3);
+}
+
+.page.settings-page .set-theme-forest .set-swatch {
+  background: var(--mint-ink);
+}
+
+/* What was sent: one row per request; the code blocks stop at 16 lines. */
+.page.settings-page .set-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.page.settings-page .set-log details {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--canvas-2);
+}
+
+.page.settings-page .set-log summary {
+  padding: 10px var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.page.settings-page .set-log details[open] {
+  padding-bottom: var(--space-3);
+}
+
+.page.settings-page .set-log details > :not(summary) {
+  margin-left: var(--space-4);
+  margin-right: var(--space-4);
+}
+
+.page.settings-page .set-log details > .meta {
+  margin-top: var(--space-2);
+  margin-bottom: 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--canvas-ink-3);
+}
+
+.page.settings-page .set-log pre {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: var(--space-3);
+  max-height: calc(16 * 1.5em + 2 * var(--space-3));
+  overflow: auto;
+  background: var(--canvas);
+  border: 1px solid var(--canvas-line);
+  border-radius: 12px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Narrow canvas: the section name sits above its settings. */
+@container (max-width: 680px) {
+  .page.settings-page .set-section {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .page.settings-page .set-label {
+    align-items: center;
+  }
+}
+
+/* --- Focus timer panel (Today's side column) ------------------------------------------ */
+
+.panel.focus-card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-color: color-mix(in srgb, var(--yellow) 35%, var(--panel-line));
+  background:
+    radial-gradient(
+      120% 90% at 100% 0%,
+      color-mix(in srgb, var(--yellow) 18%, transparent),
+      transparent 60%
+    ),
+    var(--panel);
+}
+
+.panel.focus-card.break {
+  border-color: color-mix(in srgb, var(--sky) 40%, var(--panel-line));
+  background:
+    radial-gradient(
+      120% 90% at 100% 0%,
+      color-mix(in srgb, var(--sky) 18%, transparent),
+      transparent 60%
+    ),
+    var(--panel);
+}
+
+.panel.focus-card p {
+  margin: 0;
+}
+
+.focus-card .focus-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.focus-card .focus-card-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 10px;
+  border-radius: var(--pill);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.focus-card .focus-card-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--orange);
+  animation: focus-card-pulse 1.6s var(--ease) infinite;
+}
+
+.focus-card.break .focus-card-pulse {
+  background: var(--sky);
+}
+
+.focus-card.paused .focus-card-pulse {
+  animation: none;
+  background: var(--ink-3);
+}
+
+@keyframes focus-card-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--orange) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--orange) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-card .focus-card-pulse {
+    animation: none;
+  }
+}
+
+.focus-card .focus-card-session {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-card .focus-card-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.focus-card .focus-card-clock {
+  font-size: clamp(2.8rem, 2rem + 2vw, 3.6rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.focus-card .focus-card-paused {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+.focus-card .focus-card-track {
+  height: 10px;
+  border-radius: var(--pill);
+  background: var(--bar);
+  overflow: hidden;
+}
+
+.focus-card .focus-card-track > span {
+  display: block;
+  width: var(--done, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--yellow) 0 7px,
+    color-mix(in srgb, var(--yellow) 70%, var(--cream)) 7px 11px
+  );
+  transition: width 0.9s linear;
+}
+
+.focus-card.break .focus-card-track > span {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--sky) 0 7px,
+    color-mix(in srgb, var(--sky) 65%, var(--cream)) 7px 11px
+  );
+}
+
+.focus-card .focus-card-note {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.focus-card .focus-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.focus-card .focus-card-actions .btn.focus-card-main {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.focus-card .focus-card-actions .btn.focus-card-main:hover {
+  background: color-mix(in srgb, var(--cream) 85%, var(--yellow));
+}
+
+/* --- Missed blocks (Today's canvas) ---------------------------------------------------- */
+
+.canvas section.missed {
+  margin-top: var(--space-5);
+}
+
+.canvas section.missed > .missed-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.canvas section.missed > .missed-head > h2 {
+  margin: 0;
+}
+
+.canvas section.missed .missed-sub {
+  color: var(--canvas-ink-3);
+  font-size: var(--text-sm);
+}
+
+.canvas section.missed .missed-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.canvas section.missed .missed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: 10px 10px 10px 12px;
+  border-radius: 18px;
+  background: var(--canvas-2);
+  border-left: 4px solid var(--pink);
+}
+
+.canvas section.missed .missed-time {
+  padding: 3px 10px;
+  border-radius: var(--pill);
+  background: var(--cream);
+  color: var(--cream-ink);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.canvas section.missed .missed-title {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.canvas section.missed .missed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.canvas section.missed .missed-actions .btn {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: var(--text-xs);
+  background: var(--canvas);
+  color: var(--canvas-ink);
+}
+
+.canvas section.missed .missed-actions .btn:hover {
+  background: var(--canvas-3);
+}
+
+.canvas section.missed .missed-actions .btn.missed-later {
+  background: var(--canvas-ink);
+  color: var(--canvas);
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas section.missed .missed-actions .btn.btn-ghost {
+  background: transparent;
+  color: var(--canvas-ink-2);
+}

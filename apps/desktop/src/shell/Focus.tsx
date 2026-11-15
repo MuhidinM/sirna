@@ -1,8 +1,10 @@
+import "../theme/pages/settings.css";
+
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 
-import { Button, Card } from "./ui";
+import { Button } from "./ui";
 
 export interface FocusStatus {
   kind: "focus" | "break" | "long_break" | null;
@@ -63,32 +65,57 @@ export function FocusPanel({ status }: { status: FocusStatus }) {
   if (status.kind === null) return null;
   const onBreak = status.kind !== "focus";
   const label = status.kind === "long_break" ? "Long break" : onBreak ? "Break" : "Focus";
+  const plannedMs = status.planned_min * 60_000;
+  const done = plannedMs > 0 ? Math.min(1, Math.max(0, 1 - status.remaining_ms / plannedMs)) : 0;
+  const classes = ["panel", "focus-card", onBreak ? "break" : "", status.paused ? "paused" : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <Card className={onBreak ? "focus-panel break" : "focus-panel"}>
-      <div className="focus-head">
-        <div>
-          <p className="meta">
-            {label}
-            {status.title && status.title !== label ? ` · ${status.title}` : ""}
-            {status.in_row > 0 && !onBreak ? ` · session ${status.in_row + 1}` : ""}
-          </p>
-          <p className="focus-clock" aria-live="off">
-            {clock(status.remaining_ms)}
-            {status.paused ? " · paused" : ""}
-          </p>
-        </div>
-        <div className="focus-actions">
-          {!onBreak &&
-            (status.paused ? (
-              <Button onClick={() => control("resume")}>Resume</Button>
-            ) : (
-              <Button onClick={() => control("pause")}>Pause</Button>
-            ))}
-          {!onBreak && <Button onClick={() => control("distracted")}>Distracted</Button>}
-          <Button onClick={() => control("stop")}>{onBreak ? "End break" : "Stop"}</Button>
-        </div>
+    <section className={classes} aria-label={`${label} timer`}>
+      <div className="focus-card-top">
+        <span className="focus-card-kind">
+          <span className="focus-card-pulse" aria-hidden="true" />
+          {label}
+        </span>
+        {status.in_row > 0 && !onBreak && (
+          <span className="focus-card-session">session {status.in_row + 1}</span>
+        )}
       </div>
-      {onBreak && <p className="meta">Stand up, drink water, look away from the screen.</p>}
-    </Card>
+      {status.title && status.title !== label && <p className="focus-card-title">{status.title}</p>}
+      <p className="focus-card-clock" aria-live="off">
+        {clock(status.remaining_ms)}
+        {status.paused && <span className="focus-card-paused"> · paused</span>}
+      </p>
+      <div
+        className="focus-card-track"
+        role="progressbar"
+        aria-label={`${label} time used`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(done * 100)}
+        style={{ "--done": `${done * 100}%` } as CSSProperties}
+      >
+        <span />
+      </div>
+      {onBreak && (
+        <p className="focus-card-note">Stand up, drink water, look away from the screen.</p>
+      )}
+      <div className="focus-card-actions">
+        {!onBreak &&
+          (status.paused ? (
+            <Button className="focus-card-main" onClick={() => control("resume")}>
+              Resume
+            </Button>
+          ) : (
+            <Button className="focus-card-main" onClick={() => control("pause")}>
+              Pause
+            </Button>
+          ))}
+        {!onBreak && <Button onClick={() => control("distracted")}>Distracted</Button>}
+        <Button className="btn-ghost" onClick={() => control("stop")}>
+          {onBreak ? "End break" : "Stop"}
+        </Button>
+      </div>
+    </section>
   );
 }

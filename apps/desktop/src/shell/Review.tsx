@@ -1,3 +1,5 @@
+import "../theme/pages/plan-review.css";
+
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
@@ -29,6 +31,8 @@ import { aiUnavailable } from "../features/ai/codes";
 import { acceptGuessOps } from "../features/ai/facts";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { CAPTURE, type CaptureGuess, REVIEW } from "../features/ai/touchpoints";
+import { IconCheck, IconClock } from "./icons";
+import { EventCard, PanelHead, type Tone, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -89,69 +93,106 @@ export function Review({ onClose }: { onClose: () => void }) {
     );
 
   return (
-    <main className="review">
-      <header className="review-head">
-        <h1>Night review</h1>
-        <ol className="steps">
-          {STEPS.map(([n, label]) => (
-            <li key={n}>
-              <button
-                type="button"
-                className={n === step ? "step current" : "step"}
-                aria-current={n === step ? "step" : undefined}
-                onClick={() => setStep(n)}
-              >
-                {n} {label}
-              </button>
-            </li>
-          ))}
-        </ol>
-        <Button onClick={() => void finish("skipped")}>Skip tonight</Button>
-      </header>
-
-      {step === 1 && (
-        <TodayStep today={today} dayStart={dayStart} tomorrow={tomorrow} next={() => setStep(2)} />
-      )}
-      {step === 2 && (
-        <SpendingStep
-          today={today}
-          nowMs={nowMs}
-          next={(none) => {
-            if (none) void save(today, { spent_none: 1 });
-            setStep(3);
-          }}
-        />
-      )}
-      {step === 3 && (
-        <section aria-labelledby="energy">
-          <h2 id="energy">How was your energy?</h2>
-          <div className="row">
-            {[
-              [1, "1 drained"],
-              [2, "2 okay"],
-              [3, "3 good"],
-            ].map(([value, label]) => (
-              <Button
-                key={value}
-                onClick={() => {
-                  void save(today, { energy: Number(value) });
-                  setEnergy(Number(value));
-                  setStep(4);
-                }}
-              >
-                {label}
-              </Button>
+    <main className="page plan-review">
+      <section className="canvas rv" aria-labelledby="review-title">
+        <header className="canvas-head">
+          <h1 id="review-title" className="page-title">
+            Night <span className="soft">review</span>
+          </h1>
+          <ol className="rv-steps" aria-label="Steps">
+            {STEPS.map(([n, label]) => (
+              <li key={n}>
+                <button
+                  type="button"
+                  className={n === step ? "rv-step current" : n < step ? "rv-step past" : "rv-step"}
+                  aria-current={n === step ? "step" : undefined}
+                  onClick={() => setStep(n)}
+                >
+                  <span className="rv-step-n">{n}</span> {label}
+                </button>
+              </li>
             ))}
-          </div>
-        </section>
-      )}
-      {step === 4 && (
-        <TomorrowStep
-          tomorrow={tomorrow}
-          done={(mind) => void finish("done", mind ? { mind } : {})}
-        />
-      )}
+          </ol>
+          <span className="spacer" />
+          <Button className="btn-ghost rv-skip" onClick={() => void finish("skipped")}>
+            Skip tonight
+          </Button>
+        </header>
+
+        {step === 1 && (
+          <TodayStep
+            today={today}
+            dayStart={dayStart}
+            tomorrow={tomorrow}
+            next={() => setStep(2)}
+          />
+        )}
+        {step === 2 && (
+          <SpendingStep
+            today={today}
+            nowMs={nowMs}
+            next={(none) => {
+              if (none) void save(today, { spent_none: 1 });
+              setStep(3);
+            }}
+          />
+        )}
+        {step === 3 && (
+          <section className="rv-step-body" aria-labelledby="energy">
+            <h2 id="energy" className="rv-title">
+              How was your energy?
+            </h2>
+            <div className="rv-energy">
+              {ENERGY.map(([value, number, word, tone]) => (
+                <Button
+                  key={value}
+                  className={`rv-energy-pick tone-${tone}`}
+                  onClick={() => {
+                    void save(today, { energy: value });
+                    setEnergy(value);
+                    setStep(4);
+                  }}
+                >
+                  <span className="rv-energy-n">{number}</span> <span>{word}</span>
+                </Button>
+              ))}
+            </div>
+          </section>
+        )}
+        {step === 4 && (
+          <TomorrowStep
+            tomorrow={tomorrow}
+            done={(mind) => void finish("done", mind ? { mind } : {})}
+          />
+        )}
+      </section>
     </main>
+  );
+}
+
+const ENERGY: [number, string, string, Tone][] = [
+  [1, "1", "drained", "pink"],
+  [2, "2", "okay", "cream"],
+  [3, "3", "good", "leaf"],
+];
+
+/** A block of the day as a small event card. */
+function BlockCard({ block, label }: { block: BlockRow; label: string }) {
+  const done = block.status === "done";
+  return (
+    <li>
+      <EventCard
+        tone={toneOf(block.color ?? "admin")}
+        label={label}
+        title={<span className={done ? "done" : undefined}>{block.title}</span>}
+      >
+        {done && (
+          <span className="rv-done-mark" aria-hidden="true">
+            <IconCheck size={14} />
+          </span>
+        )}
+      </EventCard>
+    </li>
   );
 }
 
@@ -211,136 +252,169 @@ function TodayStep({
   const sessions = focus.rows[0]?.n ?? 0;
 
   return (
-    <section aria-labelledby="today-step">
-      <h2 id="today-step">Today</h2>
-      <p className="meta">
-        {sessions} focus session{sessions === 1 ? "" : "s"} done.
-      </p>
-      <ul>
-        {visible.map((block) => (
-          <li key={block.id} className="task">
-            <span className={block.status === "done" ? "done" : undefined}>{block.title}</span>
-            <span className="meta">
-              {time.format(block.start_at)} · {block.status}
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div className="rv-step-body">
+      <div className="rv-grid">
+        <section className="card rv-card rv-wide" aria-labelledby="today-step">
+          <PanelHead
+            id="today-step"
+            icon={<IconClock size={18} />}
+            title="Today"
+            sub={`${sessions} focus session${sessions === 1 ? "" : "s"} done.`}
+          />
+          {visible.length === 0 ? (
+            <p className="empty">No blocks today.</p>
+          ) : (
+            <ul className="rv-blocks">
+              {visible.map((block) => (
+                <BlockCard
+                  key={block.id}
+                  block={block}
+                  label={`${time.format(block.start_at)} · ${block.status}`}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
 
-      {open.rows.length > 0 && (
-        <>
-          <h3>Still open</h3>
-          <ul>
-            {open.rows.map((task) => (
-              <li key={task.id} className="task">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    onChange={() =>
-                      void transact("user", [
-                        {
-                          op: "update",
-                          table: "task_items",
-                          id: task.id,
-                          values: { status: "done", completed_at: systemClock.now() },
-                        },
-                      ])
-                    }
-                  />
-                  <span>{task.title}</span>
-                </label>
-                {asksToShrink(task.carries) && shrinking !== task.id && (
-                  <span className="row">
-                    <span className="meta">Make it smaller?</span>
-                    <Button onClick={() => setShrinking(task.id)}>Smaller</Button>
-                    <Button
-                      onClick={() =>
+        {open.rows.length > 0 && (
+          <section className="card rv-card" aria-labelledby="still-open">
+            <PanelHead
+              id="still-open"
+              title="Still open"
+              sub="Tick what you did"
+              action={<span className="badge">{open.rows.length}</span>}
+            />
+            <ul className="task-rows">
+              {open.rows.map((task) => (
+                <li key={task.id} className="task">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      onChange={() =>
                         void transact("user", [
                           {
                             op: "update",
                             table: "task_items",
                             id: task.id,
-                            values: { status: "someday" },
+                            values: { status: "done", completed_at: systemClock.now() },
                           },
                         ])
                       }
-                    >
-                      Someday
-                    </Button>
-                  </span>
-                )}
-                {shrinking === task.id && (
-                  <form
-                    className="row"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      if (!smaller.trim()) return;
-                      void transact("user", [
-                        {
-                          op: "update",
-                          table: "task_items",
-                          id: task.id,
-                          values: { title: smaller.trim(), carries: 0 },
-                        },
-                      ]);
-                      setShrinking(undefined);
-                      setSmaller("");
-                    }}
-                  >
-                    <input
-                      aria-label="A smaller first step"
-                      value={smaller}
-                      onChange={(event) => setSmaller(event.target.value)}
                     />
-                    <Button type="submit">Save</Button>
-                  </form>
-                )}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {inbox.rows.length > 0 && (
-        <>
-          <h3>Loose ends</h3>
-          {!strict && guesses === null && <Button onClick={suggest}>Suggest with AI</Button>}
-          {guesses === "asking" && <span className="meta">Asking…</span>}
-          {guessNote && <span className="meta">{guessNote}</span>}
-          <ul>
-            {inbox.rows.map((note) => (
-              <li key={note.id} className="task">
-                <span>{note.body}</span>
-                <span className="row">
-                  {guesses instanceof Map && guesses.get(note.id) && (
-                    <GuessButton
-                      note={note}
-                      guess={guesses.get(note.id) as CaptureGuess}
-                      areaIds={areas.rows.map((area) => area.id)}
-                    />
+                    <span>{task.title}</span>
+                  </label>
+                  {asksToShrink(task.carries) && shrinking !== task.id && (
+                    <span className="rv-actions">
+                      <span className="meta">Make it smaller?</span>
+                      <Button className="rv-pill" onClick={() => setShrinking(task.id)}>
+                        Smaller
+                      </Button>
+                      <Button
+                        className="rv-pill"
+                        onClick={() =>
+                          void transact("user", [
+                            {
+                              op: "update",
+                              table: "task_items",
+                              id: task.id,
+                              values: { status: "someday" },
+                            },
+                          ])
+                        }
+                      >
+                        Someday
+                      </Button>
+                    </span>
                   )}
-                  {(["task", "note", "drop"] as const).map((choice) => (
-                    <Button
-                      key={choice}
-                      onClick={() =>
-                        void transact(
-                          "user",
-                          sortInboxOps(note, choice, () => ulid()),
-                        )
-                      }
+                  {shrinking === task.id && (
+                    <form
+                      className="rv-inline"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (!smaller.trim()) return;
+                        void transact("user", [
+                          {
+                            op: "update",
+                            table: "task_items",
+                            id: task.id,
+                            values: { title: smaller.trim(), carries: 0 },
+                          },
+                        ]);
+                        setShrinking(undefined);
+                        setSmaller("");
+                      }}
                     >
-                      {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
-                    </Button>
-                  ))}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+                      <input
+                        aria-label="A smaller first step"
+                        value={smaller}
+                        onChange={(event) => setSmaller(event.target.value)}
+                      />
+                      <Button type="submit" className="rv-dark">
+                        Save
+                      </Button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
-      <div className="row actions">
+        {inbox.rows.length > 0 && (
+          <section className="card rv-card" aria-labelledby="loose-ends">
+            <PanelHead
+              id="loose-ends"
+              title="Loose ends"
+              sub="Make each one a task, a note, or drop it"
+              action={<span className="badge">{inbox.rows.length}</span>}
+            />
+            {(!strict && guesses === null) || guesses === "asking" || guessNote ? (
+              <p className="rv-ai">
+                {!strict && guesses === null && (
+                  <Button className="rv-pill rv-ai-btn" onClick={suggest}>
+                    Suggest with AI
+                  </Button>
+                )}
+                {guesses === "asking" && <span className="meta">Asking…</span>}
+                {guessNote && <span className="meta">{guessNote}</span>}
+              </p>
+            ) : null}
+            <ul className="rv-sort-rows">
+              {inbox.rows.map((note) => (
+                <li key={note.id}>
+                  <span className="rv-sort-body">{note.body}</span>
+                  <span className="rv-sort">
+                    {guesses instanceof Map && guesses.get(note.id) && (
+                      <GuessButton
+                        note={note}
+                        guess={guesses.get(note.id) as CaptureGuess}
+                        areaIds={areas.rows.map((area) => area.id)}
+                      />
+                    )}
+                    {(["task", "note", "drop"] as const).map((choice) => (
+                      <Button
+                        key={choice}
+                        className={`rv-pick rv-pick-${choice}`}
+                        onClick={() =>
+                          void transact(
+                            "user",
+                            sortInboxOps(note, choice, () => ulid()),
+                          )
+                        }
+                      >
+                        {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
+                      </Button>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+
+      <div className="rv-foot">
         {open.rows.length > 0 && (
           <Button
             onClick={() => {
@@ -354,7 +428,7 @@ function TodayStep({
           Next
         </Button>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -398,52 +472,75 @@ function SpendingStep({
     setText(left.join(", "));
   };
 
+  const total = spent.rows.reduce((sum, txn) => sum + txn.amount_minor, 0);
+
   return (
-    <section aria-labelledby="spending">
-      <h2 id="spending">What did you spend today?</h2>
-      {spent.rows.length > 0 && (
-        <ul>
-          {spent.rows.map((txn) => (
-            <li key={txn.id} className="task">
-              <span>{txn.description}</span>
-              <span className="meta">{formatAmount(-txn.amount_minor)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {chips.rows.length > 0 && (
-        <div className="row chips">
-          {chips.rows.map((chip) => (
-            <Button
-              key={`${chip.description}:${chip.amount_minor}`}
-              onClick={() => void transact("user", chipOps(chip, today, systemClock.now(), ulid()))}
-            >
-              {chip.description} {formatAmount(-chip.amount_minor)}
+    <div className="rv-step-body">
+      <div className="rv-grid">
+        <section className="card rv-card" aria-labelledby="spending">
+          <PanelHead
+            id="spending"
+            title="What did you spend today?"
+            sub={
+              spent.rows.length > 0
+                ? `${formatAmount(-total)} so far`
+                : "One line each, comma separated"
+            }
+          />
+          {spent.rows.length > 0 && (
+            <ul className="task-rows">
+              {spent.rows.map((txn) => (
+                <li key={txn.id} className="task">
+                  <span>{txn.description}</span>
+                  <span className="rv-amount">{formatAmount(-txn.amount_minor)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            className="rv-inline rv-add"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void add();
+            }}
+          >
+            <input
+              aria-label="Spending, comma separated"
+              placeholder="lunch 120, taxi 40"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+            />
+            <Button type="submit" className="rv-dark">
+              Add
             </Button>
-          ))}
-        </div>
-      )}
-      <form
-        className="row"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void add();
-        }}
-      >
-        <input
-          aria-label="Spending, comma separated"
-          placeholder="lunch 120, taxi 40"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-        />
-        <Button type="submit">Add</Button>
-      </form>
-      {unread.length > 0 && (
-        <p role="alert" className="error">
-          Couldn&apos;t read: {unread.join(", ")}. Write it as “what amount”.
-        </p>
-      )}
-      <div className="row actions">
+          </form>
+          {unread.length > 0 && (
+            <p role="alert" className="error">
+              Couldn&apos;t read: {unread.join(", ")}. Write it as “what amount”.
+            </p>
+          )}
+        </section>
+
+        {chips.rows.length > 0 && (
+          <section className="card rv-card" aria-labelledby="spend-again">
+            <PanelHead id="spend-again" title="Again today?" sub="Tap one to add it" />
+            <div className="rv-chips">
+              {chips.rows.map((chip) => (
+                <Button
+                  key={`${chip.description}:${chip.amount_minor}`}
+                  className="rv-chip"
+                  onClick={() =>
+                    void transact("user", chipOps(chip, today, systemClock.now(), ulid()))
+                  }
+                >
+                  {chip.description} {formatAmount(-chip.amount_minor)}
+                </Button>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+      <div className="rv-foot">
         {spent.rows.length === 0 ? (
           <Button primary onClick={() => next(true)}>
             Nothing
@@ -454,7 +551,7 @@ function SpendingStep({
           </Button>
         )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -481,47 +578,52 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
     todayParams(start + 60 * 60 * 1000),
   );
 
+  const tomorrowBlocks = blocks.rows.filter((b) => b.kind !== "rest");
+
   return (
-    <section aria-labelledby="tomorrow">
-      <h2 id="tomorrow">Tomorrow</h2>
-      {ready && (
-        <>
-          <ul>
-            {blocks.rows
-              .filter((b) => b.kind !== "rest")
-              .map((block) => (
-                <li key={block.id} className="task">
-                  <span>{block.title}</span>
-                  <span className="meta">
-                    {time.format(block.start_at)}–{time.format(block.end_at)}
-                  </span>
-                </li>
+    <div className="rv-step-body">
+      <div className="rv-grid">
+        <section className="card rv-card rv-wide" aria-labelledby="tomorrow">
+          <PanelHead id="tomorrow" icon={<IconClock size={18} />} title="Tomorrow" />
+          {!ready ? (
+            <p className="meta">Planning tomorrow…</p>
+          ) : tomorrowBlocks.length === 0 ? (
+            <p className="empty">No blocks yet.</p>
+          ) : (
+            <ul className="rv-blocks">
+              {tomorrowBlocks.map((block) => (
+                <BlockCard
+                  key={block.id}
+                  block={block}
+                  label={`${time.format(block.start_at)}–${time.format(block.end_at)}`}
+                />
               ))}
-          </ul>
-          {top.rows.length > 0 && (
-            <>
-              <h3>Top 3</h3>
-              <ul>
-                {top.rows.map((task) => (
-                  <li key={task.id} className="task">
-                    {task.title}
-                  </li>
-                ))}
-              </ul>
-            </>
+            </ul>
           )}
-        </>
-      )}
-      <label className="field">
-        <span>Anything on your mind? (optional)</span>
-        <textarea value={mind} rows={2} onChange={(event) => setMind(event.target.value)} />
-      </label>
-      <div className="row actions">
+        </section>
+        {ready && top.rows.length > 0 && (
+          <section className="card rv-card" aria-labelledby="tomorrow-top">
+            <PanelHead id="tomorrow-top" title="Top 3" />
+            <ol className="rv-top">
+              {top.rows.map((task) => (
+                <li key={task.id}>{task.title}</li>
+              ))}
+            </ol>
+          </section>
+        )}
+        <section className="card rv-card" aria-label="On your mind">
+          <label className="field">
+            <span>Anything on your mind? (optional)</span>
+            <textarea value={mind} rows={3} onChange={(event) => setMind(event.target.value)} />
+          </label>
+        </section>
+      </div>
+      <div className="rv-foot">
         <Button primary onClick={() => done(mind.trim())}>
           Looks good
         </Button>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -541,7 +643,7 @@ function GuessButton({
   const when = guess.when_text ? ` · ${guess.when_text}` : "";
   return (
     <Button
-      primary
+      className="rv-guess"
       title={`AI, ${guess.confidence} confidence`}
       onClick={() =>
         void transact(
@@ -591,10 +693,12 @@ function ReplyStep({
     };
   }, [mind, energy, dayStart]);
   return (
-    <main className="review">
-      <section aria-labelledby="saved">
-        <h2 id="saved">Saved for tomorrow</h2>
-        <p className="meta">{mind}</p>
+    <main className="page plan-review">
+      <section className="canvas rv rv-reply" aria-labelledby="saved">
+        <h2 id="saved" className="page-title">
+          Saved for <span className="soft">tomorrow</span>
+        </h2>
+        <blockquote className="rv-mind">{mind}</blockquote>
         {text ? (
           <p className="ai-text">{text}</p>
         ) : waited ? (
@@ -602,7 +706,7 @@ function ReplyStep({
         ) : (
           <p className="meta">…</p>
         )}
-        <div className="row actions">
+        <div className="rv-foot">
           <Button primary onClick={onClose}>
             Good night
           </Button>
