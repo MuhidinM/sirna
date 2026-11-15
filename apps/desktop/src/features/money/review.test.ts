@@ -108,7 +108,11 @@ describe("pay that comes after its month ends", () => {
     // Always paid on the 28th, a few days ahead: each counts for the coming 1st,
     // on any day, at the window's edge too.
     const ahead = ["2026-09-28", "2026-10-28", "2026-11-28"].map((d) => paid(d, "rent", 600_000));
-    expect(on("2026-11-30", ahead)).toEqual([["rent", "2026-11-01", "paid", 0]]);
+    // On Nov 30 tomorrow's date shows too (the toast's day), paid by Nov 28.
+    expect(on("2026-11-30", ahead)).toEqual([
+      ["rent", "2026-11-01", "paid", 0],
+      ["rent", "2026-12-01", "paid", 0],
+    ]);
     expect(on("2026-12-02", ahead)).toEqual([["rent", "2026-12-01", "paid", 0]]);
     // Catching up: two payments on Dec 1 pay December and the missed November.
     expect(
@@ -117,6 +121,12 @@ describe("pay that comes after its month ends", () => {
     expect(on("2026-12-02", [paid("2026-12-01", "rent", 600_000)])).toEqual([
       ["rent", "2026-12-01", "paid", 0],
     ]);
+  });
+
+  it("shows tomorrow's bill on a month's last day, as the toast does (fourth review)", () => {
+    expect(dueWindow("2026-11-30").to).toBe("2026-12-01");
+    expect(dueWindow("2026-11-29").to).toBe("2026-11-30");
+    expect(dueWindow("2026-12-31")).toMatchObject({ to: "2027-01-01", shownFrom: "2026-12-01" });
   });
 
   it("hands a payment to same-day bills by name ignoring case, as bills.rs does", () => {

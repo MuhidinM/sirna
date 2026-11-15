@@ -165,13 +165,18 @@ fn pays_bill(bill: &Bill, txn: &Txn) -> bool {
 /// month), entries from a week before that (so early ones count), to it.
 /// Returns (occurrences from, entries from, to).
 pub fn window(tomorrow: &str) -> (String, String, String) {
-    let month_start = format!("{}-01", &tomorrow[..7.min(tomorrow.len())]);
+    // The Money page's window on the evening before (dueWindow(today) in regulars.ts).
+    let today = shift(tomorrow, -1);
+    let month_start = format!("{}-01", &today[..7.min(today.len())]);
     let last_month = format!("{}-01", &shift(&month_start, -1)[..7]);
     let entries_from = shift(&last_month, -EARLY_DAYS);
-    // To the end of tomorrow's month, as the Money page loads it, so a payment
-    // dated later in the month counts here too.
     let month_end = shift(&format!("{}-01", &shift(&month_start, 31)[..7]), -1);
-    (last_month, entries_from, month_end)
+    let to = if tomorrow > month_end.as_str() {
+        tomorrow.to_string()
+    } else {
+        month_end
+    };
+    (last_month, entries_from, to)
 }
 
 /// Same-day order, shared with regulars.ts: name ignoring case, then exactly, then id.
@@ -661,8 +666,17 @@ mod tests {
             []
         );
         assert_eq!(window("2026-11-20").2, "2026-11-30");
-        assert_eq!(window("2028-02-01").2, "2028-02-29");
-        assert_eq!(window("2026-12-31").2, "2026-12-31");
+        assert_eq!(window("2028-02-29").2, "2028-02-29");
+        // On a month's last day, tomorrow (the 1st) is included, as on the Money page.
+        assert_eq!(
+            window("2026-12-01"),
+            (
+                "2026-10-01".into(),
+                "2026-09-24".into(),
+                "2026-12-01".into()
+            )
+        );
+        assert_eq!(window("2027-01-01").2, "2027-01-01");
     }
 
     #[test]

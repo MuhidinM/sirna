@@ -187,10 +187,12 @@ export function dueWindow(today: string): {
 } {
   const { from, to } = monthOf(today);
   const occurrencesFrom = previousMonthStart(from);
+  // On a month's last day, tomorrow too: the evening bill toast names it and opens this page.
+  const tomorrow = shiftDate(today, 1);
   return {
     from: occurrencesFrom,
     txnFrom: shiftDate(occurrencesFrom, -EARLY_DAYS),
-    to,
+    to: tomorrow > to ? tomorrow : to,
     shownFrom: from,
   };
 }
