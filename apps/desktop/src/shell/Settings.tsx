@@ -521,6 +521,7 @@ function StatusStrip() {
           className={`panel set-stat ${line.ok === false ? "needs" : line.ok ? "fine" : "unset"}`}
         >
           <PanelHead
+            level="p"
             title={
               <>
                 <span className="set-dot" aria-hidden="true" />
@@ -680,7 +681,7 @@ export function Settings() {
                 <StrictMode />
               </div>
               <div className="setting">
-                <h2 className="set-subhead">What was sent</h2>
+                <h3 className="set-subhead">What was sent</h3>
                 <WhatWasSent />
               </div>
             </Section>

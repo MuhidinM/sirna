@@ -2689,6 +2689,7 @@ export function Money() {
           <section className="canvas money-canvas" aria-labelledby="money-title">
             <header className="canvas-head">
               <h1 id="money-title" className="page-title">
+                <span className="visually-hidden">Money: </span>
                 {TITLE_MONTH.format(Date.UTC(year, monthNo - 1, 1))},{" "}
                 <span className="soft">{year}</span>
               </h1>

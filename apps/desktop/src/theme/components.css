@@ -124,7 +124,8 @@ a {
   margin-bottom: var(--space-4);
 }
 
-.panel-head h2 {
+.panel-head h2,
+.panel-head .panel-title {
   margin: 0;
 }
 

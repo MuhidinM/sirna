@@ -44,7 +44,7 @@
   align-items: flex-start;
 }
 
-.page.settings-page .set-stat .panel-head h2 {
+.page.settings-page .set-stat .panel-head .panel-title {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -136,6 +136,11 @@
 /* Wide screens: the side column stays in view while the settings scroll. */
 @media (min-width: 1200px) {
   .page.settings-page .layout-split > .side {
+    align-self: stretch;
+    align-content: start;
+  }
+
+  .page.settings-page .set-jump {
     position: sticky;
     top: 0;
   }

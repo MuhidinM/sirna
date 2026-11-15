@@ -181,7 +181,7 @@ function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
         <div className="goal-amount">
           <strong>{formatAmount(Math.max(0, goal.saved_minor))}</strong>
           <span>
-            {Math.round(share * 100)}% reached · {STAGE_NAMES[stage]}
+            of {formatAmount(target)} · {Math.round(share * 100)}% reached · {STAGE_NAMES[stage]}
           </span>
         </div>
       </div>

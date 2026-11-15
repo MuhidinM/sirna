@@ -15,18 +15,24 @@ export function PanelHead({
   sub,
   action,
   id,
+  level = "h2",
 }: {
   icon?: ReactNode;
   title: ReactNode;
   sub?: ReactNode;
   action?: ReactNode;
   id?: string;
+  /** The title's element: a heading for a section, "p" for a label that isn't one. */
+  level?: "h2" | "h3" | "p";
 }) {
+  const Title = level;
   return (
     <div className="panel-head">
       {icon && <span className="panel-icon">{icon}</span>}
       <div className="grow">
-        <h2 id={id}>{title}</h2>
+        <Title id={id} className="panel-title">
+          {title}
+        </Title>
         {sub && <span className="panel-sub">{sub}</span>}
       </div>
       {action}
