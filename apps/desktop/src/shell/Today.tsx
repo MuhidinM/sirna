@@ -9,9 +9,10 @@ import { splitOps } from "../features/ai/facts";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
-import { stepLabel } from "../features/tasks/list";
+import { statusOps, stepLabel } from "../features/tasks/list";
+import { JOB_TASKS_SQL, type JobTask, listBlockIds, tasksByJob } from "../features/plan/jobs";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
-import { ensureDayPlan } from "../features/plan/dayplan";
+import { ensureDayPlan, shiftDate } from "../features/plan/dayplan";
 import {
   DUE_SQL,
   INBOX_SQL,
@@ -245,6 +246,13 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
     today,
   ]);
   const minuteNow = useMinute();
+  // Each job's tasks under its next block (T-067).
+  const jobTasks = useLiveQuery<JobTask & Record<string, string | number | null>>(JOB_TASKS_SQL, [
+    shiftDate(today, 7),
+  ]);
+  const jobs = useLiveQuery<{ id: string }>(
+    "SELECT id FROM area_items WHERE kind = 'work' AND deleted_at IS NULL",
+  );
   const away = useLiveQuery<{ value_json: string }>(AWAY_SQL);
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
@@ -321,7 +329,15 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
 
       <section aria-labelledby="plan">
         <h2 id="plan">Today&apos;s plan</h2>
-        <Timeline blocks={blocks.rows} nowMs={minuteNow} />
+        <Timeline
+          blocks={blocks.rows}
+          nowMs={minuteNow}
+          jobTasks={tasksByJob(jobTasks.rows)}
+          listUnder={listBlockIds(blocks.rows, new Set(jobs.rows.map((row) => row.id)), minuteNow)}
+          onDone={(task) =>
+            void transact("user", statusOps(task, "done", systemClock.now()), `task:${task.id}`)
+          }
+        />
       </section>
 
       <section aria-labelledby="money">

@@ -157,3 +157,15 @@ Milestone 3 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | T-064 | [#131](https://github.com/MuhidinM/sirna/issues/131) | An advisor: at most two findings a day, each with a button | R-MON-09, R-AI-02  | M    | todo   |
 | T-065 | [#132](https://github.com/MuhidinM/sirna/issues/132) | Can I afford it? Fine, Tight or Not now                    | R-MON-10           | S    | todo   |
 | T-066 | [#133](https://github.com/MuhidinM/sirna/issues/133) | A month review on the first Sunday                         | R-MON-11, R-CHK-04 | M    | todo   |
+
+## M12 — Planning that looks ahead
+
+Milestone 4 of [docs/proposals/money-and-planning.md](proposals/money-and-planning.md).
+
+| ID    | Issue                                                | Task                                                            | Reqs      | Size | Status |
+| ----- | ---------------------------------------------------- | --------------------------------------------------------------- | --------- | ---- | ------ |
+| T-067 | [#139](https://github.com/MuhidinM/sirna/issues/139) | Show each job's tasks inside its blocks, for any number of jobs | R-PLAN-04 | M    | done   |
+| T-068 | [#140](https://github.com/MuhidinM/sirna/issues/140) | Repeating tasks                                                 | R-PLAN-05 | M    | todo   |
+| T-069 | [#141](https://github.com/MuhidinM/sirna/issues/141) | A 7-day preview that flags tasks that will miss their deadline  | R-PLAN-06 | M    | todo   |
+| T-070 | [#142](https://github.com/MuhidinM/sirna/issues/142) | Missed blocks: later today, tomorrow or skip                    | R-PLAN-07 | S    | todo   |
+| T-071 | [#143](https://github.com/MuhidinM/sirna/issues/143) | A shorter sidebar with one Plan page                            | R-UX-01   | S    | todo   |
