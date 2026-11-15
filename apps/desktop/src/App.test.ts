@@ -7,6 +7,7 @@ describe("readPending", () => {
     expect(readPending("review")).toEqual({ screen: "review", notesQuery: "" });
     expect(readPending("notes:git reset")).toEqual({ screen: "notes", notesQuery: "git reset" });
     expect(readPending("notes:")).toEqual({ screen: "notes", notesQuery: "" });
+    expect(readPending("money")).toEqual({ screen: "money", notesQuery: "" });
   });
 
   it("ignores nothing or anything unknown", () => {
