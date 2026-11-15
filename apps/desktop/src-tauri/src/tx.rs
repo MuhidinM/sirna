@@ -221,7 +221,7 @@ pub const TABLES: &[TableSpec] = &[
     TableSpec {
         name: "money_categories",
         id_column: "id",
-        columns: &["name", "kind", "cap_minor"],
+        columns: &["name", "kind", "cap_minor", "cap_since"],
         has_created_at: true,
         soft_delete: true,
         has_user_edited_at: false,

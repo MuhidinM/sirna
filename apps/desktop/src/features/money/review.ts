@@ -27,12 +27,29 @@ export function isFirstSunday(date: string): boolean {
 
 export function monthReview(input: {
   summary: MonthSummary;
-  caps: { id: string; name: string; cap_minor: number }[];
+  caps: { id: string; name: string; cap_minor: number; cap_since?: string | null }[];
   accounts: AccountRow[];
   people: PersonBalance[];
+  /** Your usual month per category, so one you stopped spending on shows too. */
+  usual?: Map<string, number | null>;
+  /** Category names, for the ones with no spending this month. */
+  names?: Map<string, string>;
+  /** The month's last day: a cap that started later doesn't judge it. */
+  monthEnd?: string;
 }): MonthReview {
   const { summary, caps, accounts, people } = input;
-  const changes = summary.categories
+  const lines = new Map(
+    summary.categories.map((line) => [
+      line.id,
+      { name: line.name, spent: line.spent, usual: line.usual },
+    ]),
+  );
+  for (const [id, usual] of input.usual ?? new Map<string, number | null>()) {
+    if (lines.has(id) || id === "" || usual === null || usual <= 0) continue;
+    const name = input.names?.get(id);
+    if (name) lines.set(id, { name, spent: 0, usual });
+  }
+  const changes = [...lines.values()]
     .filter((line) => line.usual !== null)
     .map((line) => ({
       name: line.name,
@@ -45,6 +62,7 @@ export function monthReview(input: {
     .slice(0, 3);
   const spent = new Map(summary.categories.map((line) => [line.id, line.spent]));
   const capsOver = caps
+    .filter((cap) => !input.monthEnd || !cap.cap_since || cap.cap_since <= input.monthEnd)
     .map((cap) => ({ name: cap.name, spent: spent.get(cap.id) ?? 0, cap: cap.cap_minor }))
     .filter((cap) => cap.spent > cap.cap);
   const { total, unknown } = totalBalance(accounts);

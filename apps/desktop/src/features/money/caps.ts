@@ -37,22 +37,30 @@ export function capStatus(spent: Santim, cap: Santim, day: number, days: number)
   };
 }
 
-export function capOps(categoryId: string, cap: Santim | null): Op[] {
-  return [{ op: "update", table: "money_categories", id: categoryId, values: { cap_minor: cap } }];
+/**
+ * Sets or clears a cap. `since` is passed when a category gets its first
+ * cap (the day it starts to apply); raising or lowering one keeps its day.
+ */
+export function capOps(categoryId: string, cap: Santim | null, since?: string): Op[] {
+  const values: Record<string, string | number | null> = { cap_minor: cap };
+  if (cap === null) values.cap_since = null;
+  else if (since) values.cap_since = since;
+  return [{ op: "update", table: "money_categories", id: categoryId, values }];
 }
 
 /** Every suggestion at once, for categories without a cap that have one. */
 export function acceptAllOps(
   categories: { id: string; kind: string; cap_minor: number | null }[],
   usual: Map<string, number | null>,
+  today?: string,
 ): Op[] {
   return categories
     .filter((category) => category.kind === "expense" && category.cap_minor === null)
     .flatMap((category) => {
       const cap = suggestCap(usual.get(category.id));
-      return cap === null ? [] : capOps(category.id, cap);
+      return cap === null ? [] : capOps(category.id, cap, today);
     });
 }
 
-export const CAPS_SQL = `SELECT id, name, cap_minor FROM money_categories
+export const CAPS_SQL = `SELECT id, name, cap_minor, cap_since FROM money_categories
   WHERE deleted_at IS NULL AND kind = 'expense' AND cap_minor IS NOT NULL`;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
@@ -111,10 +111,15 @@ import {
   type Finding,
   findings,
   shownToday,
+  tipFacts,
+  tipOps,
+  TIPS_KEY,
+  tipsToday,
 } from "../features/money/advisor";
 import { type Afford, afford } from "../features/money/afford";
 import { monthReview } from "../features/money/review";
-import { useAsk } from "../features/ai/ask";
+import { ask } from "../features/ai/ask";
+import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { MONEY } from "../features/ai/touchpoints";
 import { Savings } from "./Savings";
 import { Bar, Button } from "./ui";
@@ -145,7 +150,13 @@ function useMonth(month: string, today: string) {
     history: history.rows,
     today: asOf,
   });
-  return { txns, summary, current: to >= today, loading: txns.loading || history.loading };
+  return {
+    txns,
+    summary,
+    usual: usualByCategory(history.rows),
+    current: to >= today,
+    loading: txns.loading || history.loading,
+  };
 }
 
 /** Safe to spend for the month `today` is in (T-062). */
@@ -449,8 +460,17 @@ export function useAdvisor(today: string) {
     "SELECT value_json FROM core_settings WHERE key = ?",
     [DISMISSED_KEY],
   );
+  const hiddenCategories = useLiveQuery<{ id: string }>(
+    "SELECT id FROM money_categories WHERE deleted_at IS NOT NULL",
+  );
   const loading =
-    monthLoading || safeLoading || dueLoading || accounts.loading || caps.loading || hidden.loading;
+    monthLoading ||
+    safeLoading ||
+    dueLoading ||
+    accounts.loading ||
+    caps.loading ||
+    hidden.loading ||
+    hiddenCategories.loading;
   const all = loading
     ? []
     : findings({
@@ -458,6 +478,7 @@ export function useAdvisor(today: string) {
         due: items,
         accounts: accounts.rows,
         caps: caps.rows,
+        hidden: hiddenCategories.rows.map((row) => row.id),
         summary,
         today,
         nowMs: systemClock.now(),
@@ -475,32 +496,65 @@ function FindingCard({
   finding,
   today,
   hiddenJson,
+  tipsJson,
+  strict,
 }: {
   finding: Finding;
   today: string;
   hiddenJson: string | undefined;
+  tipsJson: string | undefined;
+  /** Null until the setting has loaded: nothing is asked before. */
+  strict: boolean | null;
 }) {
-  const tip = useAsk(MONEY, finding.facts);
   const [error, setError] = useState<string | null>(null);
-  const write = (ops: Op[], context: string) =>
-    void transact("user", ops, context).catch((failure: unknown) =>
-      setError(`Couldn't do it: ${message(failure)}`),
-    );
+  const [busy, setBusy] = useState(false);
+  const stored = tipsToday(tipsJson, today)[finding.key];
+  const asked = useRef(false);
+  // One question to Gemini per finding per day; the answer (or that there
+  // was none) is kept, so reopening the window asks nothing.
+  useEffect(() => {
+    if (stored !== undefined || strict === null || asked.current) return;
+    asked.current = true;
+    void ask(MONEY, tipFacts(finding.facts, strict))
+      // Read the saved tips again: another card may have saved one meanwhile.
+      .then((result) =>
+        query<{ value_json: string }>("SELECT value_json FROM core_settings WHERE key = ?", [
+          TIPS_KEY,
+        ]).then(([row]) =>
+          transact(
+            "system",
+            tipOps(row?.value_json, today, finding.key, result.ok ? result.value.tip : ""),
+            "advisor",
+          ),
+        ),
+      );
+  }, [stored, strict, finding, today]);
+  const write = (ops: Op[], context: string) => {
+    // One write at a time: a double click can't move money twice.
+    setBusy(true);
+    void transact("user", ops, context)
+      .catch((failure: unknown) => setError(`Couldn't do it: ${message(failure)}`))
+      .finally(() => setBusy(false));
+  };
   return (
     <li className={finding.rank <= 2 ? "finding urgent" : "finding"}>
       <p>{finding.text}</p>
-      {tip?.tip && <p className="meta">{tip.tip}</p>}
+      {stored && <p className="meta">{stored}</p>}
       <span className="row">
         {finding.actions.map((action) => (
           <Button
             key={action.label}
             primary
+            disabled={busy}
             onClick={() => write(action.ops, `advisor:${finding.key}`)}
           >
             {action.label}
           </Button>
         ))}
-        <Button onClick={() => write(dismissOps(hiddenJson, today, finding.key), "advisor")}>
+        <Button
+          disabled={busy}
+          onClick={() => write(dismissOps(hiddenJson, today, finding.key), "advisor")}
+        >
           Not now
         </Button>
       </span>
@@ -516,13 +570,25 @@ function FindingCard({
 /** The advisor: what needs you about money today, if anything. */
 export function Advisor({ today }: { today: string }) {
   const { shown, hiddenJson, loading } = useAdvisor(today);
-  if (loading || shown.length === 0) return null;
+  const tips = useLiveQuery<{ value_json: string }>(
+    "SELECT value_json FROM core_settings WHERE key = ?",
+    [TIPS_KEY],
+  );
+  const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL));
+  if (loading || tips.loading || shown.length === 0) return null;
   return (
     <section className="card advisor" aria-labelledby="advisor">
       <h2 id="advisor">Worth a look</h2>
       <ul className="plain-list">
         {shown.map((finding) => (
-          <FindingCard key={finding.key} finding={finding} today={today} hiddenJson={hiddenJson} />
+          <FindingCard
+            key={finding.key}
+            finding={finding}
+            today={today}
+            hiddenJson={hiddenJson}
+            tipsJson={tips.rows[0]?.value_json}
+            strict={strict}
+          />
         ))}
       </ul>
     </section>
@@ -602,12 +668,29 @@ function AffordBox({ today, summary }: { today: string; summary: MonthSummary })
 
 /** The month review (T-066): the month that `month` starts, seen from `today`. */
 export function MonthReviewCard({ month, today }: { month: string; today: string }) {
-  const { summary, loading } = useMonth(month, today);
-  const caps = useLiveQuery<{ id: string; name: string; cap_minor: number }>(CAPS_SQL);
+  const { summary, usual, loading } = useMonth(month, today);
+  const caps = useLiveQuery<{
+    id: string;
+    name: string;
+    cap_minor: number;
+    cap_since: string | null;
+  }>(CAPS_SQL);
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const categories = useLiveQuery<{ id: string; name: string }>(
+    "SELECT id, name FROM money_categories",
+  );
   const { people, loading: loansLoading } = useLoans();
-  if (loading || caps.loading || accounts.loading || loansLoading) return null;
-  const review = monthReview({ summary, caps: caps.rows, accounts: accounts.rows, people });
+  if (loading || caps.loading || accounts.loading || loansLoading || categories.loading)
+    return null;
+  const review = monthReview({
+    summary,
+    caps: caps.rows,
+    accounts: accounts.rows,
+    people,
+    usual,
+    names: new Map(categories.rows.map((row) => [row.id, row.name])),
+    monthEnd: monthOf(month).to,
+  });
   if (review.in === 0 && review.out === 0) return null;
   return (
     <section className="card" aria-labelledby="month-review">
@@ -1005,6 +1088,10 @@ function LedgerView({ month, today }: { month: string; today: string }) {
   );
 }
 
+/** A first cap starts today; changing one keeps its start. */
+const capStart = (row: CategoryRow) =>
+  row.cap_minor === null ? logicalDate(systemClock.now()) : undefined;
+
 function CategoryItem({
   row,
   all,
@@ -1019,10 +1106,17 @@ function CategoryItem({
   const suggested = suggestCap(usual);
   const [into, setInto] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** True when saved; an error stays on screen until the next save works. */
   const write = (ops: Op[]) =>
-    transact("user", ops, `category:${row.id}`).catch((failure: unknown) =>
-      setError(`Couldn't change it: ${message(failure)}`),
-    );
+    transact("user", ops, `category:${row.id}`)
+      .then(() => {
+        setError(null);
+        return true;
+      })
+      .catch((failure: unknown) => {
+        setError(`Couldn't change it: ${message(failure)}`);
+        return false;
+      });
   const others = all.filter(
     (other) => other.id !== row.id && other.kind === row.kind && other.deleted_at === null,
   );
@@ -1040,7 +1134,7 @@ function CategoryItem({
             onClick={() => {
               const problem = checkCategoryName(name, all, row.id);
               if (problem) setError(problem);
-              else void write(renameCategoryOps(row.id, name)).then(() => setError(null));
+              else void write(renameCategoryOps(row.id, name));
             }}
           >
             Rename
@@ -1104,14 +1198,17 @@ function CategoryItem({
               onClick={() => {
                 const minor = parseAmount(capText);
                 if (minor === null || minor <= 0) setError("A cap like 4,000.");
-                else void write(capOps(row.id, minor)).then(() => setCapText(""));
+                else
+                  void write(capOps(row.id, minor, capStart(row))).then((saved) => {
+                    if (saved) setCapText("");
+                  });
               }}
             >
               Set cap
             </Button>
           )}
           {!capText.trim() && suggested !== null && suggested !== row.cap_minor && (
-            <Button onClick={() => void write(capOps(row.id, suggested))}>
+            <Button onClick={() => void write(capOps(row.id, suggested, capStart(row)))}>
               Use {birr(suggested)} (your usual)
             </Button>
           )}
@@ -1141,6 +1238,7 @@ function CategoriesView({ today }: { today: string }) {
   const suggestions = acceptAllOps(
     all.rows.filter((row) => row.deleted_at === null),
     usual,
+    today,
   );
   const [name, setName] = useState("");
   const [kind, setKind] = useState<CategoryRow["kind"]>("expense");
