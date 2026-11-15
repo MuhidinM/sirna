@@ -40,6 +40,9 @@ import { entryOps, type GoalRow, GOALS_SQL, WEEK_SAVED_SQL } from "../features/s
 import { shiftDate } from "../features/plan/dayplan";
 import { weekSummary } from "../features/dashboard/insights";
 import { InsightList } from "./Insights";
+import { MonthReviewCard } from "./Money";
+import { isFirstSunday } from "../features/money/review";
+import { previousMonthStart } from "../features/money/money";
 import { type AreaColor, Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -424,6 +427,8 @@ export function WeekCard() {
           ))}
         </ul>
       </section>
+
+      {isFirstSunday(today) && <MonthReviewCard month={previousMonthStart(today)} today={today} />}
 
       <section className="card" aria-labelledby="money">
         <h2 id="money">Money</h2>
