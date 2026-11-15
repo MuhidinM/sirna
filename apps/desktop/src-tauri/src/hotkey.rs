@@ -1,7 +1,7 @@
 //! The global capture hotkey (plan §3.5), acting on key press only.
 //!
-//! Ctrl+Alt+Space is the first choice, but another app may already own it
-//! (on the development machine it is taken). Sirna then tries the next
+//! Ctrl+Alt+J is the first choice (Ctrl+Alt+Space belongs to the Claude
+//! app; decision 0004). If another app owns a key, Sirna tries the next
 //! candidate and shows whichever one works in the tray tooltip. A key saved in
 //! the `capture.hotkey` setting (e.g. "Ctrl+Alt+K") is tried before them all.
 
@@ -14,12 +14,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 use crate::windows;
 
 /// Tried in order; the first one Windows accepts becomes the capture hotkey.
-pub const CANDIDATES: [(Modifiers, Code, &str); 3] = [
-    (
-        Modifiers::CONTROL.union(Modifiers::ALT),
-        Code::Space,
-        "Ctrl+Alt+Space",
-    ),
+pub const CANDIDATES: [(Modifiers, Code, &str); 2] = [
     (
         Modifiers::CONTROL.union(Modifiers::ALT),
         Code::KeyJ,

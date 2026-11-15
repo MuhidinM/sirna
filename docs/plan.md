@@ -35,7 +35,7 @@ How to read this: §0 is all you need to start. Everything after it is reference
 
 | Moment | Trigger | You do | Time |
 |---|---|---|---|
-| Capture | Ctrl+Alt+Space | Type one line, Enter | 5 s |
+| Capture | Ctrl+Alt+J | Type one line, Enter | 5 s |
 | Morning brief | First unlock after wake time | Read today's blocks and top 3, Enter = "Start my day" | 1 min |
 | Block starts | Toast: "Coding · 45 min · first step: …" [Start focus] [Move] [Skip] | One tap | 2 s |
 | Focus | Timer in the tray: 25 min work / 5 min break, long break after 4 | Work; the app calls the breaks | — |
@@ -181,7 +181,7 @@ From M4 Gemini may add one line in a fixed slot under the numbers, e.g. "Job hun
 
 ### 3.5 Capture
 
-**Trigger.** Ctrl+Alt+Space (configurable). Enter saves at once. The box shows the echo for 1.5 s, then hides. Up arrow recalls the last capture to edit; Ctrl+Z undoes it; the tray shows "Last: … · Undo".
+**Trigger.** Ctrl+Alt+J (configurable; Ctrl+Alt+Space belongs to the Claude app). Enter saves at once. The box shows the echo for 1.5 s, then hides. Up arrow recalls the last capture to edit; Ctrl+Z undoes it; the tray shows "Last: … · Undo".
 
 | You type | Saved as | Echo |
 |---|---|---|
