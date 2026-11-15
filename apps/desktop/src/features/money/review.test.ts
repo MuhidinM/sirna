@@ -72,8 +72,8 @@ describe("pay that comes after its month ends", () => {
     const paid = (date: string, what: string, minor: number) =>
       txn({ amount_minor: -minor, local_date: date, description: what });
     // November's paid 5 days early (Nov 20), December's on Dec 20: nothing is due.
-    let w = dueWindow("2026-12-24");
-    let items = dueItems(
+    const w = dueWindow("2026-12-24");
+    const items = dueItems(
       [internet],
       [paid("2026-11-20", "internet", 120_000), paid("2026-12-20", "internet", 120_000)],
       w.from,
@@ -84,7 +84,6 @@ describe("pay that comes after its month ends", () => {
     expect(view(items)).toEqual([["net", "2026-12-25", "paid", 0]]);
     expect(w.txnFrom <= "2026-11-20").toBe(true);
 
-    // November's rent paid late on Nov 25 doesn't pay December's.
     const rent = regular({
       id: "rent",
       kind: "bill",
@@ -94,16 +93,30 @@ describe("pay that comes after its month ends", () => {
       category_id: "cat_housing",
       area_id: null,
     });
-    w = dueWindow("2026-12-01");
-    items = dueItems(
-      [rent],
-      [paid("2026-11-25", "rent", 600_000)],
-      w.from,
-      w.to,
-      "2026-12-01",
-      w.shownFrom,
-    );
-    expect(view(items)).toEqual([["rent", "2026-12-01", "due", 600_000]]);
+    const on = (today: string, entries: RegularTxn[]) => {
+      const win = dueWindow(today);
+      return view(dueItems([rent], entries, win.from, win.to, today, win.shownFrom));
+    };
+    // October never recorded: November's payment still pays November (second review).
+    expect(on("2026-11-15", [paid("2026-11-01", "rent", 600_000)])).toEqual([
+      ["rent", "2026-11-01", "paid", 0],
+    ]);
+    // Paid 11 days late: too early for December, so it is November's.
+    expect(on("2026-12-02", [paid("2026-11-12", "rent", 600_000)])).toEqual([
+      ["rent", "2026-12-01", "late", 600_000],
+    ]);
+    // Always paid on the 28th, a few days ahead: each counts for the coming 1st,
+    // on any day, at the window's edge too.
+    const ahead = ["2026-09-28", "2026-10-28", "2026-11-28"].map((d) => paid(d, "rent", 600_000));
+    expect(on("2026-11-30", ahead)).toEqual([["rent", "2026-11-01", "paid", 0]]);
+    expect(on("2026-12-02", ahead)).toEqual([["rent", "2026-12-01", "paid", 0]]);
+    // Catching up: two payments on Dec 1 pay December and the missed November.
+    expect(
+      on("2026-12-02", [paid("2026-12-01", "rent", 600_000), paid("2026-12-01", "rent", 600_000)]),
+    ).toEqual([["rent", "2026-12-01", "paid", 0]]);
+    expect(on("2026-12-02", [paid("2026-12-01", "rent", 600_000)])).toEqual([
+      ["rent", "2026-12-01", "paid", 0],
+    ]);
   });
 
   it("hands a payment to same-day bills by name ignoring case, as bills.rs does", () => {
@@ -127,6 +140,30 @@ describe("pay that comes after its month ends", () => {
     expect(view(items)).toEqual([
       ["iddir", "2026-12-05", "paid", 0],
       ["net", "2026-12-05", "upcoming", 20_000],
+    ]);
+  });
+
+  it("hands a payment to same-named bills by id, as bills.rs does", () => {
+    const iddir = (id: string, minor: number) =>
+      regular({
+        id,
+        kind: "bill",
+        name: "Iddir",
+        amount_minor: minor,
+        rule_json: JSON.stringify({ every: "month", day: 5 }),
+        category_id: "cat_utilities",
+        area_id: null,
+      });
+    const items = dueItems(
+      [iddir("iddir_b", 30_000), iddir("iddir_a", 20_000)],
+      [txn({ amount_minor: -20_000, local_date: "2026-12-03", description: "iddir" })],
+      "2026-12-01",
+      "2026-12-31",
+      "2026-12-04",
+    );
+    expect(view(items)).toEqual([
+      ["iddir_a", "2026-12-05", "paid", 0],
+      ["iddir_b", "2026-12-05", "upcoming", 30_000],
     ]);
   });
 

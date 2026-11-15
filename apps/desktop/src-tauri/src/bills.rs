@@ -171,24 +171,29 @@ pub fn window(tomorrow: &str) -> (String, String, String) {
     (last_month, entries_from, tomorrow.to_string())
 }
 
-/// Same-day bills in the same order as regulars.ts: by name ignoring case, then exactly.
-fn by_name(a: &str, b: &str) -> std::cmp::Ordering {
-    a.to_lowercase()
-        .cmp(&b.to_lowercase())
-        .then_with(|| a.cmp(b))
+/// Same-day order, shared with regulars.ts: name ignoring case, then exactly, then id.
+fn by_name(a: &Bill, b: &Bill) -> std::cmp::Ordering {
+    a.name
+        .to_lowercase()
+        .cmp(&b.name.to_lowercase())
+        .then_with(|| a.name.cmp(&b.name))
+        .then_with(|| a.id.cmp(&b.id))
 }
 
 /// Bills due on `tomorrow` that aren't paid yet, with what is left of each.
-/// Payments are handed out in date order to the oldest open date they fit,
-/// as on the Money page, so paying last month's late rent doesn't count for
-/// tomorrow's.
+/// The matching is `dueItems` in regulars.ts: an entry that fits counts for
+/// the due date it is nearest to, from EARLY_DAYS before it until the next
+/// due date, and what is left over catches up the oldest open date it could
+/// pay.
 pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String, i64)> {
     struct Item<'a> {
         bill: &'a Bill,
         date: String,
+        next: Option<String>,
         done: i64,
     }
     let (from, _, to) = window(tomorrow);
+    let until = shift(&to, EARLY_DAYS);
     let mut items: Vec<Item> = Vec::new();
     for bill in bills {
         let Some(rule) = read_rule(&bill.rule_json) else {
@@ -199,7 +204,8 @@ pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String
         } else {
             from.clone()
         };
-        for date in occurrences(&rule, &start, &to) {
+        let dates = occurrences(&rule, &start, &until);
+        for (index, date) in dates.iter().enumerate() {
             let done = txns
                 .iter()
                 .filter(|txn| {
@@ -208,30 +214,53 @@ pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String
                 })
                 .map(|txn| txn.amount.abs())
                 .sum();
-            items.push(Item { bill, date, done });
+            items.push(Item {
+                bill,
+                date: date.clone(),
+                next: dates.get(index + 1).cloned(),
+                done,
+            });
         }
     }
-    items.sort_by(|a, b| {
-        a.date
-            .cmp(&b.date)
-            .then_with(|| by_name(&a.bill.name, &b.bill.name))
-    });
+    items.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| by_name(a.bill, b.bill)));
     let open = |item: &Item| (item.bill.amount - item.done).max(0);
+    let gap = |a: &str, b: &str| match (day_number(a), day_number(b)) {
+        (Some(x), Some(y)) => (y - x).abs(),
+        _ => i64::MAX,
+    };
 
     let mut free: Vec<&Txn> = txns.iter().filter(|txn| txn.regular_id.is_none()).collect();
     free.sort_by(|a, b| a.local_date.cmp(&b.local_date));
     for txn in free {
+        let day = txn.local_date.as_str();
+        let candidates: Vec<usize> = (0..items.len())
+            .filter(|&i| {
+                shift(&items[i].date, -EARLY_DAYS).as_str() <= day && pays_bill(items[i].bill, txn)
+            })
+            .collect();
+        // The date it is for: the nearest one, up to the next due date.
+        let nearest = candidates
+            .iter()
+            .copied()
+            .filter(|&i| items[i].next.as_deref().is_none_or(|next| day < next))
+            .min_by(|&a, &b| {
+                gap(day, &items[a].date)
+                    .cmp(&gap(day, &items[b].date))
+                    .then_with(|| items[a].date.cmp(&items[b].date))
+                    .then_with(|| by_name(items[a].bill, items[b].bill))
+            });
+        // Anything left over catches up the oldest dates still open.
+        let order: Vec<usize> = nearest
+            .into_iter()
+            .chain(candidates.iter().copied().filter(|&i| Some(i) != nearest))
+            .collect();
         let mut amount = txn.amount.abs();
-        let latest = shift(&txn.local_date, EARLY_DAYS);
-        for item in &mut items {
+        for i in order {
             if amount == 0 {
                 break;
             }
-            if item.date > latest || open(item) == 0 || !pays_bill(item.bill, txn) {
-                continue;
-            }
-            let take = open(item).min(amount);
-            item.done += take;
+            let take = open(&items[i]).min(amount);
+            items[i].done += take;
             amount -= take;
         }
     }
@@ -444,11 +473,13 @@ mod tests {
 
     #[test]
     fn paid_ones_are_left_out() {
-        // Added in mid-November, so November's 1st isn't asked about.
-        let bills = [Bill {
-            since: "2026-11-15".into(),
-            ..bill("rent", "Rent", 600_000, r#"{"every":"month","day":1}"#)
-        }];
+        // Added long ago, with November never recorded (second review).
+        let bills = [bill(
+            "rent",
+            "Rent",
+            600_000,
+            r#"{"every":"month","day":1}"#,
+        )];
         // Marked as paying that date.
         let marked = Txn {
             regular_id: Some("rent".into()),
@@ -486,25 +517,25 @@ mod tests {
     }
 
     #[test]
-    fn paying_a_late_bill_does_not_count_for_tomorrow() {
+    fn a_payment_counts_for_the_nearest_date() {
         let bills = [bill(
             "net",
             "Internet",
             120_000,
             r#"{"every":"month","day":25}"#,
         )];
-        // November's 25th went unpaid; one payment on Dec 20 settles that first.
+        // November's 25th went unpaid; Dec 20 is nearest to Dec 25, so that is paid.
         let txns = [spend("2026-12-20", 120_000, "internet")];
+        assert_eq!(due_tomorrow(&bills, &txns, "2026-12-25"), []);
+        // Paid 10 days late: too early for December's date, so it is November's.
         assert_eq!(
-            due_tomorrow(&bills, &txns, "2026-12-25"),
+            due_tomorrow(
+                &bills,
+                &[spend("2026-12-05", 120_000, "internet")],
+                "2026-12-25"
+            ),
             [("Internet".to_string(), 120_000)]
         );
-        // A bill added after November's date only asks about December.
-        let added = Bill {
-            since: "2026-12-01".into(),
-            ..bills[0].clone()
-        };
-        assert_eq!(due_tomorrow(&[added], &txns, "2026-12-25"), []);
     }
 
     /// The same cases as review.test.ts (leftovers review).
@@ -516,18 +547,30 @@ mod tests {
             spend("2026-12-20", 120_000, "internet"),
         ];
         assert_eq!(due_tomorrow(&[internet], &txns, "2026-12-25"), []);
-        let (_, entries_from, _) = window("2026-12-25");
-        assert!(entries_from.as_str() <= "2026-11-20");
 
-        let rent = bill("rent", "Rent", 600_000, r#"{"every":"month","day":1}"#);
+        let rent = [bill(
+            "rent",
+            "Rent",
+            600_000,
+            r#"{"every":"month","day":1}"#,
+        )];
+        // November never recorded: a payment on Nov 29 is December's.
         assert_eq!(
-            due_tomorrow(
-                &[rent],
-                &[spend("2026-11-25", 600_000, "rent")],
-                "2026-12-01"
-            ),
+            due_tomorrow(&rent, &[spend("2026-11-29", 600_000, "rent")], "2026-12-01"),
+            []
+        );
+        // 11 days late is November's, so December's is still to pay.
+        assert_eq!(
+            due_tomorrow(&rent, &[spend("2026-11-12", 600_000, "rent")], "2026-12-01"),
             [("Rent".to_string(), 600_000)]
         );
+        // Always on the 28th, a few days ahead: no toast, at the window's edge too.
+        let ahead: Vec<Txn> = ["2026-09-28", "2026-10-28", "2026-11-28"]
+            .iter()
+            .map(|d| spend(d, 600_000, "rent"))
+            .collect();
+        assert_eq!(due_tomorrow(&rent, &ahead, "2026-12-01"), []);
+        assert_eq!(due_tomorrow(&rent, &ahead[..2], "2026-11-01"), []);
     }
 
     #[test]
@@ -551,6 +594,22 @@ mod tests {
     }
 
     #[test]
+    fn bills_with_the_same_name_go_by_id() {
+        let mut a = bill("iddir_a", "Iddir", 20_000, r#"{"every":"month","day":5}"#);
+        let mut b = bill("iddir_b", "Iddir", 30_000, r#"{"every":"month","day":5}"#);
+        a.since = "2026-12-01".into();
+        b.since = "2026-12-01".into();
+        assert_eq!(
+            due_tomorrow(
+                &[b, a],
+                &[spend("2026-12-03", 20_000, "iddir")],
+                "2026-12-05"
+            ),
+            [("Iddir".to_string(), 30_000)]
+        );
+    }
+
+    #[test]
     fn formats_birr_like_the_window() {
         assert_eq!(format_amount(600_000), "6,000 ETB");
         assert_eq!(format_amount(125_050), "1,250.50 ETB");
@@ -569,7 +628,7 @@ mod tests {
         migrate::run(&mut conn, migrate::MIGRATIONS, 0).expect("migrate");
         conn.execute_batch(
             "INSERT INTO money_regulars (id, kind, name, amount_minor, rule_json, account, created_at, updated_at)
-               VALUES ('rent', 'bill', 'Rent', 600000, '{\"every\":\"month\",\"day\":1}', 'cbo', 1794722400000, 0), -- added 2026-11-15
+               VALUES ('rent', 'bill', 'Rent', 600000, '{\"every\":\"month\",\"day\":1}', 'cbo', 0, 0),
                       ('pay', 'pay', 'Job A', 1800000, '{\"every\":\"month\",\"day\":1}', 'cbo', 0, 0),
                       ('old', 'bill', 'Gym', 50000, '{\"every\":\"month\",\"day\":1}', 'cash', 0, 0);
              UPDATE money_regulars SET active = 0 WHERE id = 'old';",

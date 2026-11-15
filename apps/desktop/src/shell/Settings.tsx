@@ -367,14 +367,18 @@ function AiSetup() {
   );
   useEffect(() => {
     void refresh();
+    // A key saved or removed above.
+    const again = () => void refresh();
+    window.addEventListener(AI_CHANGED_EVENT, again);
+    return () => window.removeEventListener(AI_CHANGED_EVENT, again);
   }, [refresh]);
   if (!usage) return null;
   const save = (ops: ReturnType<typeof setting>[], done: string) =>
     transact("user", ops, "settings")
       .then(() => {
         setNote(done);
+        // Both this section and the status strip read it again.
         window.dispatchEvent(new Event(AI_CHANGED_EVENT));
-        return refresh();
       })
       .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
   return (
@@ -480,9 +484,14 @@ function StatusStrip() {
         .then(setAi)
         .catch(() => setAi(null));
     read();
-    // A key saved, or a model or limit picked, further down this page.
+    // A key saved, or a model or limit picked, further down this page; and
+    // once a minute, so the limit line clears when the count resets.
     window.addEventListener(AI_CHANGED_EVENT, read);
-    return () => window.removeEventListener(AI_CHANGED_EVENT, read);
+    const timer = window.setInterval(read, 60_000);
+    return () => {
+      window.removeEventListener(AI_CHANGED_EVENT, read);
+      window.clearInterval(timer);
+    };
   }, []);
   if (sync.loading || backup.loading) return null;
   const lines = statusLines({

@@ -760,7 +760,25 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
     [from, to, nowMs],
   );
   const pay = useLiveQuery<{ area_id: string; minor: number }>(JOB_PAY_SQL, [from, to]);
-  if (minutes.loading || pay.loading || minutes.rows.length === 0) return null;
+  // This month's hours, only to say why there is nothing yet in your first month.
+  const thisMonth = monthOf(month);
+  const current = useLiveQuery<{ area_id: string }>(JOB_MINUTES_SQL, [
+    thisMonth.from,
+    thisMonth.to,
+    nowMs,
+  ]);
+  if (minutes.loading || pay.loading || current.loading) return null;
+  if (minutes.rows.length === 0) {
+    if (!running || current.rows.length === 0) return null;
+    return (
+      <section className="card" aria-labelledby="job-rates">
+        <h2 id="job-rates">Your jobs</h2>
+        <p className="meta">
+          Birr per hour shows once {monthLabel(thisMonth.key)} is over, so both pay days are in.
+        </p>
+      </section>
+    );
+  }
   const rates = jobRates(minutes.rows, pay.rows);
   return (
     <section className="card" aria-labelledby="job-rates">

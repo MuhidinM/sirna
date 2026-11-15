@@ -211,14 +211,39 @@ export function paysBill(
   );
 }
 
+/** Compares by Unicode code points, as Rust compares strings (not UTF-16 units, not locale). */
+export function compareCodePoints(x: string, y: string): number {
+  const a = Array.from(x, (c) => c.codePointAt(0) ?? 0);
+  const b = Array.from(y, (c) => c.codePointAt(0) ?? 0);
+  for (let i = 0; i < Math.min(a.length, b.length); i++)
+    if (a[i] !== b[i]) return (a[i] ?? 0) - (b[i] ?? 0);
+  return a.length - b.length;
+}
+
+/** Same-day order, shared with bills.rs: name ignoring case, then exactly, then id. */
+function compareRegulars(a: RegularRow, b: RegularRow): number {
+  return (
+    compareCodePoints(a.name.toLowerCase(), b.name.toLowerCase()) ||
+    compareCodePoints(a.name, b.name) ||
+    compareCodePoints(a.id, b.id)
+  );
+}
+
+const daysBetween = (a: string, b: string) =>
+  Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+
 /**
  * Each occurrence from `from` to `to` and where it stands. Entries marked
- * with a regular settle that occurrence. Other entries are handed out in date
- * order to the oldest open occurrence they fit (pay: income from that job;
- * bills: spending that names the bill or matches its category and amount),
- * so late pay that comes next month settles last month's date, and two pay
- * days from one job are filled in order. Items before `shownFrom` are kept
- * only while still open.
+ * with a regular settle that occurrence. Any other entry that fits (pay:
+ * income from that job; bills: spending that names the bill or matches its
+ * category and amount) counts for the due date it is nearest to, from
+ * EARLY_DAYS before it until the next due date; what is left over (catching
+ * up) goes to the oldest open date it could pay. So pay that comes late settles last
+ * month's date, rent paid a few days early counts for the coming date, and
+ * a month you never recorded doesn't take the next month's payment. Dates
+ * up to EARLY_DAYS after `to` are worked out too, so an early payment at the
+ * end of a month counts the same on every day. Items before `shownFrom` are
+ * kept only while still open and within LOOK_BACK_DAYS of it.
  */
 export function dueItems(
   regulars: RegularRow[],
@@ -228,46 +253,62 @@ export function dueItems(
   today: string,
   shownFrom: string = from,
 ): DueItem[] {
-  const items: DueItem[] = [];
+  type Work = DueItem & { next: string | null };
+  const items: Work[] = [];
+  const until = shiftDate(to, EARLY_DAYS);
   for (const regular of regulars) {
     if (regular.active !== 1) continue;
     const rule = readRule(regular.rule_json);
     if (!rule) continue;
     // Occurrences before you added it are not yours to settle now.
     const since = regular.created_at > 0 ? logicalDate(regular.created_at) : from;
-    for (const date of occurrences(rule, from > since ? from : since, to)) {
+    const dates = occurrences(rule, from > since ? from : since, until);
+    dates.forEach((date, index) => {
       const done = txns
         .filter((txn) => txn.regular_id === regular.id && txn.due_date === date)
         .reduce((sum, txn) => sum + Math.abs(txn.amount_minor), 0);
-      items.push({ regular, date, state: "upcoming", done, left: 0 });
-    }
+      items.push({
+        regular,
+        date,
+        state: "upcoming",
+        done,
+        left: 0,
+        next: dates[index + 1] ?? null,
+      });
+    });
   }
-  // By name ignoring case, then exactly (code points, not locale), as bills.rs does.
-  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
-  items.sort(
-    (a, b) =>
-      cmp(a.date, b.date) ||
-      cmp(a.regular.name.toLowerCase(), b.regular.name.toLowerCase()) ||
-      cmp(a.regular.name, b.regular.name),
-  );
+  items.sort((a, b) => compareCodePoints(a.date, b.date) || compareRegulars(a.regular, b.regular));
   const open = (item: DueItem) => Math.max(0, item.regular.amount_minor - item.done);
 
   const free = txns
     .filter((txn) => txn.regular_id === null)
-    .sort((a, b) => a.local_date.localeCompare(b.local_date));
+    .sort((a, b) => compareCodePoints(a.local_date, b.local_date));
   for (const txn of free) {
+    const day = txn.local_date;
+    const fits = (item: Work) =>
+      shiftDate(item.date, -EARLY_DAYS) <= day &&
+      (item.regular.kind === "pay"
+        ? txn.amount_minor > 0 &&
+          item.regular.area_id !== null &&
+          txn.area_id === item.regular.area_id
+        : paysBill(item.regular, txn));
+    const candidates = items.filter(fits);
+    // The date it is for: the nearest one, up to the next due date.
+    const nearest = candidates
+      .filter((item) => item.next === null || day < item.next)
+      .sort(
+        (a, b) =>
+          Math.abs(daysBetween(day, a.date)) - Math.abs(daysBetween(day, b.date)) ||
+          compareCodePoints(a.date, b.date) ||
+          compareRegulars(a.regular, b.regular),
+      )[0];
+    // Anything left over catches up the oldest dates still open.
+    const order = nearest
+      ? [nearest, ...candidates.filter((item) => item !== nearest)]
+      : candidates;
     let amount = Math.abs(txn.amount_minor);
-    const latest = shiftDate(txn.local_date, EARLY_DAYS);
-    for (const item of items) {
+    for (const item of order) {
       if (amount === 0) break;
-      if (item.date > latest || open(item) === 0) continue;
-      const fits =
-        item.regular.kind === "pay"
-          ? txn.amount_minor > 0 &&
-            item.regular.area_id !== null &&
-            txn.area_id === item.regular.area_id
-          : paysBill(item.regular, txn);
-      if (!fits) continue;
       const take = Math.min(open(item), amount);
       item.done += take;
       amount -= take;
@@ -275,7 +316,8 @@ export function dueItems(
   }
 
   return items
-    .map((item) => {
+    .filter((item) => item.date <= to)
+    .map(({ next: _next, ...item }) => {
       const left = open(item);
       const grace = item.regular.kind === "pay" ? PAY_GRACE_DAYS : 0;
       const state: DueState =
