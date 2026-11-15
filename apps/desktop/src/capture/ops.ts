@@ -105,6 +105,9 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
       return [moneyOp(parsed, nowMs, newId())];
     case "money":
       return parsed.items.map((item) => moneyOp(item, nowMs, newId()));
+    case "afford":
+      // A question: the line is kept as typed, nothing else is written.
+      return [];
     case "loan":
       return loanOps({
         person: parsed.person,
@@ -233,6 +236,8 @@ export function echo(
     }
     case "transfer":
       return `Moved ${formatAmount(parsed.amount)} · ${parsed.fromName} → ${parsed.toName}`;
+    case "afford":
+      return "Checking…";
     case "loan":
       return `${loanEchoText(parsed.loanKind, parsed.person, parsed.amount, null)}${
         parsed.accountName && parsed.account !== "cash" ? ` · ${parsed.accountName}` : ""
