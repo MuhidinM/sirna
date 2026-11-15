@@ -23,4 +23,5 @@ Thumbs.db
 !.vscode/extensions.json
 .idea/
 apps/desktop/evals/last-run.json
-apps/desktop/public/__ref/
+# Dev-only preview data (scripts/preview-db.mjs); outside public/ so builds never copy it.
+apps/desktop/dev-data/

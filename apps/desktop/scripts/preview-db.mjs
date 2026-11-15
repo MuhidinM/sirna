@@ -1,4 +1,4 @@
-// Builds public/__ref/sirna.db for the browser preview (src/dev/tauriPreview.ts):
+// Builds dev-data/sirna.db for the browser preview (src/dev/tauriPreview.ts):
 // a copy of a backup (or an empty database), all migrations, and demo data
 // dated around today so every page has something to show. Never committed.
 //
@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-const OUT = "public/__ref/sirna.db";
+const OUT = "dev-data/sirna.db";
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.rmSync(OUT, { force: true });
 if (process.argv[2]) fs.copyFileSync(process.argv[2], OUT);
