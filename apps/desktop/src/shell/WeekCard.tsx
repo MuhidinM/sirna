@@ -42,6 +42,7 @@ import { weekSummary } from "../features/dashboard/insights";
 import { InsightList } from "./Insights";
 import { MonthReviewCard } from "./Money";
 import { WeekPreview } from "./WeekPreview";
+import { WeekAhead } from "./WeekAhead";
 import { isFirstSunday } from "../features/money/review";
 import { previousMonthStart } from "../features/money/money";
 import { type AreaColor, Bar, Button } from "./ui";
@@ -321,6 +322,7 @@ export function WeekCard() {
         </p>
       )}
 
+      <WeekAhead today={today} />
       <WeekPreview today={today} />
 
       <section className="card" aria-labelledby="time">

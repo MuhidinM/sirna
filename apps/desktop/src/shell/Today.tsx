@@ -13,7 +13,8 @@ import { statusOps, stepLabel } from "../features/tasks/list";
 import { JOB_TASKS_SQL, type JobTask, listBlockIds, tasksByJob } from "../features/plan/jobs";
 import { ensureRepeats } from "../features/tasks/repeat";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
-import { ensureDayPlan, shiftDate } from "../features/plan/dayplan";
+import { ensureDayPlan, shiftDate, weekStart } from "../features/plan/dayplan";
+import { useWeekOutcomes } from "./WeekAhead";
 import {
   DUE_SQL,
   INBOX_SQL,
@@ -293,6 +294,8 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
       {focus && focus.kind !== null && <FocusPanel status={focus} />}
       <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
 
+      <WeekOutcomes monday={weekStart(today)} />
+
       <section aria-labelledby="top3">
         <h2 id="top3">Top 3</h2>
         {top.rows.length === 0 && !top.loading ? (
@@ -365,5 +368,21 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
         </section>
       )}
     </main>
+  );
+}
+
+/** The week's outcomes from the Sunday step (T-076); nothing when none are set. */
+function WeekOutcomes({ monday }: { monday: string }) {
+  const outcomes = useWeekOutcomes(monday);
+  if (!outcomes || outcomes.length === 0) return null;
+  return (
+    <section aria-labelledby="week-outcomes" className="week-outcomes">
+      <h2 id="week-outcomes">This week</h2>
+      <ol className="outcomes">
+        {outcomes.map((outcome) => (
+          <li key={outcome}>{outcome}</li>
+        ))}
+      </ol>
+    </section>
   );
 }
