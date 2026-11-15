@@ -1199,3 +1199,28 @@ input[type="number"] {
 .plan-tabs {
   padding: var(--space-4) var(--space-6) 0;
 }
+
+/* Settings status strip (T-075) */
+.status-strip {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.status-strip li {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--border);
+  background: var(--surface-1);
+}
+.status-strip li.fine {
+  border-left-color: var(--success, var(--accent));
+}
+.status-strip li.needs {
+  border-left-color: var(--warning);
+}
+.status-strip li strong {
+  display: inline-block;
+  min-width: 5.5rem;
+}

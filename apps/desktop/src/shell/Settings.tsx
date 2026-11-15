@@ -18,6 +18,9 @@ import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
+import { BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
+import { SYNC_SQL } from "../features/calendar/sync";
+import { logicalDate } from "../kernel/dates";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -464,6 +467,38 @@ function WhatWasSent() {
   );
 }
 
+/** One line each for Calendar, AI and Backups: fine, needs you, or not set up (T-075). */
+function StatusStrip() {
+  const sync = useLiveQuery<{ value_json: string | null }>(SYNC_SQL);
+  const backup = useLiveQuery<{ value_json: string | null }>(BACKUP_LAST_SQL);
+  const [ai, setAi] = useState<AiUsage | null>(null);
+  useEffect(() => {
+    invoke<AiUsage>("ai_usage")
+      .then(setAi)
+      .catch(() => setAi(null));
+  }, []);
+  if (sync.loading || backup.loading) return null;
+  const lines = statusLines({
+    syncJson: sync.rows[0]?.value_json,
+    ai,
+    backupJson: backup.rows[0]?.value_json,
+    today: logicalDate(systemClock.now()),
+  });
+  return (
+    <ul className="status-strip" aria-label="Status">
+      {lines.map((line) => (
+        <li key={line.name} className={line.ok === false ? "needs" : line.ok ? "fine" : "unset"}>
+          <strong>{line.name}</strong>{" "}
+          <span>
+            {line.ok === false ? "Needs you: " : ""}
+            {line.text}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Keys, links and preferences, all changeable here (nothing is built in). */
 export function Settings() {
   const settings = useLiveQuery<{ key: string; value_json: string | null }>(SETTINGS_SQL);
@@ -476,6 +511,7 @@ export function Settings() {
           are never shown again once saved. Replace or remove them here at any time.
         </p>
       </header>
+      <StatusStrip />
 
       <section className="card">
         <h2>Keys and links</h2>

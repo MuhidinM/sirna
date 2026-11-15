@@ -12,4 +12,4 @@ for task in sys.argv[1:]:
     pattern = re.compile(rf"^(\| {re.escape(task)} \|.*\|\s*)todo(\s*\|)\s*$", re.M)
     text, count = pattern.subn(r"\1done\2", text)
     print(f"{task}: {'done' if count else 'not found or already done'}")
-open(PATH, "w", encoding="utf-8").write(text)
+open(PATH, "w", encoding="utf-8", newline="\n").write(text)
