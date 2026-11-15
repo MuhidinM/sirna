@@ -27,6 +27,8 @@ export type Parsed =
   | MoneyItem
   /** Several entries on one line: `lunch 120, taxi 40`. */
   | { kind: "money"; items: MoneyItem[] }
+  /** A question, not a record (T-074): `afford 4500 shoes`. Nothing is written. */
+  | { kind: "afford"; amount: Santim; what?: string }
   /** Money lent or owed (T-061): `lent 1000 abel`, `abel paid back 400`. */
   | {
       kind: "loan";
@@ -127,6 +129,10 @@ function readAccount(text: string, accounts: AccountOption[]) {
     .trim();
   return { rest, account };
 }
+
+/** `afford 4500 shoes`, `can i afford 2k?` */
+const AFFORD =
+  /^(?:can i )?afford\s+((?:etb\s*)?\d[\d.,]*k?(?:\s?(?:etb|birr|br))?)(?:\s+(?:a |an |the )?(.+?))?\s*\??$/i;
 
 const TRANSFER =
   /^(?:moved|move|transferred|transfer)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)\s+(?:from\s+)?@?([\p{L}\p{N}_-]+)\s+(?:to|into)\s+@?([\p{L}\p{N}_-]+)$/iu;
@@ -511,6 +517,14 @@ const isMoney = (parsed: Parsed): parsed is MoneyItem =>
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const transfer = readTransfer(raw.trim().replace(/\s+/g, " "), options);
   if (transfer) return transfer;
+  const asked = AFFORD.exec(raw.trim().replace(/\s+/g, " "));
+  if (asked) {
+    const amount = parseAmount(asked[1] ?? "");
+    if (amount !== null && amount > 0) {
+      const what = asked[2]?.trim();
+      return what ? { kind: "afford", amount, what } : { kind: "afford", amount };
+    }
+  }
   const loan = readLoan(raw.trim().replace(/\s+/g, " "), options);
   if (loan) return loan;
   const parsed = parseMoneyLine(raw, options);

@@ -15,6 +15,7 @@ import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
 import { echo as echoLine, ideaInput, toOps } from "./ops";
 import { balances, type LoanEvent, LOANS_SQL } from "../features/money/loans";
+import { affordAnswer } from "../features/money/affordLoad";
 import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { type ClockStyle } from "./when";
@@ -28,6 +29,7 @@ applyTheme(cachedTheme());
 applyAccent(cachedAccent());
 
 const ECHO_MS = 1500;
+const ANSWER_MS = 6000;
 // Same rule as the tray: lines that made no records (search, away) can't be undone.
 const LAST_CAPTURE_SQL =
   "SELECT id, body FROM core_raw_items WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new') ORDER BY id DESC LIMIT 1";
@@ -156,9 +158,9 @@ function showChip() {
   output.textContent = `${editing ? "Fix → " : ""}${echoLine(current, systemClock.now())}${hint}`;
 }
 
-function finish(message: string) {
+function finish(message: string, ms = ECHO_MS) {
   output.textContent = message;
-  setTimeout(() => void close(), ECHO_MS);
+  setTimeout(() => void close(), ms);
 }
 
 input.addEventListener("input", refresh);
@@ -232,6 +234,14 @@ form.addEventListener("submit", (event) => {
   const fixed = editing ? "Fixed · " : "";
   saved
     .then((rawId) => {
+      // `afford 4500 shoes` (T-074): the answer from your real numbers.
+      if (parsed.kind === "afford") {
+        void affordAnswer(query, nowMs, parsed.amount, parsed.what)
+          // A sentence to read, not an echo: it stays a little longer.
+          .then((answer) => finish(answer, ANSWER_MS))
+          .catch(() => finish("Couldn't work it out. Open Money → Can I afford it?"));
+        return;
+      }
       // `? query`: the search is stored like any capture, then Notes opens on it.
       if (parsed.kind === "search" && !editing) {
         void invoke("open_notes", { query: parsed.query }).finally(() => void close());
