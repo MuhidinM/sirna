@@ -24,6 +24,7 @@ import {
 } from "../features/tasks/today";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import { Brief } from "./Brief";
+import { Missed } from "./Missed";
 import { TodayMoney } from "./Money";
 import { FocusPanel, useFocus } from "./Focus";
 import { NowCards, Timeline } from "./Timeline";
@@ -334,6 +335,8 @@ export function Today({ onOpenMoney }: { onOpenMoney?: () => void } = {}) {
           </ul>
         </section>
       )}
+
+      <Missed today={today} nowMs={minuteNow} blocks={blocks.rows} />
 
       <section aria-labelledby="plan">
         <h2 id="plan">Today&apos;s plan</h2>
