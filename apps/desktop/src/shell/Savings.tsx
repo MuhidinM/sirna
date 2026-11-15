@@ -1,4 +1,5 @@
 import { useState } from "react";
+import "../theme/pages/savings.css";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
@@ -24,7 +25,9 @@ import {
   stageOf,
   UNASSIGNED_SQL,
 } from "../features/savings/savings";
-import { Plant } from "./Plant";
+import { IconPencil, IconPlus } from "./icons";
+import { PanelHead } from "./kit";
+import { SavingsTree } from "./SavingsTree";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -101,7 +104,22 @@ function GoalEditForm({ goal, onDone }: { goal: GoalRow; onDone: () => void }) {
   );
 }
 
-function GoalCard({ goal }: { goal: GoalRow }) {
+/** "22.5K", "1.2M": short amounts for the milestones beside the stem. */
+function short(minor: number): string {
+  const birr = minor / 100;
+  if (birr >= 1_000_000) return `${+(birr / 1_000_000).toFixed(1)}M`;
+  if (birr >= 10_000) return `${+(birr / 1_000).toFixed(1)}K`;
+  return formatAmount(minor).replace(/ ETB$/, "");
+}
+
+const monthYear = new Intl.DateTimeFormat("en-GB", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** A goal as a night scene with its plant (docs/design.md → Savings tree). */
+function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [editing, setEditing] = useState(false);
@@ -131,20 +149,46 @@ function GoalCard({ goal }: { goal: GoalRow }) {
       })
       .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
   };
+  const target = goal.target_minor;
+  const title = goal.target_date
+    ? `${goal.title} by ${monthYear.format(Date.parse(`${goal.target_date}T00:00:00Z`))}`
+    : goal.title;
   return (
     <li className="goal">
-      <Plant stage={stage} />
-      <div className="goal-body">
-        <strong>{goal.title}</strong>
-        <span>
-          {formatAmount(Math.max(0, goal.saved_minor))} of {formatAmount(goal.target_minor)}{" "}
-          <span className="meta">
-            · {Math.round(share * 100)}% · {STAGE_NAMES[stage]}
+      <div
+        className="goal-scene"
+        role="img"
+        aria-label={`${goal.title}: ${formatAmount(Math.max(0, goal.saved_minor))} of ${formatAmount(target)}, ${Math.round(share * 100)}% (${STAGE_NAMES[stage]})`}
+      >
+        <SavingsTree
+          share={share}
+          seed={seed}
+          milestones={[short(target * 0.25), short(target * 0.5), short(target * 0.75)]}
+          goalLabel={`Goal: ${short(target)}`}
+        />
+        <div className="goal-top">
+          <h3>{title}</h3>
+          <button
+            type="button"
+            className="goal-edit"
+            aria-label={`Edit ${goal.title}`}
+            aria-expanded={editing}
+            onClick={() => setEditing((on) => !on)}
+          >
+            <IconPencil size={17} />
+          </button>
+        </div>
+        <div className="goal-amount">
+          <strong>{formatAmount(Math.max(0, goal.saved_minor))}</strong>
+          <span>
+            {Math.round(share * 100)}% reached · {STAGE_NAMES[stage]}
           </span>
-        </span>
-        <span className="meta">{paceText(goal, today)}</span>
+        </div>
+      </div>
+      <div className="goal-controls">
+        <p className="meta goal-pace">{paceText(goal, today)}</p>
         {editing && <GoalEditForm goal={goal} onDone={() => setEditing(false)} />}
-        <div className="row">
+        <div className="row goal-move">
           <input
             inputMode="decimal"
             aria-label={`Amount for ${goal.title}`}
@@ -155,12 +199,15 @@ function GoalCard({ goal }: { goal: GoalRow }) {
               setAmount(event.target.value);
             }}
           />
-          <Button onClick={() => move(1)}>Put aside</Button>
-          <Button onClick={() => move(-1)}>Take out</Button>
-          {!editing && <Button onClick={() => setEditing(true)}>Edit</Button>}
+          <Button primary onClick={() => move(1)}>
+            Put aside
+          </Button>
+          <Button className="btn-ghost" onClick={() => move(-1)}>
+            Take out
+          </Button>
           {stage === 5 && (
             <Button
-              primary
+              className="btn-orange"
               onClick={() =>
                 void transact("user", goalStatusOps(goal.id, "done"), `savings:${goal.id}`).catch(
                   (failure: unknown) => setNote(`Couldn't save: ${message(failure)}`),
@@ -284,21 +331,30 @@ export function Savings() {
   const garden = goals.rows.filter((goal) => goal.status === "done");
   const unassigned = waiting.rows[0];
   return (
-    <section className="card savings" aria-labelledby="savings">
-      <div className="row">
-        <h2 id="savings">Savings</h2>
-        {!adding && <Button onClick={() => setAdding(true)}>New goal</Button>}
-      </div>
-      <p className="meta">
-        Capture <code>saved 500 laptop</code> or <code>took 2000 from laptop</code>. Plants only
-        grow; taking money out just lowers the number.
-      </p>
+    <section className="panel savings" aria-labelledby="savings">
+      <PanelHead
+        id="savings"
+        title="Savings"
+        sub={
+          <>
+            Capture <code>saved 500 laptop</code> or <code>took 2000 from laptop</code>. Plants only
+            grow; taking money out just lowers the number.
+          </>
+        }
+        action={
+          !adding && (
+            <Button onClick={() => setAdding(true)}>
+              <IconPlus size={16} /> New goal
+            </Button>
+          )
+        }
+      />
       {adding && <NewGoal onDone={() => setAdding(false)} />}
       {unassigned && unassigned.n > 0 && <GiveTo minor={unassigned.minor} goals={growing} />}
       {!goals.loading && growing.length === 0 && !adding && <p className="meta">No goals yet.</p>}
       <ul className="goals">
-        {growing.map((goal) => (
-          <GoalCard key={goal.id} goal={goal} />
+        {growing.map((goal, index) => (
+          <GoalCard key={goal.id} goal={goal} seed={index + 3} />
         ))}
       </ul>
       {garden.length > 0 && (
@@ -309,7 +365,7 @@ export function Savings() {
               className="garden-tree"
               title={`${goal.title} · ${formatAmount(goal.target_minor)}`}
             >
-              <Plant stage={5} size={40} />
+              <SavingsTree share={1} compact />
               <span className="meta">{goal.title}</span>
             </span>
           ))}
