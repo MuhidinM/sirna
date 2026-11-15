@@ -1,4 +1,4 @@
-import { type CSSProperties } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { type JobTask } from "../features/plan/jobs";
 import { type BlockRow, firstStep, formatMinutes, nowAndNext } from "../features/plan/now";
@@ -36,11 +36,17 @@ export function NowCards({
         left={`${formatMinutes(left)} left`}
         title={now.title}
         sub={
-          now.kind === "area"
-            ? `First step: ${firstStep(now)}`
-            : next
-              ? `Then ${next.title} at ${dot(next.start_at)}`
-              : undefined
+          <>
+            {now.kind === "area" && (
+              <>
+                First step: {firstStep(now)}
+                <br />
+              </>
+            )}
+            {next && minutesToNext !== undefined
+              ? `Next: ${next.title} at ${dot(next.start_at)} · in ${formatMinutes(minutesToNext)}`
+              : "Nothing after this today."}
+          </>
         }
       >
         {canFocus && (
@@ -76,7 +82,8 @@ const SHORT_PX = 66;
 
 /** Side-by-side lanes for blocks that overlap (calendar events over a routine). */
 function lanes(blocks: BlockRow[]): Map<string, { lane: number; of: number }> {
-  const sorted = [...blocks].sort((a, b) => a.start_at - b.start_at || b.end_at - a.end_at);
+  const endOf = (block: BlockRow) => block.end_at;
+  const sorted = [...blocks].sort((a, b) => a.start_at - b.start_at || endOf(b) - endOf(a));
   const out = new Map<string, { lane: number; of: number }>();
   let group: BlockRow[] = [];
   let groupEnd = -Infinity;
@@ -86,7 +93,7 @@ function lanes(blocks: BlockRow[]): Map<string, { lane: number; of: number }> {
     for (const block of group) {
       let lane = ends.findIndex((end) => end <= block.start_at);
       if (lane === -1) lane = ends.length;
-      ends[lane] = block.end_at;
+      ends[lane] = endOf(block);
       placed.push({ id: block.id, lane });
     }
     for (const p of placed) out.set(p.id, { lane: p.lane, of: ends.length });
@@ -94,7 +101,7 @@ function lanes(blocks: BlockRow[]): Map<string, { lane: number; of: number }> {
   };
   for (const block of sorted) {
     if (group.length > 0 && block.start_at >= groupEnd) flush();
-    groupEnd = group.length === 0 ? block.end_at : Math.max(groupEnd, block.end_at);
+    groupEnd = group.length === 0 ? endOf(block) : Math.max(groupEnd, endOf(block));
     group.push(block);
   }
   if (group.length) flush();
@@ -117,6 +124,8 @@ export function Timeline({
   onDone?: (task: JobTask) => void;
 }) {
   const { now } = nowAndNext(blocks, nowMs);
+  // A block whose task list is opened in full.
+  const [open, setOpen] = useState<string | null>(null);
   if (blocks.length === 0) {
     return <p className="empty">No plan yet. Finish setup and today&apos;s blocks appear here.</p>;
   }
@@ -132,7 +141,19 @@ export function Timeline({
   for (let t = first; t <= last; t += hour) hours.push(t);
   // Rest is a soft band behind the day, not a card beside it.
   const rest = blocks.filter((block) => block.kind === "rest");
-  const placed = lanes(blocks.filter((block) => block.kind !== "rest"));
+  const MIN_CARD_PX = 30;
+  const cards = blocks.filter((block) => block.kind !== "rest");
+  const placed = lanes(cards);
+  /** Where the next card in the same lane starts, so a short card never covers it. */
+  const nextInLane = (block: BlockRow): number | null => {
+    const lane = placed.get(block.id)?.lane ?? 0;
+    const later = cards
+      .filter(
+        (other) => other.start_at >= block.end_at && (placed.get(other.id)?.lane ?? 0) === lane,
+      )
+      .map((other) => other.start_at);
+    return later.length > 0 ? Math.min(...later) : null;
+  };
   const showNow = nowMs >= first && nowMs <= last;
   return (
     <div
@@ -177,9 +198,22 @@ export function Timeline({
             const short = ((block.end_at - block.start_at) / 60_000) * perMin < SHORT_PX;
             const tasks =
               block.area_id && listUnder?.has(block.id) ? (jobTasks?.get(block.area_id) ?? []) : [];
+            const next = nextInLane(block);
+            const room = next === null ? Infinity : y(next) - y(block.start_at) - 3;
+            const height = Math.max(
+              18,
+              Math.min(room, Math.max(MIN_CARD_PX - 4, y(block.end_at) - y(block.start_at) - 4)),
+            );
+            const expanded = open === block.id;
+            // As many tasks as the card has room for; the rest behind "+N more".
+            const fits = short ? 0 : Math.max(1, Math.floor((height - 64) / 22));
+            const shownTasks = expanded ? tasks : tasks.slice(0, fits);
+            const hidden = tasks.length - shownTasks.length;
             const style: CSSProperties = {
               top: y(block.start_at),
-              height: Math.max(26, y(block.end_at) - y(block.start_at) - 4),
+              height: expanded ? "auto" : height,
+              minHeight: expanded ? height : undefined,
+              zIndex: expanded ? 6 : undefined,
               left: `calc(${(lane.lane / lane.of) * 100}% + ${lane.lane ? 4 : 0}px)`,
               width: `calc(${100 / lane.of}% - ${lane.of > 1 ? 4 : 0}px)`,
             };
@@ -190,22 +224,24 @@ export function Timeline({
                   tone={toneOf(color)}
                   label={
                     short
-                      ? range(block)
+                      ? `${range(block)}${block.task_title && block.kind === "area" ? ` · ${block.task_title}` : ""}`
                       : `${range(block)}${block.kind === "fixed" ? " · fixed" : ""}`
                   }
                   title={block.title}
                   art={!short && block.kind === "fixed" && minutes >= 90}
                   faded={block.end_at <= nowMs || block.status === "done"}
                   current={block.id === now?.id}
-                  className={short ? "short" : undefined}
+                  className={[short && !expanded ? "short" : "", expanded ? "expanded" : ""]
+                    .filter(Boolean)
+                    .join(" ")}
                   style={style}
                 >
                   {!short && block.task_title && block.kind === "area" && (
                     <span className="event-label">{block.task_title}</span>
                   )}
-                  {tasks.length > 0 && !short && (
+                  {shownTasks.length > 0 && (
                     <ul className="event-check" aria-label={`${block.title} tasks`}>
-                      {tasks.slice(0, Math.max(1, Math.floor((minutes - 40) / 18))).map((task) => (
+                      {shownTasks.map((task) => (
                         <li key={task.id}>
                           <label>
                             <input
@@ -214,10 +250,27 @@ export function Timeline({
                               onChange={() => onDone?.(task)}
                             />
                             {task.title}
+                            {task.due_date && (
+                              <span className="event-due"> · due {task.due_date}</span>
+                            )}
                           </label>
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {(hidden > 0 || expanded) && tasks.length > 0 && (
+                    <button
+                      type="button"
+                      className="event-more"
+                      aria-expanded={expanded}
+                      onClick={() => setOpen(expanded ? null : block.id)}
+                    >
+                      {expanded
+                        ? "Show less"
+                        : shownTasks.length === 0
+                          ? `${tasks.length} task${tasks.length === 1 ? "" : "s"}`
+                          : `+${hidden} more`}
+                    </button>
                   )}
                 </EventCard>
               </div>

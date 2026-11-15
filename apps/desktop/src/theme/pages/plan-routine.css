@@ -931,3 +931,8 @@
 .su-foot .su-back:hover {
   background: var(--canvas-3);
 }
+
+.su-back[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}

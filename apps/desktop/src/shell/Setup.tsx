@@ -454,11 +454,16 @@ export function Setup({ onDone }: { onDone: () => void }) {
         )}
 
         <footer className="su-foot">
-          {step > 0 && (
-            <Button className="su-back" onClick={() => setStep(step - 1)}>
-              <IconArrowLeft size={16} /> Back
-            </Button>
-          )}
+          {/* Stays in place on the first step, so focus never drops to the page. */}
+          <Button
+            className="su-back"
+            aria-disabled={step === 0}
+            onClick={() => {
+              if (step > 0) setStep(step - 1);
+            }}
+          >
+            <IconArrowLeft size={16} /> Back
+          </Button>
           <span className="su-count meta">
             Step {step + 1} of {STEPS.length}
           </span>

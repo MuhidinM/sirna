@@ -23,8 +23,12 @@ export function cachedTheme(): Theme {
   }
 }
 
+/** Sent on the window whenever the theme changes, so every switch shows it. */
+export const THEME_EVENT = "sirna:theme";
+
 export function applyTheme(theme: Theme, root: HTMLElement = document.documentElement): void {
   root.dataset.theme = theme;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(THEME_EVENT));
   try {
     localStorage.setItem(CACHE_KEY, theme);
   } catch {

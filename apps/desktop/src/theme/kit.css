@@ -687,3 +687,34 @@ button.month-day {
 .day-lanes .event {
   z-index: 1;
 }
+
+.event-due {
+  opacity: 0.75;
+  font-weight: 500;
+}
+
+.event-more {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: var(--pill);
+  background: rgb(255 255 255 / 35%);
+  color: inherit;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.event-more:hover {
+  background: rgb(255 255 255 / 55%);
+}
+
+.day-lanes .event.short .event-more {
+  margin: 0 0 0 auto;
+  flex: none;
+}
+
+.day-lanes .event.expanded {
+  box-shadow: 0 14px 30px rgb(0 0 0 / 18%);
+}

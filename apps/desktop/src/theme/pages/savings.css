@@ -214,3 +214,8 @@
     right: 12px;
   }
 }
+
+.goal-picture {
+  position: absolute;
+  inset: 0;
+}

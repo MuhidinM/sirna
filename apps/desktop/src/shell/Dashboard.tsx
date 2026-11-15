@@ -476,7 +476,7 @@ export function Dashboard() {
                   <Button
                     className="dash-icon"
                     aria-label="Move earlier"
-                    disabled={index === 0}
+                    aria-disabled={index === 0}
                     onClick={() => step(place.id, -1)}
                   >
                     ↑
@@ -484,7 +484,7 @@ export function Dashboard() {
                   <Button
                     className="dash-icon"
                     aria-label="Move later"
-                    disabled={index === loose.length - 1}
+                    aria-disabled={index === loose.length - 1}
                     onClick={() => step(place.id, 1)}
                   >
                     ↓

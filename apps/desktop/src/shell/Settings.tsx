@@ -14,7 +14,8 @@ import {
   settingsOps,
   type SettingsValues,
 } from "../features/settings/settings";
-import { applyTheme, THEMES } from "../theme/theme";
+import { THEMES } from "../theme/theme";
+import { transactTheme, useTheme } from "./useTheme";
 import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
 import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
@@ -151,6 +152,8 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
   const [values, setValues] = useState(initial);
   const [capText, setCapText] = useState(String(initial.capMin));
   const [note, setNote] = useState("");
+  // The theme on screen, wherever it was changed (here or on the rail).
+  const current = useTheme();
   const change = (next: SettingsValues) => {
     setNote("");
     setValues(next);
@@ -165,12 +168,9 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
           setNote(cap.error);
           return;
         }
-        const next = { ...values, capMin: cap.minutes };
+        const next = { ...values, capMin: cap.minutes, theme: current };
         transact("user", settingsOps(next), "settings")
-          .then(() => {
-            applyTheme(next.theme);
-            setNote("Saved");
-          })
+          .then(() => setNote("Saved"))
           .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
       }}
     >
@@ -203,8 +203,12 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
                 name="theme"
                 className="visually-hidden"
                 value={theme}
-                checked={values.theme === theme}
-                onChange={() => change({ ...values, theme })}
+                checked={current === theme}
+                onChange={() =>
+                  void transactTheme(theme)
+                    .then(() => setNote(""))
+                    .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`))
+                }
               />
               <span className="set-swatch" aria-hidden="true" />
               {label}
@@ -568,7 +572,11 @@ function Section({
 function Jump() {
   return (
     <nav className="panel set-jump" aria-labelledby="set-jump-title">
-      <PanelHead id="set-jump-title" title="On this page" sub="Every change saves on its own" />
+      <PanelHead
+        id="set-jump-title"
+        title="On this page"
+        sub="The theme saves at once; other parts have a Save button"
+      />
       <ul className="list-rows">
         {SECTIONS.map((section) => (
           <li key={section.id}>

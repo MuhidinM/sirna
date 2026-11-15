@@ -305,6 +305,9 @@ export function Today({
                 <IconPlus size={16} /> Capture
               </Button>
             </header>
+            <p className="meta today-hint">
+              Capture anything with your capture key; it shows up here.
+            </p>
 
             {backOn && (
               <p className="row meta notice" role="status">
@@ -429,7 +432,9 @@ function LooseEnds({
               <span className="dot-cream" aria-hidden="true" />
               <span className="grow">
                 Waiting on {item.waiting_on ?? item.title}
-                {item.follow_up_date && <span className="meta"> · {item.follow_up_date}</span>}
+                {item.follow_up_date && (
+                  <span className="meta"> · follow up {item.follow_up_date}</span>
+                )}
               </span>
             </li>
           ))}

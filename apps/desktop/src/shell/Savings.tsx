@@ -155,17 +155,19 @@ function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
     : goal.title;
   return (
     <li className="goal">
-      <div
-        className="goal-scene"
-        role="img"
-        aria-label={`${goal.title}: ${formatAmount(Math.max(0, goal.saved_minor))} of ${formatAmount(target)}, ${Math.round(share * 100)}% (${STAGE_NAMES[stage]})`}
-      >
-        <SavingsTree
-          share={share}
-          seed={seed}
-          milestones={[short(target * 0.25), short(target * 0.5), short(target * 0.75)]}
-          goalLabel={`Goal: ${short(target)}`}
-        />
+      <div className="goal-scene">
+        <div
+          className="goal-picture"
+          role="img"
+          aria-label={`${goal.title}: a plant at ${Math.round(share * 100)}% (${STAGE_NAMES[stage]})`}
+        >
+          <SavingsTree
+            share={share}
+            seed={seed}
+            milestones={[short(target * 0.25), short(target * 0.5), short(target * 0.75)]}
+            goalLabel={`Goal: ${short(target)}`}
+          />
+        </div>
         <div className="goal-top">
           <h3>{title}</h3>
           <button

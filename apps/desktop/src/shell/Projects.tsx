@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import "../theme/pages/projects.css";
 
@@ -158,6 +158,7 @@ function ProjectForm({
   onSaved: (id: string, note?: string) => void;
   onCancel: () => void;
 }) {
+  const titleId = useId();
   const [draft, setDraft] = useState<ProjectDraft>(project ? draftOf(project) : EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -177,7 +178,7 @@ function ProjectForm({
     <form
       ref={formRef}
       className="project-form proj-form"
-      aria-labelledby="proj-form-title"
+      aria-labelledby={titleId}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkDraft(draft);
@@ -211,7 +212,7 @@ function ProjectForm({
           .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
       }}
     >
-      <h2 id="proj-form-title">{project ? "Edit project" : "New project"}</h2>
+      <h2 id={titleId}>{project ? "Edit project" : "New project"}</h2>
       <div className="proj-fields proj-fields-wide">
         <label className="field">
           <span>Name</span>

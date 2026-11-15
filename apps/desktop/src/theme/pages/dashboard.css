@@ -487,3 +487,8 @@
 .dash .dash-tiles {
   padding: var(--space-4);
 }
+
+.dash-icon[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}

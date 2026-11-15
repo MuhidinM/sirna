@@ -5,10 +5,6 @@
  * or two clicks away.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
-
-import { transact } from "../kernel/db";
-import { applyTheme, cachedTheme, type Theme } from "../theme/theme";
 import {
   IconDashboard,
   IconMoney,
@@ -21,6 +17,7 @@ import {
   IconToday,
   Logo,
 } from "./icons";
+import { transactTheme, useTheme } from "./useTheme";
 export type Page =
   | "today"
   | "tasks"
@@ -112,24 +109,9 @@ export function Nav({ current, onGo }: { current: Page; onGo: (page: Page) => vo
 
 /** Night or Forest, saved at once. */
 function ThemeSwitch() {
-  const [theme, setTheme] = useState<Theme>(cachedTheme);
-  const toggle = () => {
-    const next: Theme = theme === "night" ? "forest" : "night";
-    setTheme(next);
-    applyTheme(next);
-    void transact(
-      "user",
-      [
-        {
-          op: "upsert",
-          table: "core_settings",
-          id: "ui.theme",
-          values: { value_json: JSON.stringify(next) },
-        },
-      ],
-      "settings",
-    ).catch(() => undefined);
-  };
+  const theme = useTheme();
+  const toggle = () =>
+    void transactTheme(theme === "night" ? "forest" : "night").catch(() => undefined);
   return (
     <button
       type="button"
@@ -137,7 +119,7 @@ function ThemeSwitch() {
       data-on={theme}
       role="switch"
       aria-checked={theme === "forest"}
-      aria-label={theme === "night" ? "Switch to Forest" : "Switch to Night"}
+      aria-label="Forest theme"
       title={theme === "night" ? "Night · switch to Forest" : "Forest · switch to Night"}
       onClick={toggle}
     >
