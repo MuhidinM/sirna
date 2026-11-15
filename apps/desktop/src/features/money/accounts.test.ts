@@ -174,7 +174,20 @@ describe("accounts in the capture box (T-058)", () => {
     expect(parseCapture("email @abel about rent", options).kind).not.toBe("expense");
     expect(parseCapture("lunch 120, taxi 40 @telebirr", options)).toMatchObject({
       kind: "money",
-      items: [{ account: "cash" }, { account: "telebirr" }],
+      items: [{ account: "telebirr" }, { account: "telebirr" }],
+    });
+  });
+
+  it("keeps the account on income that names only an amount", () => {
+    expect(parseCapture("got 5000 @telebirr", options)).toMatchObject({
+      kind: "income",
+      amount: 500_000,
+      account: "telebirr",
+    });
+    expect(parseCapture("+5000 freelance @cbe", options)).toMatchObject({
+      kind: "income",
+      description: "freelance",
+      account: "cbe",
     });
   });
 

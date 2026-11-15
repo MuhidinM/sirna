@@ -7,7 +7,7 @@
  */
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { type GoalRow, goalPace } from "../savings/savings";
-import { type AccountRow, totalBalance } from "./accounts";
+import { type AccountRow, balanceOf, totalBalance } from "./accounts";
 import { type DueItem } from "./regulars";
 
 /** Saved into goals in total, and this month per goal (?1 first day, ?2 last day). */
@@ -47,16 +47,29 @@ export function safeToSpend(input: {
   due: DueItem[];
   today: string;
   daysInMonth: number;
+  /** Saved before any goal existed: put aside all the same. */
+  unassigned?: Santim;
 }): SafeToSpend {
   const { total, unknown } = totalBalance(input.accounts);
   const daysLeft = input.daysInMonth - Number(input.today.slice(8, 10)) + 1;
   const known = input.accounts.length > unknown;
   const active = input.goals.filter((goal) => goal.status === "active");
-  const earmarked = active.reduce((sum, goal) => sum + Math.max(0, goal.saved_minor), 0);
-  const payLeft = input.due
+  // Money put aside stays put aside while a goal is paused, and before it has a goal.
+  const earmarked =
+    input.goals
+      .filter((goal) => goal.status !== "done")
+      .reduce((sum, goal) => sum + Math.max(0, goal.saved_minor), 0) +
+    Math.max(0, input.unassigned ?? 0);
+  // Pay and bills count only through accounts whose balance is known: pay
+  // landing in an uncounted account would vanish from the sum once it came.
+  const counted = new Set(
+    input.accounts.filter((account) => balanceOf(account) !== null).map((account) => account.id),
+  );
+  const inCounted = input.due.filter((item) => counted.has(item.regular.account));
+  const payLeft = inCounted
     .filter((item) => item.regular.kind === "pay")
     .reduce((sum, item) => sum + item.left, 0);
-  const billsLeft = input.due
+  const billsLeft = inCounted
     .filter((item) => item.regular.kind === "bill")
     .reduce((sum, item) => sum + item.left, 0);
   const goalsLeft = active.reduce((sum, goal) => {

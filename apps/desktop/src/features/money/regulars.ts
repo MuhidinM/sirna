@@ -122,12 +122,18 @@ export const REGULARS_SQL = `
   WHERE r.deleted_at IS NULL
   ORDER BY r.kind DESC, r.name`;
 
-/** Entries recorded against regulars between ?1 and ?2 (due dates), plus income per job. */
+/**
+ * Entries that can settle a regular between ?1 and ?2: the ones marked with
+ * it, and the rest of your income and spending (pay you captured as
+ * `got 18k job a`, rent you captured as `paid rent 6000`). Transfers and
+ * loans never settle anything.
+ */
 export const REGULAR_TXNS_SQL = `
-  SELECT regular_id, due_date, area_id, amount_minor, local_date FROM money_txns
-  WHERE deleted_at IS NULL
+  SELECT regular_id, due_date, area_id, amount_minor, local_date, description, category_id
+  FROM money_txns
+  WHERE deleted_at IS NULL AND transfer_id IS NULL
     AND ((regular_id IS NOT NULL AND due_date >= ?1 AND due_date <= ?2)
-      OR (area_id IS NOT NULL AND amount_minor > 0 AND local_date >= ?1 AND local_date <= ?2))`;
+      OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))`;
 
 export interface RegularTxn {
   regular_id: string | null;
@@ -135,6 +141,8 @@ export interface RegularTxn {
   area_id: string | null;
   amount_minor: number;
   local_date: string;
+  description?: string | null;
+  category_id?: string | null;
 }
 
 export type DueState = "paid" | "due" | "late" | "upcoming";
@@ -151,12 +159,38 @@ export interface DueItem {
 
 /** Pay counts as late this many days after its day. */
 export const PAY_GRACE_DAYS = 3;
+/** Money that comes or goes up to this many days early still counts for the date. */
+export const EARLY_DAYS = 7;
+/** Late items from the end of last month are still shown this long into the next. */
+export const LOOK_BACK_DAYS = 10;
+
+/** The dates to load for a month: from a little before it, to its end. */
+export function dueWindow(today: string): { from: string; to: string; shownFrom: string } {
+  const { from, to } = monthOf(today);
+  return { from: shiftDate(from, -LOOK_BACK_DAYS), to, shownFrom: from };
+}
+
+/** An expense you typed that is this bill: its name in the words, or its category and amount. */
+function paysBill(regular: RegularRow, txn: RegularTxn): boolean {
+  if (txn.amount_minor >= 0) return false;
+  const name = regular.name.trim().toLowerCase();
+  const words = (txn.description ?? "").trim().toLowerCase();
+  if (name && words && (words.includes(name) || name.includes(words))) return true;
+  return (
+    regular.category_id !== null &&
+    txn.category_id === regular.category_id &&
+    -txn.amount_minor === regular.amount_minor
+  );
+}
 
 /**
- * Each occurrence from `from` to `to` and where it stands. A bill is paid by
- * an entry marked with it. Pay is received by an entry marked with it or by
- * any income from that job in the same month (`got 18k job a`), up to the
- * expected amount.
+ * Each occurrence from `from` to `to` and where it stands. Entries marked
+ * with a regular settle that occurrence. Other entries are handed out in date
+ * order to the oldest open occurrence they fit (pay: income from that job;
+ * bills: spending that names the bill or matches its category and amount),
+ * so late pay that comes next month settles last month's date, and two pay
+ * days from one job are filled in order. Items before `shownFrom` are kept
+ * only while still open.
  */
 export function dueItems(
   regulars: RegularRow[],
@@ -164,9 +198,9 @@ export function dueItems(
   from: string,
   to: string,
   today: string,
+  shownFrom: string = from,
 ): DueItem[] {
   const items: DueItem[] = [];
-  const usedIncome = new Map<string, Santim>(); // job+month → income already matched
   for (const regular of regulars) {
     if (regular.active !== 1) continue;
     const rule = readRule(regular.rule_json);
@@ -174,42 +208,54 @@ export function dueItems(
     // Occurrences before you added it are not yours to settle now.
     const since = regular.created_at > 0 ? logicalDate(regular.created_at) : from;
     for (const date of occurrences(rule, from > since ? from : since, to)) {
-      let done = txns
+      const done = txns
         .filter((txn) => txn.regular_id === regular.id && txn.due_date === date)
         .reduce((sum, txn) => sum + Math.abs(txn.amount_minor), 0);
-      if (regular.kind === "pay" && regular.area_id && done < regular.amount_minor) {
-        const month = date.slice(0, 7);
-        const key = `${regular.area_id}|${month}`;
-        const income = txns
-          .filter(
-            (txn) =>
-              txn.regular_id === null &&
-              txn.area_id === regular.area_id &&
-              txn.amount_minor > 0 &&
-              txn.local_date.slice(0, 7) === month,
-          )
-          .reduce((sum, txn) => sum + txn.amount_minor, 0);
-        const free = income - (usedIncome.get(key) ?? 0);
-        const take = Math.max(0, Math.min(free, regular.amount_minor - done));
-        usedIncome.set(key, (usedIncome.get(key) ?? 0) + take);
-        done += take;
-      }
-      const left = Math.max(0, regular.amount_minor - done);
-      const grace = regular.kind === "pay" ? PAY_GRACE_DAYS : 0;
+      items.push({ regular, date, state: "upcoming", done, left: 0 });
+    }
+  }
+  items.sort(
+    (a, b) => a.date.localeCompare(b.date) || a.regular.name.localeCompare(b.regular.name),
+  );
+  const open = (item: DueItem) => Math.max(0, item.regular.amount_minor - item.done);
+
+  const free = txns
+    .filter((txn) => txn.regular_id === null)
+    .sort((a, b) => a.local_date.localeCompare(b.local_date));
+  for (const txn of free) {
+    let amount = Math.abs(txn.amount_minor);
+    const latest = shiftDate(txn.local_date, EARLY_DAYS);
+    for (const item of items) {
+      if (amount === 0) break;
+      if (item.date > latest || open(item) === 0) continue;
+      const fits =
+        item.regular.kind === "pay"
+          ? txn.amount_minor > 0 &&
+            item.regular.area_id !== null &&
+            txn.area_id === item.regular.area_id
+          : paysBill(item.regular, txn);
+      if (!fits) continue;
+      const take = Math.min(open(item), amount);
+      item.done += take;
+      amount -= take;
+    }
+  }
+
+  return items
+    .map((item) => {
+      const left = open(item);
+      const grace = item.regular.kind === "pay" ? PAY_GRACE_DAYS : 0;
       const state: DueState =
         left === 0
           ? "paid"
-          : today > shiftDate(date, grace)
+          : today > shiftDate(item.date, grace)
             ? "late"
-            : today >= date
+            : today >= item.date
               ? "due"
               : "upcoming";
-      items.push({ regular, date, state, done, left });
-    }
-  }
-  return items.sort(
-    (a, b) => a.date.localeCompare(b.date) || a.regular.name.localeCompare(b.regular.name),
-  );
+      return { ...item, left, state };
+    })
+    .filter((item) => item.date >= shownFrom || item.state !== "paid");
 }
 
 /** The entry Paid or Received records: the full amount left, today, marked with the regular. */

@@ -37,6 +37,7 @@ import {
   addAccountOps,
   balanceOf,
   checkAccountName,
+  checkHide,
   checkTransfer,
   DAY_MOVED_SQL,
   hideAccountOps,
@@ -54,6 +55,7 @@ import {
   type DueItem,
   dueItems,
   dueLines,
+  dueWindow,
   type RegularDraft,
   regularOps,
   type RegularRow,
@@ -67,7 +69,10 @@ import {
 import {
   balances,
   checkLoan,
-  followUpOps,
+  LOAN_SQL,
+  loanIdOf,
+  loanRestoreOps,
+  personFollowUpOps,
   type LoanEvent,
   loanEchoText,
   loanOps,
@@ -85,7 +90,7 @@ import {
   safeLine,
   safeToSpend,
 } from "../features/money/safe";
-import { addGoalOps, type GoalRow, GOALS_SQL } from "../features/savings/savings";
+import { addGoalOps, type GoalRow, GOALS_SQL, UNASSIGNED_SQL } from "../features/savings/savings";
 import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
@@ -135,6 +140,7 @@ export function useSafe(today: string) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
   const saved = useLiveQuery<{ goal_id: string; minor: number }>(GOAL_MONTH_SQL, [from, to]);
+  const waiting = useLiveQuery<{ minor: number; n: number }>(UNASSIGNED_SQL);
   const { items, loading } = useDue(today);
   const safe = safeToSpend({
     accounts: accounts.rows,
@@ -143,11 +149,12 @@ export function useSafe(today: string) {
     due: items,
     today,
     daysInMonth: days,
+    unassigned: waiting.rows[0]?.minor ?? 0,
   });
   return {
     safe,
     goals: goals.rows,
-    loading: loading || accounts.loading || goals.loading || saved.loading,
+    loading: loading || accounts.loading || goals.loading || saved.loading || waiting.loading,
   };
 }
 
@@ -512,7 +519,7 @@ function LedgerRow({
   accounts: AccountRow[];
   /** Both halves when this is a transfer; deleting one deletes both. */
   halves: TxnRow[];
-  onDeleted: (rows: TxnRow[]) => void;
+  onDeleted: (deleted: { label: TxnRow; restore: Op[] }) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -547,11 +554,36 @@ function LedgerRow({
         </span>
         {!row.transfer_id && <Button onClick={() => setEditing(true)}>Edit</Button>}
         <Button
-          onClick={() =>
-            void transact("user", halves.flatMap(txnDeleteOps), `money:${row.id}`)
-              .then(() => onDeleted(halves))
-              .catch((failure: unknown) => setError(`Couldn't delete: ${message(failure)}`))
-          }
+          onClick={() => {
+            // A loan's entry goes with its loan event, or the loan would stay open.
+            const loanId = loanIdOf(row.transfer_id);
+            void (
+              loanId
+                ? query<LoanEvent & Record<string, string | number | null>>(LOAN_SQL, [loanId])
+                : Promise.resolve([])
+            )
+              .then(([loan]) =>
+                transact(
+                  "user",
+                  [
+                    ...halves.flatMap(txnDeleteOps),
+                    ...(loan
+                      ? [{ op: "delete" as const, table: "money_loans" as const, id: loan.id }]
+                      : []),
+                  ],
+                  `money:${row.id}`,
+                ).then(() =>
+                  onDeleted({
+                    label: row,
+                    restore: [
+                      ...halves.flatMap(txnRestoreOps),
+                      ...(loan ? loanRestoreOps(loan) : []),
+                    ],
+                  }),
+                ),
+              )
+              .catch((failure: unknown) => setError(`Couldn't delete: ${message(failure)}`));
+          }}
         >
           Delete
         </Button>
@@ -571,7 +603,7 @@ function LedgerView({ month, today }: { month: string; today: string }) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const [filter, setFilter] = useState<LedgerFilter>({ text: "", categoryId: "", kind: "" });
   const [adding, setAdding] = useState(false);
-  const [deleted, setDeleted] = useState<TxnRow[] | null>(null);
+  const [deleted, setDeleted] = useState<{ label: TxnRow; restore: Op[] } | null>(null);
   const halvesOf = (row: TxnRow) =>
     row.transfer_id ? txns.rows.filter((other) => other.transfer_id === row.transfer_id) : [row];
   const [note, setNote] = useState("");
@@ -635,16 +667,15 @@ function LedgerView({ month, today }: { month: string; today: string }) {
           }
         />
       )}
-      {deleted?.[0] && (
+      {deleted && (
         <p className="row" role="status">
-          Deleted {deleted[0].description} ({formatAmount(Math.abs(deleted[0].amount_minor))}).
+          Deleted {deleted.label.description} ({formatAmount(Math.abs(deleted.label.amount_minor))}
+          ).
           <Button
             onClick={() =>
-              void transact(
-                "user",
-                deleted.flatMap(txnRestoreOps),
-                `money:${deleted[0]?.id ?? ""}`,
-              ).then(() => setDeleted(null))
+              void transact("user", deleted.restore, `money:${deleted.label.id}`).then(() =>
+                setDeleted(null),
+              )
             }
           >
             Undo
@@ -978,9 +1009,11 @@ function PersonRow({
             title="Ask about it on"
             value={person.followUp ?? ""}
             onChange={(e) =>
-              void transact("user", followUpOps(last.id, e.target.value || null), "loan").catch(
-                (failure: unknown) => setNote(`Couldn't save: ${message(failure)}`),
-              )
+              void transact(
+                "user",
+                personFollowUpOps(person, e.target.value || null),
+                "loan",
+              ).catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`))
             }
           />
         )}
@@ -1144,14 +1177,16 @@ const JOBS_SQL =
 
 /** This month's regulars and where each stands (T-059, T-060). */
 export function useDue(today: string) {
-  const { from, to } = monthOf(today);
+  // From a little before the month, so pay due at the end of last month that
+  // is still open (or arrives now) is settled against the right date.
+  const { from, to, shownFrom } = dueWindow(today);
   const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
   const txns = useLiveQuery<RegularTxn & Record<string, string | number | null>>(REGULAR_TXNS_SQL, [
     from,
     to,
   ]);
   return {
-    items: dueItems(regulars.rows, txns.rows, from, to, today),
+    items: dueItems(regulars.rows, txns.rows, from, to, today, shownFrom),
     regulars: regulars.rows,
     loading: regulars.loading || txns.loading,
   };
@@ -1461,10 +1496,12 @@ export function TodayDue({ today }: { today: string }) {
 function AccountItem({
   account,
   all,
+  regulars,
   today,
 }: {
   account: AccountRow;
   all: AccountRow[];
+  regulars: RegularRow[];
   today: string;
 }) {
   const [name, setName] = useState(account.name);
@@ -1541,7 +1578,15 @@ function AccountItem({
             Pay lands here
           </Button>
         )}
-        <Button onClick={() => void write(hideAccountOps(account.id))}>Hide</Button>
+        <Button
+          onClick={() => {
+            const problem = checkHide(account, regulars);
+            if (problem) setNote(problem);
+            else void write(hideAccountOps(account.id));
+          }}
+        >
+          Hide
+        </Button>
       </span>
       {note && (
         <p className="meta" role="status">
@@ -1629,6 +1674,7 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
 /** Accounts (T-058): balances, checking them against the bank, moving money. */
 function AccountsView({ today }: { today: string }) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
+  const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
   const [name, setName] = useState("");
   const [kind, setKind] = useState<AccountRow["kind"]>("bank");
   const [note, setNote] = useState<string | null>(null);
@@ -1647,7 +1693,13 @@ function AccountsView({ today }: { today: string }) {
       <section className="card" aria-label="Accounts">
         <ul className="task-list">
           {accounts.rows.map((account) => (
-            <AccountItem key={account.id} account={account} all={accounts.rows} today={today} />
+            <AccountItem
+              key={account.id}
+              account={account}
+              all={accounts.rows}
+              regulars={regulars.rows}
+              today={today}
+            />
           ))}
         </ul>
         <p className="meta">
