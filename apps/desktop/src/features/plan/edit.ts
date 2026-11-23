@@ -141,6 +141,20 @@ export function newDraft(atMin: number): BlockDraft {
   };
 }
 
+/**
+ * The edit popover's React key: another block, another start or another
+ * click (`opened`) remounts it, so a click on another empty hour (or "Add a
+ * block") while it is open shows that time, not the old one.
+ */
+export function editorKey(
+  editing:
+    { mode: "edit"; block: { id: string } } | { mode: "add"; draft: BlockDraft; opened?: number },
+): string {
+  return editing.mode === "edit"
+    ? `edit:${editing.block.id}`
+    : `add:${editing.draft.start}:${editing.opened ?? 0}`;
+}
+
 /** The span a draft names, or an error to show. */
 export function readDraft(draft: BlockDraft): Span | string {
   if (!draft.title.trim() && !draft.areaId && !draft.taskId)

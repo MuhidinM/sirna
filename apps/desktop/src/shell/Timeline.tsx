@@ -22,6 +22,7 @@ import {
   clockOf,
   deleteOps,
   draftOf,
+  editorKey,
   focusAfterDelete,
   minuteOf,
   moveOps,
@@ -173,7 +174,8 @@ interface Drag {
   moved: boolean;
 }
 
-type Editing = { mode: "edit"; block: BlockRow } | { mode: "add"; draft: BlockDraft } | null;
+type Editing =
+  { mode: "edit"; block: BlockRow } | { mode: "add"; draft: BlockDraft; opened: number } | null;
 
 /** The last edit, with the ops that put it back. */
 interface Done {
@@ -215,6 +217,8 @@ export function Timeline({
   const [open, setOpen] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
+  /** Counts add clicks: each one opens a fresh popover (`editorKey`). */
+  const opened = useRef(0);
   const [done, setDone] = useState<Done | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Where keyboard focus goes once the popover closes: a block, or the board.
@@ -389,7 +393,7 @@ export function Timeline({
     if (target.closest(".event, .day-editor, .day-edit-bar")) return;
     const top = event.currentTarget.getBoundingClientRect().top;
     const minute = minuteOf(day, first) + (event.clientY - top) / perMin;
-    setEditing({ mode: "add", draft: newDraft(minute) });
+    setEditing({ mode: "add", draft: newDraft(minute), opened: ++opened.current });
   };
 
   const editorTop = (() => {
@@ -423,7 +427,7 @@ export function Timeline({
             onClick={() => {
               const nowMin = minuteOf(day, nowMs);
               const at = day === today && nowMin > OPEN_FROM_MIN ? nowMin + SNAP_MIN : 9 * 60;
-              setEditing({ mode: "add", draft: newDraft(at) });
+              setEditing({ mode: "add", draft: newDraft(at), opened: ++opened.current });
             }}
           >
             <IconPlus size={14} /> Add a block
@@ -620,7 +624,7 @@ export function Timeline({
         {/* The popover is a dialog beside the list, not an item in it. */}
         {edit && editing && (
           <BlockEditor
-            key={editing.mode === "edit" ? editing.block.id : "add"}
+            key={editorKey(editing)}
             top={editorTop}
             date={day}
             editing={editing}

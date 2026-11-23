@@ -355,8 +355,13 @@ fn changed(app: &AppHandle, tables: &[&str]) {
     }
 }
 
-/// A left double-click on the tray icon opens the main window (a single click
-/// still shows the menu).
+/// The menu opens on right-click only. A menu on left-click starts its own
+/// modal loop on the first click, which swallows the second click of a
+/// double-click, so the window would never open (Windows convention: double
+/// click opens, right-click shows the menu, a single left-click does nothing).
+const MENU_ON_LEFT_CLICK: bool = false;
+
+/// A left double-click on the tray icon opens the main window.
 fn opens_main(event: &TrayIconEvent) -> bool {
     matches!(
         event,
@@ -378,7 +383,7 @@ pub fn create(app: &AppHandle, capture_key: Option<&str>) -> tauri::Result<()> {
         .icon(icon)
         .tooltip(tooltip(capture_key))
         .menu(&menu)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(MENU_ON_LEFT_CLICK)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             if opens_main(&event) {
@@ -391,7 +396,7 @@ pub fn create(app: &AppHandle, capture_key: Option<&str>) -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{focus_tooltip, opens_main, short, tooltip};
+    use super::{MENU_ON_LEFT_CLICK, focus_tooltip, opens_main, short, tooltip};
     use crate::focus::{Kind, Status};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
     use tauri::{PhysicalPosition, Rect};
@@ -414,6 +419,20 @@ mod tests {
             button_state: MouseButtonState::Up,
         };
         assert!(!opens_main(&single));
+    }
+
+    #[test]
+    fn the_menu_waits_for_a_right_click_so_double_click_reaches_the_icon() {
+        // A left-click menu eats the second click of the double-click.
+        const { assert!(!MENU_ON_LEFT_CLICK) };
+        let right_up = TrayIconEvent::Click {
+            id: "sirna".into(),
+            position: PhysicalPosition::new(0.0, 0.0),
+            rect: Rect::default(),
+            button: MouseButton::Right,
+            button_state: MouseButtonState::Up,
+        };
+        assert!(!opens_main(&right_up));
     }
 
     fn status(kind: Option<Kind>, remaining_ms: i64, paused: bool) -> Status {

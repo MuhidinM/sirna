@@ -144,3 +144,31 @@ export function confirmText(result: string): string | undefined {
   if (result === "confirm-stop") return "It's past your hard stop. Enter again to start anyway.";
   return undefined;
 }
+
+/** The parts of a keydown that decide whether Enter on the For list starts. */
+export interface EnterKey {
+  key: string;
+  repeat: boolean;
+  isComposing: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  metaKey: boolean;
+}
+
+/**
+ * A select is not a text field, so Enter on it doesn't submit the form: a
+ * plain, first (not held) Enter on the closed For list starts the session.
+ * While the list's popup is open, WebView2 sends keys to the popup, not here.
+ */
+export function enterStarts(event: EnterKey): boolean {
+  return (
+    event.key === "Enter" &&
+    !event.repeat &&
+    !event.isComposing &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.metaKey
+  );
+}

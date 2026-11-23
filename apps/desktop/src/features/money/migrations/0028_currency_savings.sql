@@ -15,8 +15,24 @@ ALTER TABLE savings_entries ADD COLUMN transfer_id TEXT;
 -- If you already made them yourself, those are used, not copied.
 UPDATE money_accounts SET is_savings = 1
   WHERE deleted_at IS NULL AND lower(name) LIKE 'cbo saving%';
+-- From now on: transfers it had before stay as they were (money.savings_since,
+-- the moment each account became savings, epoch ms; see savingsOps).
+INSERT INTO core_settings (key, value_json, updated_at)
+SELECT 'money.savings_since',
+       json_group_object(id, CAST(strftime('%s', 'now') AS INTEGER) * 1000),
+       CAST(strftime('%s', 'now') AS INTEGER) * 1000
+FROM money_accounts
+WHERE deleted_at IS NULL AND is_savings = 1
+HAVING count(*) > 0
+ON CONFLICT (key) DO UPDATE SET
+  value_json = json_patch(core_settings.value_json, excluded.value_json),
+  updated_at = excluded.updated_at;
+-- Wise turns to dollars only while it holds nothing: birr already typed in
+-- (an opening balance or entries) would otherwise read as dollars.
 UPDATE money_accounts SET currency = 'USD'
-  WHERE deleted_at IS NULL AND lower(name) = 'wise';
+  WHERE deleted_at IS NULL AND lower(name) = 'wise'
+    AND COALESCE(opening_minor, 0) = 0
+    AND NOT EXISTS (SELECT 1 FROM money_txns m WHERE m.account = money_accounts.id);
 
 INSERT INTO money_accounts
   (id, name, kind, pays_in, sort_order, currency, is_savings, created_at, updated_at)

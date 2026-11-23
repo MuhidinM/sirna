@@ -139,8 +139,10 @@ pub fn capture_replace(
 /// The fix itself, inside an open transaction: undo the old capture, save the
 /// new one, and carry the old task's project, parent and steps over to the
 /// new task (time-first §2: "read chapter 5" → "read chapter 6" keeps its
-/// project). The carried links are logged under the new capture, so undoing
-/// it puts them back.
+/// project). The links are read before the undo, since undoing an earlier fix
+/// takes back the links it carried. They are logged under the new capture
+/// with only the carried columns as "before", so undoing it puts back the
+/// links and nothing else: later edits to the steps stay.
 fn replace_in(
     txn: &rusqlite::Transaction<'_>,
     raw_id: i64,
@@ -150,24 +152,79 @@ fn replace_in(
     now: i64,
 ) -> Result<i64, String> {
     let old_context = format!("capture:{raw_id}");
-    let old_task = captured_task(txn, &old_context)?;
+    let links = match captured_task(txn, &old_context)? {
+        Some(old) => Some(task_links(txn, &old)?),
+        None => None,
+    };
     tx::undo_context(txn, "user", &old_context, now).map_err(|error| error.to_string())?;
     db::mark_ignored(txn, raw_id).map_err(|error| error.to_string())?;
     let new_id = store_capture(txn, raw_text, ops, parser, now)?;
-    if let Some(old) = old_task {
-        let carried = carry_task_links(txn, &old, ops)?;
-        if !carried.is_empty() {
-            tx::apply_ops(
-                txn,
-                "user",
-                Some(&format!("capture:{new_id}")),
-                &carried,
-                now,
+    let carried = links.map_or_else(Vec::new, |links| carry_task_links(&links, ops));
+    if !carried.is_empty() {
+        let context = format!("capture:{new_id}");
+        let logged_before: i64 = txn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) FROM core_activity",
+                [],
+                |row| row.get(0),
             )
             .map_err(|error| error.to_string())?;
-        }
+        tx::apply_ops(txn, "user", Some(&context), &carried, now)
+            .map_err(|error| error.to_string())?;
+        keep_only_carried_columns(txn, &context, logged_before, &carried)?;
     }
     Ok(new_id)
+}
+
+/// Trims the "before" of each carried update to the columns it set, so undo
+/// restores those columns only (undo restores whatever a snapshot holds).
+fn keep_only_carried_columns(
+    conn: &rusqlite::Connection,
+    context: &str,
+    after_id: i64,
+    carried: &[Op],
+) -> Result<(), String> {
+    let rows: Vec<(i64, String, Option<String>)> = {
+        let mut statement = conn
+            .prepare(
+                "SELECT id, entity_id, before_json FROM core_activity
+                 WHERE context = ?1 AND id > ?2 AND action = 'update' AND entity_type = 'task_items'",
+            )
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map(rusqlite::params![context, after_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .and_then(Iterator::collect)
+            .map_err(|error| error.to_string())?
+    };
+    for (row_id, entity_id, before) in rows {
+        let Some(Op::Update { values, .. }) = carried
+            .iter()
+            .find(|op| matches!(op, Op::Update { id, .. } if *id == entity_id))
+        else {
+            continue;
+        };
+        let Some(Value::Object(before)) = before.and_then(|text| serde_json::from_str(&text).ok())
+        else {
+            continue;
+        };
+        let trimmed: Map<String, Value> = values
+            .keys()
+            .map(|name| {
+                (
+                    name.clone(),
+                    before.get(name).cloned().unwrap_or(Value::Null),
+                )
+            })
+            .collect();
+        conn.execute(
+            "UPDATE core_activity SET before_json = ?1 WHERE id = ?2",
+            rusqlite::params![Value::Object(trimmed).to_string(), row_id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// The one task a capture made, when it made exactly one.
@@ -189,13 +246,40 @@ fn captured_task(conn: &rusqlite::Connection, context: &str) -> Result<Option<St
     })
 }
 
+/// A task's project, parent, step number and steps, as they are now.
+struct TaskLinks {
+    project: Option<String>,
+    parent: Option<String>,
+    step: Option<i64>,
+    steps: Vec<String>,
+}
+
+fn task_links(conn: &rusqlite::Connection, id: &str) -> Result<TaskLinks, String> {
+    let (project, parent, step) = conn
+        .query_row(
+            "SELECT project_id, parent_id, step_no FROM task_items WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut statement = conn
+        .prepare("SELECT id FROM task_items WHERE parent_id = ?1 AND deleted_at IS NULL")
+        .map_err(|error| error.to_string())?;
+    let steps = statement
+        .query_map([id], |row| row.get(0))
+        .and_then(Iterator::collect)
+        .map_err(|error| error.to_string())?;
+    Ok(TaskLinks {
+        project,
+        parent,
+        step,
+        steps,
+    })
+}
+
 /// Updates that give the new task the old one's project, parent and step
 /// number (unless the fix set them) and move the old task's steps under it.
-fn carry_task_links(
-    conn: &rusqlite::Connection,
-    old_id: &str,
-    ops: &[Op],
-) -> Result<Vec<Op>, String> {
+fn carry_task_links(links: &TaskLinks, ops: &[Op]) -> Vec<Op> {
     let inserted: Vec<(&String, &Map<String, Value>)> = ops
         .iter()
         .filter_map(|op| match op {
@@ -204,51 +288,37 @@ fn carry_task_links(
         })
         .collect();
     let [(new_id, new_values)] = inserted.as_slice() else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
-    let (project, parent, step): (Option<String>, Option<String>, Option<i64>) = conn
-        .query_row(
-            "SELECT project_id, parent_id, step_no FROM task_items WHERE id = ?1",
-            [old_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|error| error.to_string())?;
     let unset = |name: &str| new_values.get(name).is_none_or(Value::is_null);
-    let mut links = Map::new();
-    if let Some(project) = project.filter(|_| unset("project_id")) {
-        links.insert("project_id".into(), Value::from(project));
+    let mut carried = Map::new();
+    if let Some(project) = links.project.clone().filter(|_| unset("project_id")) {
+        carried.insert("project_id".into(), Value::from(project));
     }
-    if let Some(parent) = parent.filter(|_| unset("parent_id")) {
-        links.insert("parent_id".into(), Value::from(parent));
+    if let Some(parent) = links.parent.clone().filter(|_| unset("parent_id")) {
+        carried.insert("parent_id".into(), Value::from(parent));
     }
-    if let Some(step) = step.filter(|_| unset("step_no")) {
-        links.insert("step_no".into(), Value::from(step));
+    if let Some(step) = links.step.filter(|_| unset("step_no")) {
+        carried.insert("step_no".into(), Value::from(step));
     }
     let mut out = Vec::new();
-    if !links.is_empty() {
+    if !carried.is_empty() {
         out.push(Op::Update {
             table: "task_items".into(),
             id: (*new_id).clone(),
-            values: links,
+            values: carried,
         });
     }
-    let mut statement = conn
-        .prepare("SELECT id FROM task_items WHERE parent_id = ?1 AND deleted_at IS NULL")
-        .map_err(|error| error.to_string())?;
-    let steps: Vec<String> = statement
-        .query_map([old_id], |row| row.get(0))
-        .and_then(Iterator::collect)
-        .map_err(|error| error.to_string())?;
-    for step_id in steps {
+    for step_id in &links.steps {
         let mut values = Map::new();
         values.insert("parent_id".into(), Value::from((*new_id).clone()));
         out.push(Op::Update {
             table: "task_items".into(),
-            id: step_id,
+            id: step_id.clone(),
             values,
         });
     }
-    Ok(out)
+    out
 }
 
 /// Undoes everything a capture created or changed, and marks it ignored.
@@ -420,6 +490,103 @@ mod tests {
             )
             .unwrap();
         assert_eq!(step_parent, "t5");
+    }
+
+    fn capture_db() -> rusqlite::Connection {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure(&conn).unwrap();
+        crate::migrate::run(&mut conn, crate::migrate::MIGRATIONS, 0).unwrap();
+        conn
+    }
+
+    fn task_op(id: &str, title: &str) -> Vec<Op> {
+        let mut values = Map::new();
+        values.insert("title".into(), title.into());
+        vec![Op::Insert {
+            table: "task_items".into(),
+            id: id.into(),
+            values,
+        }]
+    }
+
+    #[test]
+    fn fixing_a_fixed_capture_still_keeps_its_project_parent_and_steps() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw =
+            super::store_capture(&txn, "read ch 5", &task_op("t5", "read ch 5"), None, 1).unwrap();
+        txn.execute_batch(
+            "UPDATE task_items SET project_id = 'p1', parent_id = 'big', step_no = 2 WHERE id = 't5';
+             INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+               VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
+        )
+        .unwrap();
+        let once = super::replace_in(&txn, raw, "read ch 6", &task_op("t6", "read ch 6"), None, 2)
+            .unwrap();
+        super::replace_in(
+            &txn,
+            once,
+            "read ch 7",
+            &task_op("t7", "read ch 7"),
+            None,
+            3,
+        )
+        .unwrap();
+        let row: (Option<String>, Option<String>, Option<i64>) = txn
+            .query_row(
+                "SELECT project_id, parent_id, step_no FROM task_items WHERE id = 't7'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (Some("p1".into()), Some("big".into()), Some(2)));
+        let step_parent: String = txn
+            .query_row(
+                "SELECT parent_id FROM task_items WHERE id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(step_parent, "t7");
+    }
+
+    #[test]
+    fn undoing_a_fix_keeps_later_edits_to_its_steps() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw =
+            super::store_capture(&txn, "read ch 5", &task_op("t5", "read ch 5"), None, 1).unwrap();
+        txn.execute_batch(
+            "INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+               VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
+        )
+        .unwrap();
+        let fixed = super::replace_in(&txn, raw, "read ch 6", &task_op("t6", "read ch 6"), None, 2)
+            .unwrap();
+        let mut values = Map::new();
+        values.insert("title".into(), "take good notes".into());
+        values.insert("status".into(), "done".into());
+        crate::tx::apply_ops(
+            &txn,
+            "user",
+            None,
+            &[Op::Update {
+                table: "task_items".into(),
+                id: "s1".into(),
+                values,
+            }],
+            3,
+        )
+        .unwrap();
+        crate::tx::undo_context(&txn, "user", &format!("capture:{fixed}"), 4).unwrap();
+        let row: (String, String, String) = txn
+            .query_row(
+                "SELECT title, status, parent_id FROM task_items WHERE id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("take good notes".into(), "done".into(), "t5".into()));
     }
 
     #[test]

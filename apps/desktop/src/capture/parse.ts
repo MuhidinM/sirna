@@ -597,15 +597,49 @@ const isPiece = (parsed: Parsed): parsed is MoneyPiece =>
   parsed.kind === "transfer" ||
   parsed.kind === "saving";
 
-/** Where a several-item line splits: a comma not inside a number (`rent 1,200`), or " and ". */
-const PIECE_SPLIT = /\s*,\s*(?=\D)|\s+and\s+/i;
+/** Where a several-item line splits: a comma not inside a number (`rent 1,200`). */
+const COMMA_SPLIT = /\s*,\s*(?=\D)/;
+const LOAN_VERB = /^\s*(lent|loaned|borrowed)\s/i;
+
+/**
+ * Splits one comma piece on " and " only when every half is a money piece:
+ * "lunch 120 and taxi 40" splits, "salt and pepper 50" does not. A verbless
+ * half after a loan takes the loan's verb: "lent abel 1500 and kebede 200",
+ * unless it names a spending category ("and lunch 120").
+ */
+function splitOnAnd(piece: string, options: ParseOptions): string[] {
+  const halves = piece.split(/\s+and\s+/i).filter((half) => half.trim());
+  if (halves.length < 2) return [piece];
+  const out: string[] = [];
+  let verb: string | undefined;
+  for (const half of halves) {
+    let text = half;
+    let item = parsePiece(text, options);
+    // "lunch 120" names a spending category, so it stays an expense.
+    const spending = item.kind === "expense" && item.categoryId !== "cat_other";
+    if (verb && item.kind !== "loan" && !spending && !LOAN_VERB.test(text)) {
+      const lent = parsePiece(`${verb} ${text.trim()}`, options);
+      if (lent.kind === "loan") {
+        text = `${verb} ${text.trim()}`;
+        item = lent;
+      }
+    }
+    if (!isPiece(item) && !isStuck(item)) return [piece];
+    verb = item.kind === "loan" ? LOAN_VERB.exec(text)?.[1] : undefined;
+    out.push(text);
+  }
+  return out;
+}
 
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const parsed = parsePiece(raw, options);
   if (isMoney(parsed) || parsed.kind === "afford" || parsed.kind === "transfer") return parsed;
   // `lunch 120, taxi 40`, `+25000 salary, saved 500 laptop and lent abel 1500`:
   // several records when every piece is money (time-first §2).
-  const pieces = raw.split(PIECE_SPLIT).filter((piece) => piece.trim());
+  const pieces = raw
+    .split(COMMA_SPLIT)
+    .filter((piece) => piece.trim())
+    .flatMap((piece) => splitOnAnd(piece, options));
   if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
     // "lunch 120, taxi 40 @telebirr": an account on the last piece only is
     // for the whole line.
@@ -1048,7 +1082,8 @@ function readTask(
   const minutes = estimate ? Math.round(Number(estimate[1]) * 60) : 0;
   const text =
     minutes > 0 && estimate ? raw.replace(estimate[0], " ").replace(/\s+/g, " ").trim() : raw;
-  const when = readWhen(text, nowMs, clockStyle);
+  const taskLine = TASK_VERBS.has(text.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
+  const when = readWhen(text, nowMs, clockStyle, { taskLine });
   // "build CLI tool by 20 dec" → "build CLI tool".
   let title = when.date ? when.rest.replace(CONNECTOR_TAIL, "") : when.rest;
   const named = readForArea(title, areas);

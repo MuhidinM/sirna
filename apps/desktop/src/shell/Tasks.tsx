@@ -5,7 +5,7 @@ import "../theme/pages/plan-tasks.css";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
-import { commitCapture, transact } from "../kernel/db";
+import { commitCapture, query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import { echo, toOps } from "../capture/ops";
 import { parseCapture, PARSER_ID } from "../capture/parse";
@@ -28,6 +28,7 @@ import {
   checkTask,
   COUNTS_SQL,
   filterTasks,
+  LATER_STEPS_SQL,
   repeatText,
   statusOps,
   stepLabel,
@@ -334,7 +335,18 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
           return;
         }
         setBusy("saving");
-        transact("user", manualSplitOps(task, steps, ulid), `split:${task.id}`)
+        // A step's new steps take its place: the later steps move down.
+        const later =
+          task.parent_id && task.step_no
+            ? query<{ id: string; step_no: number | null }>(LATER_STEPS_SQL, [
+                task.parent_id,
+                task.step_no,
+              ])
+            : Promise.resolve([]);
+        later
+          .then((siblings) =>
+            transact("user", manualSplitOps(task, steps, ulid, siblings), `split:${task.id}`),
+          )
           .then(onClose)
           .catch((failure: unknown) => {
             setBusy(null);

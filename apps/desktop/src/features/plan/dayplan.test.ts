@@ -615,3 +615,107 @@ describe("a planned day heals itself (time first §1 rule 1)", () => {
     expect(overlapping).toEqual({ n: 0 });
   });
 });
+
+describe("review fixes: replans keep what you moved and what is over", () => {
+  const at = (iso: string) => Date.parse(iso);
+  const DAY = "2026-11-11";
+  function planned() {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    return h;
+  }
+  const live = (h: ReturnType<typeof harness>, title: string) =>
+    h.db
+      .prepare(
+        `SELECT id, start_at FROM day_blocks WHERE logical_date = '${DAY}' AND title = ? AND deleted_at IS NULL ORDER BY start_at`,
+      )
+      .all(title) as { id: string; start_at: number }[];
+
+  it("doesn't bring a routine block you moved back at its old time", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    const [quran] = live(h, "Quran");
+    if (!quran) throw new Error("expected a Quran block");
+    const later = quran.start_at + 2 * 3600_000;
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 1 WHERE id = ?")
+      .run(later, later + 20 * 60_000, quran.id);
+    await replanDay(h.query, h.transact, DAY, h.newId);
+    expect(live(h, "Quran")).toEqual([{ id: quran.id, start_at: later }]);
+  });
+
+  it("keeps today's blocks already over when it heals, and adds only the missing one", async () => {
+    const h = planned();
+    // Planned at 07:00 with a morning task; it is placed in the morning.
+    const early = at("2026-11-11T07:00:00+03:00");
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, planned_window, due_date, created_at, updated_at) VALUES ('walk', 'Morning walk', 'todo', 'morning', ?, 5, 5)",
+      )
+      .run(DAY);
+    expect(await ensureDayPlan(h.query, h.transact, early, h.newId)).toBe(true);
+    const [walk] = live(h, "Morning walk");
+    if (!walk) throw new Error("expected the walk's block");
+    expect(walk.start_at).toBeLessThan(NOW);
+    const before = h.db
+      .prepare(`SELECT id FROM day_blocks WHERE logical_date = '${DAY}' AND deleted_at IS NULL`)
+      .all() as { id: string }[];
+    // At noon a capture with a time makes the day heal.
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, due_date, created_at, updated_at) VALUES ('bank', 'Call bank', 'todo', ?, ?, 6, 6)",
+      )
+      .run(at("2026-11-11T20:15:00+03:00"), DAY);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(live(h, "Morning walk")).toEqual([walk]);
+    expect(live(h, "Call bank")).toHaveLength(1);
+    // Nothing else changed: every block from before is still there.
+    const after = new Set(
+      (
+        h.db
+          .prepare(`SELECT id FROM day_blocks WHERE logical_date = '${DAY}' AND deleted_at IS NULL`)
+          .all() as { id: string }[]
+      ).map((row) => row.id),
+    );
+    for (const { id } of before) expect(after.has(id)).toBe(true);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+  });
+
+  it("keeps blocks already over on a full replan of today too", async () => {
+    const h = planned();
+    const early = at("2026-11-11T07:00:00+03:00");
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, planned_window, due_date, created_at, updated_at) VALUES ('walk', 'Morning walk', 'todo', 'morning', ?, 5, 5)",
+      )
+      .run(DAY);
+    await ensureDayPlan(h.query, h.transact, early, h.newId);
+    const [walk] = live(h, "Morning walk");
+    await replanDay(h.query, h.transact, DAY, h.newId, NOW);
+    expect(live(h, "Morning walk")).toEqual([walk]);
+  });
+
+  it("still moves a task's block when its time moves from the morning to later", async () => {
+    const h = planned();
+    const early = at("2026-11-11T07:00:00+03:00");
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, due_date, created_at, updated_at) VALUES ('bank', 'Call bank', 'todo', ?, ?, 5, 5)",
+      )
+      .run(at("2026-11-11T08:00:00+03:00"), DAY);
+    await ensureDayPlan(h.query, h.transact, early, h.newId);
+    h.db
+      .prepare("UPDATE task_items SET due_at = ? WHERE id = 'bank'")
+      .run(at("2026-11-11T17:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(live(h, "Call bank").map((b) => b.start_at)).toContain(at("2026-11-11T17:00:00+03:00"));
+  });
+});

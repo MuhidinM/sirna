@@ -40,6 +40,7 @@ import {
   shareSaved,
   STAGE_NAMES,
   stageOf,
+  takeOutOps,
   UNASSIGNED_SQL,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
@@ -237,29 +238,37 @@ function GoalCard({
     }
     const now = systemClock.now();
     const date = logicalDate(now);
-    const ops =
-      backed && spend
-        ? moveOps({
-            goal,
-            sign,
-            amount: minor,
-            spend,
-            savings,
-            nowMs: now,
-            date,
-            ids: { entry: ulid(), halves: [ulid(), ulid()], transfer: ulid() },
-            entryMinor: worth,
-          })
+    const ids = { entry: ulid(), halves: [ulid(), ulid()] as [string, string], transfer: ulid() };
+    const moveInput = backed && spend ? { amount: minor, spend, savings, nowMs: now, date } : null;
+    // Take out moves through the savings account only what the goal holds there.
+    const out =
+      moveInput && sign < 0
+        ? takeOutOps({ ...moveInput, goal, ids: { ...ids, plain: ulid() }, entryMinor: worth })
+        : null;
+    const ops = out
+      ? out.ops
+      : moveInput
+        ? moveOps({ ...moveInput, goal, sign, ids, entryMinor: worth })
         : entryOps(goal.id, sign * minor, now, date, ulid(), "dashboard");
     transact("user", ops, `savings:${goal.id}`)
       .then(() => {
         setAmount("");
         const shown = formatAmount(minor, currencyOf(savings));
+        if (out && moveInput) {
+          const moved = `Moved ${formatAmount(out.moved)} from ${moveInput.savings.name} to ${moveInput.spend.name}`;
+          const plain = `${formatAmount(out.plain)} that was never in ${moveInput.savings.name}`;
+          setNote(
+            out.plain === 0
+              ? `Moved ${shown} from ${moveInput.savings.name} to ${moveInput.spend.name}`
+              : out.moved === 0
+                ? `Took out ${plain}`
+                : `${moved}; took out ${plain}`,
+          );
+          return;
+        }
         setNote(
-          backed && spend
-            ? sign > 0
-              ? `Moved ${shown} from ${spend.name} to ${savings.name}`
-              : `Moved ${shown} from ${savings.name} to ${spend.name}`
+          moveInput
+            ? `Moved ${shown} from ${moveInput.spend.name} to ${moveInput.savings.name}`
             : `${sign > 0 ? "Saved" : "Took out"} ${shown}`,
         );
       })

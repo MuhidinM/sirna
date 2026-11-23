@@ -180,13 +180,22 @@ function readRange(m: RegExpExecArray, style: ClockStyle): [number, number] | un
 export interface ReadOptions {
   /** Read day words backwards: "mon" is last Monday, "20 dec" the last 20 Dec. For spending. */
   past?: boolean;
+  /** The line starts with a task verb, so a bare "morning" at its end is when to do it. */
+  taskLine?: boolean;
 }
+
+/** A day named anywhere in the text: today, tomorrow, a weekday, `in 3 days`, `20 dec`, `20/12`. */
+const MONTH_NAMES = Object.keys(MONTHS).join("|");
+const NAMES_A_DAY = new RegExp(
+  String.raw`\b(?:today|tdy|tomorrow|tmrw|tmr|yesterday|yday|${Object.keys(WEEKDAY_WORDS).join("|")})\b|\bin\s+\d{1,3}\s+(?:days?|weeks?)\b|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:${MONTH_NAMES})\b|\b(?:${MONTH_NAMES})\s+\d{1,2}\b`,
+  "i",
+);
 
 export function readWhen(
   text: string,
   nowMs: number,
   style: ClockStyle = "western",
-  { past = false }: ReadOptions = {},
+  { past = false, taskLine = false }: ReadOptions = {},
 ): When {
   // Day words follow the logical day (it starts at 03:00), so "tomorrow" said
   // at 01:00 is the coming day, not the one after (plan §5.1 rule 4).
@@ -293,6 +302,13 @@ export function readWhen(
     const atEnd = rest.slice(m.index + m[0].length).trim() === "";
     const afterDay = ENDS_WITH_WEEKDAY.test(rest.slice(0, m.index));
     if (word !== "tonight" && !lead && !atEnd && !afterDay) return false;
+    // A bare "morning" / "in the evening" ending the line ("good morning",
+    // "watched a movie in the evening") is a part of the day only on a task
+    // line, a line that names a day or time, or a line that is only the word.
+    const bare = word !== "tonight" && (!lead || lead === "in the") && !afterDay;
+    const others = (rest.slice(0, m.index) + " " + rest.slice(m.index + m[0].length)).trim();
+    if (bare && others && !taskLine && minutes === undefined && !NAMES_A_DAY.test(others))
+      return false;
     if (afterDay && !lead) windowAfterDayAt = m.index;
     // "tonight" said at 01:00 is the coming evening, not the one just gone.
     const evening = word === "tonight" || (word === "evening" && lead === "this");

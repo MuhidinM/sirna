@@ -83,7 +83,13 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
         title: block.title,
         taskId: block.taskId,
       }));
-    for (const block of blocks) {
+    // A task block you moved or added (kept) covers its task that day too.
+    const keptTaskTime = input.kept.flatMap((kept) =>
+      kept.taskId && tasks.some((t) => t.id === kept.taskId)
+        ? [{ areaId: null, taskId: kept.taskId, durationMin: kept.durationMin }]
+        : [],
+    );
+    for (const block of [...blocks, ...keptTaskTime]) {
       if (block.areaId) already[block.areaId] = (already[block.areaId] ?? 0) + block.durationMin;
       if (!block.taskId || finished.has(block.taskId)) continue;
       const task = tasks.find((t) => t.id === block.taskId);

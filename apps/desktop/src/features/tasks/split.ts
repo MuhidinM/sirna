@@ -102,11 +102,13 @@ export function manualSplitOps(
   task: Parameters<typeof splitOps>[0],
   steps: StepDraft[],
   newId: () => string,
+  later: Parameters<typeof splitOps>[3] = [],
 ): Op[] {
   const ops = splitOps(
     task,
     steps.map((step) => ({ title: step.title, minutes: step.minutes ?? 0 })),
     newId,
+    later,
   );
   return ops.map((op, index) =>
     op.op === "insert" && steps[index]?.minutes === null

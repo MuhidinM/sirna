@@ -19,17 +19,21 @@ export interface GoalRow {
   target_date: string | null;
   /**
    * The part of saved_minor sitting in a savings account (entries with an
-   * account). The rest is money put aside inside your spending accounts.
+   * account that is still savings). The rest is money put aside inside your
+   * spending accounts, including an account set back to spending.
    */
   held_minor?: number;
 }
+
+/** An entry is held while its account is a savings account (not once set back to spending). */
+const HELD = `e.account IN (SELECT id FROM money_accounts WHERE is_savings = 1)`;
 
 export const GOALS_SQL = `
   SELECT g.id, g.title, g.target_minor, g.start_date, g.status, g.target_date,
          COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
                    WHERE e.goal_id = g.id AND e.deleted_at IS NULL), 0) AS saved_minor,
          COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
-                   WHERE e.goal_id = g.id AND e.deleted_at IS NULL AND e.account IS NOT NULL), 0)
+                   WHERE e.goal_id = g.id AND e.deleted_at IS NULL AND ${HELD}), 0)
            AS held_minor
   FROM savings_goals g
   WHERE g.deleted_at IS NULL
@@ -37,8 +41,8 @@ export const GOALS_SQL = `
 
 /** Entries waiting for a goal; `held` is the part in a savings account. */
 export const UNASSIGNED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor, count(*) AS n,
-    COALESCE(sum(CASE WHEN account IS NOT NULL THEN amount_minor END), 0) AS held
-  FROM savings_entries WHERE goal_id IS NULL AND deleted_at IS NULL`;
+    COALESCE(sum(CASE WHEN ${HELD} THEN amount_minor END), 0) AS held
+  FROM savings_entries e WHERE goal_id IS NULL AND deleted_at IS NULL`;
 
 export type Stage = 0 | 1 | 2 | 3 | 4 | 5;
 export const STAGE_NAMES = ["Seed", "Sprout", "Small plant", "Bushy", "Flowering", "Tree"] as const;
@@ -189,6 +193,42 @@ export function moveOps(input: {
       },
     },
   ];
+}
+
+/**
+ * Take out for a goal: only what the goal holds in savings accounts moves
+ * back out of the savings account; the rest was put aside inside a spending
+ * account (an old saving with no account), so it is a plain negative entry
+ * with no transfer. `moved` and `plain` are the goal's ETB value of each.
+ */
+export function takeOutOps(
+  input: Omit<Parameters<typeof moveOps>[0], "goal" | "sign" | "ids"> & {
+    goal: Pick<GoalRow, "id" | "held_minor">;
+    ids: { entry: string; halves: [string, string]; transfer: string; plain: string };
+  },
+): { ops: Op[]; moved: Santim; plain: Santim } {
+  const worth = input.entryMinor ?? input.amount;
+  const moved = Math.max(0, Math.min(worth, input.goal.held_minor ?? 0));
+  const plain = worth - moved;
+  const ops: Op[] = [];
+  if (moved > 0) {
+    // The account's own amount for the moved part (the same when it is in ETB).
+    const amount = moved === worth ? input.amount : Math.round((input.amount * moved) / worth);
+    ops.push(...moveOps({ ...input, sign: -1, amount, entryMinor: moved }));
+  }
+  if (plain > 0)
+    ops.push(
+      ...entryOps(
+        input.goal.id,
+        -plain,
+        input.nowMs,
+        input.date,
+        input.ids.plain,
+        input.origin ?? "savings",
+        input.note ?? null,
+      ),
+    );
+  return { ops, moved, plain };
 }
 
 type SavingsSide = Pick<AccountRow, "id" | "currency" | "is_savings">;

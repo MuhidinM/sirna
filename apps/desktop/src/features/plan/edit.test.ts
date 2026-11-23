@@ -11,6 +11,7 @@ import {
   clockOf,
   deleteOps,
   draftOf,
+  editorKey,
   type EditBlock,
   focusAfterDelete,
   minuteOf,
@@ -349,5 +350,16 @@ describe("Next 7 days columns", () => {
     expect(weekColumn(DATE, planned, routine, forecast)).toEqual([
       { startMin: 600, durationMin: 90, areaId: null, title: "Read" },
     ]);
+  });
+});
+
+describe("the add popover's key", () => {
+  it("changes with another empty hour or another click, so the fields show the new time", () => {
+    const nine = { mode: "add" as const, draft: newDraft(9 * 60), opened: 1 };
+    const eleven = { mode: "add" as const, draft: newDraft(11 * 60), opened: 2 };
+    expect(editorKey(nine)).not.toBe(editorKey(eleven));
+    // The same hour clicked again opens a fresh popover too.
+    expect(editorKey(nine)).not.toBe(editorKey({ ...nine, opened: 3 }));
+    expect(editorKey({ mode: "edit", block: { id: "b1" } })).toBe("edit:b1");
   });
 });

@@ -12,6 +12,7 @@ import {
   choices,
   confirmText,
   defaultChoice,
+  enterStarts,
   OTHER,
   type SetupInfo,
   startProblem,
@@ -144,6 +145,13 @@ async function start() {
 }
 
 forWhat?.addEventListener("change", () => void choose(forWhat.value));
+
+// Enter on the closed For list starts too (a select never submits the form).
+forWhat?.addEventListener("keydown", (event) => {
+  if (!enterStarts(event)) return;
+  event.preventDefault();
+  void start();
+});
 
 other?.addEventListener("input", () => {
   if (title) title.textContent = other.value.trim() || "Other";

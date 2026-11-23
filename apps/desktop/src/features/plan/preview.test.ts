@@ -128,3 +128,17 @@ describe("the week ahead (T-069)", () => {
     expect(today.notBeforeMin).toBe(12 * 60);
   });
 });
+
+describe("a task block you moved or added", () => {
+  it("covers its task that day, so it isn't late", () => {
+    const due = task({ id: "d", remainingMin: 60, dueDate: MON });
+    const moved = {
+      ...day(0, [due]),
+      kept: [{ startMin: 8 * 60, durationMin: 60, taskId: "d", title: "Portfolio" }],
+    };
+    const preview = previewWeek([moved, ...[1, 2, 3, 4, 5, 6].map((i) => day(i, [due]))]);
+    expect(preview.late).toEqual([]);
+    // It isn't planned a second time either.
+    expect(preview.days[1]?.blocks.some((b) => b.taskId === "d")).toBe(false);
+  });
+});

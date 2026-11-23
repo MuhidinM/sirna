@@ -370,3 +370,59 @@ describe("a weekday before a part of the day", () => {
     });
   });
 });
+
+describe("' and ' inside a several-item line", () => {
+  const options: ParseOptions = { nowMs: sunday, accounts };
+
+  it("splits on commas first, and keeps 'salt and pepper' one item", () => {
+    expect(parseCapture("salt and pepper 50, coffee 30", options)).toMatchObject({
+      kind: "money",
+      items: [
+        { kind: "expense", description: "salt and pepper", amount: 5_000 },
+        { kind: "expense", description: "coffee", amount: 3_000 },
+      ],
+    });
+  });
+
+  it("gives a verbless piece after a loan the loan's verb", () => {
+    expect(parseCapture("lent abel 1500 and kebede 200", options)).toMatchObject({
+      kind: "money",
+      items: [
+        { kind: "loan", loanKind: "lent", person: "abel", amount: 150_000 },
+        { kind: "loan", loanKind: "lent", person: "kebede", amount: 20_000 },
+      ],
+    });
+  });
+
+  it("keeps a known spending word after a loan an expense", () => {
+    expect(parseCapture("lent abel 1500 and lunch 120", options)).toMatchObject({
+      kind: "money",
+      items: [
+        { kind: "loan", loanKind: "lent", person: "abel", amount: 150_000 },
+        { kind: "expense", description: "lunch", amount: 12_000 },
+      ],
+    });
+  });
+});
+
+describe("a bare part of the day at the end of a line", () => {
+  it("leaves a line that is not a task undated", () => {
+    expect(parseCapture("good morning", { nowMs: sunday })).not.toHaveProperty("dueDate");
+    const movie = parseCapture("watched a movie in the evening", { nowMs: sunday });
+    expect(movie).not.toHaveProperty("dueDate");
+    expect(movie).not.toHaveProperty("plannedWindow");
+  });
+
+  it("still reads it after a task verb or a day", () => {
+    expect(parseCapture("call mom in the evening", { nowMs: sunday })).toMatchObject({
+      dueDate: "2026-11-15",
+      plannedWindow: "evening",
+    });
+    expect(parseCapture("dentist 20 dec morning", { nowMs: sunday })).toMatchObject({
+      title: "dentist",
+      dueDate: "2026-12-20",
+      plannedWindow: "morning",
+    });
+    expect(readWhen("evening", sunday).window).toBe("evening");
+  });
+});

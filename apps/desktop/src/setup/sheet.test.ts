@@ -6,6 +6,7 @@ import {
   choices,
   confirmText,
   defaultChoice,
+  enterStarts,
   OTHER,
   PLAIN,
   runningBlock,
@@ -145,5 +146,32 @@ describe("what the session is for (spec §1 rule 7)", () => {
     expect(startProblem(OTHER, "  ")).toMatch(/what this session is for/);
     expect(startProblem(OTHER, "Read")).toBeUndefined();
     expect(startProblem("area:quran", "")).toBeUndefined();
+  });
+});
+
+describe("enterStarts", () => {
+  const key = (over: Partial<Parameters<typeof enterStarts>[0]> = {}) => ({
+    key: "Enter",
+    repeat: false,
+    isComposing: false,
+    altKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    metaKey: false,
+    ...over,
+  });
+
+  it("starts on a plain Enter on the closed For list", () => {
+    expect(enterStarts(key())).toBe(true);
+  });
+
+  it("ignores held, composed, modified and other keys", () => {
+    expect(enterStarts(key({ repeat: true }))).toBe(false);
+    expect(enterStarts(key({ isComposing: true }))).toBe(false);
+    expect(enterStarts(key({ altKey: true }))).toBe(false);
+    expect(enterStarts(key({ ctrlKey: true }))).toBe(false);
+    expect(enterStarts(key({ shiftKey: true }))).toBe(false);
+    expect(enterStarts(key({ key: " " }))).toBe(false);
+    expect(enterStarts(key({ key: "ArrowDown" }))).toBe(false);
   });
 });

@@ -53,6 +53,21 @@ export function checkRate(text: string): string | null {
   return rateParts(text) ? null : "A rate like 132.50 (birr for one unit).";
 }
 
+/** What the rate box shows: the text typed, and the saved rate it started from. */
+export interface RateBox {
+  saved: string;
+  text: string;
+}
+
+/**
+ * The rate box after the saved rate is read again: kept as typed while the
+ * saved rate is the same, else the new saved rate (set here or elsewhere).
+ * The row keeps its key (the currency), so its note and focus stay.
+ */
+export function syncRateBox(box: RateBox, saved: string): RateBox {
+  return box.saved === saved ? box : { saved, text: saved };
+}
+
 /** Sets a rate, dated today; an empty rate removes it. */
 export function rateOps(rates: Rates, currency: string, text: string, today: string): Op[] {
   const next: Rates = Object.fromEntries(

@@ -7,6 +7,7 @@ import {
   checkTask,
   COUNTS_SQL,
   filterTasks,
+  LATER_STEPS_SQL,
   statusOps,
   taskDraftOf,
   taskEditOps,
@@ -200,5 +201,86 @@ describe("review fixes", () => {
     ).toMatchObject({
       values: { planned_window: null },
     });
+  });
+});
+
+describe("splitting from the Tasks page (review fixes)", () => {
+  /** Inserts and updates, as tx.rs applies them. */
+  function write(db: DatabaseSync, ops: Op[]) {
+    for (const op of ops) {
+      if (op.op === "insert") {
+        const all = { id: op.id, ...op.values, created_at: NOW, updated_at: NOW };
+        const keys = Object.keys(all);
+        db.prepare(
+          `INSERT INTO task_items (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`,
+        ).run(...(Object.values(all) as Input[]));
+      } else apply(db, [op]);
+    }
+  }
+
+  it("keeps a timed task's time on its first step, so its block stays", async () => {
+    const { splitOps } = await import("../ai/facts");
+    const db = seeded();
+    const row = list(db, "open").find((t) => t.id === "a");
+    if (!row) throw new Error("expected task a");
+    expect(row.due_at).toBe(1794641400000);
+    let n = 0;
+    const ops = splitOps(
+      row,
+      [
+        { title: "Outline", minutes: 60 },
+        { title: "Write", minutes: 120 },
+      ],
+      () => `s${++n}`,
+    );
+    const inserts = ops.filter((op) => op.op === "insert");
+    expect(inserts.map((op) => op.op === "insert" && op.values.due_at)).toEqual([
+      1794641400000,
+      null,
+    ]);
+  });
+
+  it("splits a step in its place: the new steps take its slot and later ones move down", async () => {
+    const { manualSplitOps } = await import("./split");
+    const db = seeded();
+    db.exec(`
+      INSERT INTO task_items (id, title, status, parent_id, step_no, created_at, updated_at) VALUES
+        ('s1', 'Plan', 'todo', 'big', 1, 7, 7),
+        ('s2', 'Build', 'todo', 'big', 2, 8, 8),
+        ('s3', 'Ship', 'todo', 'big', 3, 9, 9);
+    `);
+    const row = list(db, "open").find((t) => t.id === "s2");
+    if (!row) throw new Error("expected step s2");
+    expect(row).toMatchObject({ parent_id: "big", step_no: 2 });
+    const later = db.prepare(LATER_STEPS_SQL).all(row.parent_id, row.step_no) as {
+      id: string;
+      step_no: number;
+    }[];
+    let n = 0;
+    write(
+      db,
+      manualSplitOps(
+        row,
+        [
+          { title: "Build the page", minutes: 60 },
+          { title: "Build the form", minutes: null },
+        ],
+        () => `n${++n}`,
+        later,
+      ),
+    );
+    const order = db
+      .prepare(
+        "SELECT id, step_no FROM task_items WHERE parent_id = 'big' AND status = 'todo' ORDER BY step_no",
+      )
+      .all();
+    expect(order).toEqual([
+      { id: "s1", step_no: 1 },
+      { id: "n1", step_no: 2 },
+      { id: "n2", step_no: 3 },
+      { id: "s3", step_no: 4 },
+    ]);
+    // The split step leaves the count: 4 steps, not 5.
+    expect(list(db, "open").find((t) => t.id === "n1")?.step_total).toBe(4);
   });
 });

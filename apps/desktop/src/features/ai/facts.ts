@@ -147,20 +147,32 @@ export function acceptGuessOps(
  * Using an AI split: the steps become tasks with the same area and date, each
  * with its own minutes, so the planner spreads them over the coming days; the
  * big task is dropped. All under `split:<id>`, so one undo restores it.
+ * A task with a time keeps it on its first step, so its block stays.
+ * Splitting a step (it has a parent and a number) puts the new steps in its
+ * place among its siblings: they take its parent and slot, and the later
+ * steps (`later`, the siblings numbered after it) move down to make room.
  */
 export function splitOps(
   task: {
     id: string;
     area_id: string | null;
     due_date: string | null;
+    due_at?: number | null;
     project_id?: string | null;
     planned_date?: string | null;
     planned_window?: string | null;
     deadline_stale?: number;
+    parent_id?: string | null;
+    step_no?: number | null;
   },
   steps: { title: string; minutes: number }[],
   newId: () => string,
+  later: { id: string; step_no: number | null }[] = [],
 ): Op[] {
+  const isStep = !!task.parent_id && !!task.step_no;
+  const parent = isStep ? (task.parent_id ?? task.id) : task.id;
+  const first = isStep ? (task.step_no ?? 1) : 1;
+  const shift = steps.length - 1;
   return [
     ...steps.map((step, index): Op => ({
       op: "insert",
@@ -171,6 +183,8 @@ export function splitOps(
         status: "todo",
         area_id: task.area_id,
         due_date: task.due_date,
+        // The task's time goes to the step done first; the rest have none.
+        due_at: index === 0 ? (task.due_at ?? null) : null,
         // Steps stay on the day the task was moved to, with its deadline mark (T-050).
         planned_date: task.planned_date ?? null,
         // ...and in its part of the day ("this evening"), so the planner places them there.
@@ -180,10 +194,28 @@ export function splitOps(
         estimate_min: step.minutes,
         origin: `split:${task.id}`,
         // In order: step 2 is offered once step 1 is done (T-051).
-        parent_id: task.id,
-        step_no: index + 1,
+        parent_id: parent,
+        step_no: first + index,
       },
     })),
-    { op: "update", table: "task_items", id: task.id, values: { status: "dropped" } },
+    ...(isStep && shift > 0
+      ? later
+          .filter((sibling) => sibling.id !== task.id && (sibling.step_no ?? 0) > first)
+          .map((sibling): Op => ({
+            op: "update",
+            table: "task_items",
+            id: sibling.id,
+            values: { step_no: (sibling.step_no ?? 0) + shift },
+          }))
+      : []),
+    {
+      op: "update",
+      table: "task_items",
+      id: task.id,
+      // A split step leaves the order: its steps stand in its place.
+      values: isStep
+        ? { status: "dropped", parent_id: null, step_no: null }
+        : { status: "dropped" },
+    },
   ];
 }

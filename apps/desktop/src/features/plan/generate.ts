@@ -85,6 +85,11 @@ export interface KeptBlock {
   taskId?: string | null;
   /** Its title: a new block with the same title and start would clash with it. */
   title?: string;
+  /**
+   * Its kind: a kept routine or calendar block stands for the template block
+   * or event of the same kind and title, wherever you moved it.
+   */
+  kind?: TemplateBlock["kind"];
 }
 
 export interface PlanInput {
@@ -221,6 +226,52 @@ function byDeadlineThenAge(a: TaskInput, b: TaskInput): number {
   return a.createdAt - b.createdAt;
 }
 
+/**
+ * The template blocks and events a kept block stands for: one each, of the
+ * same kind and title, the nearest in time (the same start first). A routine
+ * or calendar block you moved isn't copied again at its old time.
+ */
+function keptStandIns(
+  kept: KeptBlock[],
+  template: TemplateBlock[],
+  events: CalendarEvent[],
+): Set<object> {
+  const candidates = [
+    ...template
+      .filter((block) => block.kind !== "area")
+      .map((block) => ({ source: block as object, kind: block.kind, ...pick(block) })),
+    ...events.map((event) => ({ source: event as object, kind: "fixed" as const, ...pick(event) })),
+  ];
+  const taken = new Set<object>();
+  const named = kept.filter((block) => block.kind && block.kind !== "area" && block.title);
+  // Blocks still at their own time pair first, so a moved twin takes the other one.
+  const ordered = [
+    ...named.filter((block) =>
+      candidates.some((c) => same(c, block) && c.startMin === block.startMin),
+    ),
+    ...named.filter(
+      (block) => !candidates.some((c) => same(c, block) && c.startMin === block.startMin),
+    ),
+  ];
+  for (const block of ordered) {
+    const twin = candidates
+      .filter((c) => !taken.has(c.source) && same(c, block))
+      .sort(
+        (a, b) => Math.abs(a.startMin - block.startMin) - Math.abs(b.startMin - block.startMin),
+      )[0];
+    if (twin) taken.add(twin.source);
+  }
+  return taken;
+}
+
+function pick(block: { title: string; startMin: number }) {
+  return { title: block.title, startMin: block.startMin };
+}
+
+function same(candidate: { kind: string; title: string }, kept: KeptBlock): boolean {
+  return candidate.kind === kept.kind && candidate.title === kept.title;
+}
+
 export function generateDay(input: PlanInput): DayPlan {
   const light =
     input.isRestDay ||
@@ -236,15 +287,19 @@ export function generateDay(input: PlanInput): DayPlan {
   /** Area blocks you deleted today: their time stays empty. */
   const removedAreaTime = removed.filter((gone) => gone.kind === "area");
 
+  const events = (input.events ?? []).filter((event) => event.durationMin > 0);
+  const standIns = keptStandIns(input.kept, input.template, events);
+  const notMoved = (block: object) => !standIns.has(block);
+
   // 1. Fixed and routine blocks (and the rest block) from the template.
   const blocks: PlannedBlock[] = input.template
     .filter((block) => block.kind !== "area")
     .filter(free)
     .filter(notRemoved)
+    .filter(notMoved)
     .map((block) => ({ ...block, taskId: null }));
   // Calendar events are fixed blocks; a block you edited still wins.
-  const events = (input.events ?? []).filter((event) => event.durationMin > 0);
-  const shownEvents = events.filter(notRemoved);
+  const shownEvents = events.filter(notRemoved).filter(notMoved);
   for (const event of shownEvents.filter(free))
     blocks.push({ ...event, kind: "fixed", areaId: null, taskId: null });
 

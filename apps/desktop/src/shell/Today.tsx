@@ -10,7 +10,7 @@ import { splitOps } from "../features/ai/facts";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
-import { stepLabel } from "../features/tasks/list";
+import { LATER_STEPS_SQL, stepLabel } from "../features/tasks/list";
 import { todayTask } from "../features/plan/edit";
 import { toOps } from "../capture/ops";
 import { PARSER_ID } from "../capture/parse";
@@ -53,7 +53,8 @@ interface TaskRow extends Record<string, string | number | null> {
   step_total: number | null;
 }
 
-const PLANNED_WINDOW_SQL = "SELECT planned_window FROM task_items WHERE id = ?";
+/** What the split needs that today's rows don't carry: part of the day and step place. */
+const SPLIT_FACTS_SQL = "SELECT planned_window, parent_id, step_no FROM task_items WHERE id = ?";
 
 /** A task this long can be split into steps (plan §7.3, the AI's suggestion). */
 export const SPLIT_FROM_MIN = 90;
@@ -118,19 +119,32 @@ export function SplitTask({
           onClick={() => {
             if (using) return;
             setUsing(true);
-            // The steps keep the task's part of the day (its row here doesn't carry it).
-            void query<{ planned_window: string | null }>(PLANNED_WINDOW_SQL, [task.id])
-              .then(([row]) =>
-                transact(
+            // The steps keep the task's part of the day, and a step's new steps
+            // take its place (the later steps move down), as on the Tasks page.
+            void query<{
+              planned_window: string | null;
+              parent_id: string | null;
+              step_no: number | null;
+            }>(SPLIT_FACTS_SQL, [task.id])
+              .then(async ([row]) => {
+                const facts = {
+                  planned_window: row?.planned_window ?? null,
+                  parent_id: row?.parent_id ?? null,
+                  step_no: row?.step_no ?? null,
+                };
+                const later =
+                  facts.parent_id && facts.step_no
+                    ? await query<{ id: string; step_no: number | null }>(LATER_STEPS_SQL, [
+                        facts.parent_id,
+                        facts.step_no,
+                      ])
+                    : [];
+                return transact(
                   "user",
-                  splitOps(
-                    { ...task, planned_window: row?.planned_window ?? null },
-                    state.steps,
-                    () => ulid(),
-                  ),
+                  splitOps({ ...task, ...facts }, state.steps, () => ulid(), later),
                   `split:${task.id}`,
-                ),
-              )
+                );
+              })
               .then(onClose)
               .catch(() => setUsing(false));
           }}

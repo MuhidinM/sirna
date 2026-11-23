@@ -617,3 +617,46 @@ describe("a block you added by hand", () => {
     expect(plan.blocks.filter((block) => block.title === "Call bank")).toHaveLength(0);
   });
 });
+
+describe("a routine or calendar block you moved", () => {
+  it("isn't copied again at its old time", () => {
+    const template = templateFor(3);
+    const quran = template.find((b) => b.title === "Quran");
+    if (!quran) throw new Error("expected a Quran block");
+    const moved = {
+      startMin: quran.startMin + 60,
+      durationMin: 20,
+      title: "Quran",
+      kind: "routine" as const,
+    };
+    const plan = generateDay(input({ kept: [moved] }));
+    expect(plan.blocks.filter((b) => b.title === "Quran")).toEqual([]);
+  });
+
+  it("stands for one block only: the other one of the same name stays", () => {
+    const emails = templateFor(3).filter((b) => b.title === "Check email");
+    const [early, late] = emails;
+    if (!early || !late) throw new Error("expected two Check email blocks");
+    const moved = {
+      startMin: early.startMin + 30,
+      durationMin: 10,
+      title: "Check email",
+      kind: "routine" as const,
+    };
+    const plan = generateDay(input({ kept: [moved] }));
+    expect(plan.blocks.filter((b) => b.title === "Check email").map((b) => b.startMin)).toEqual([
+      late.startMin,
+    ]);
+  });
+
+  it("an event you moved isn't copied again at its old time", () => {
+    const plan = generateDay(
+      input({
+        template: [],
+        events: [{ startMin: 600, durationMin: 60, title: "Dentist" }],
+        kept: [{ startMin: 900, durationMin: 60, title: "Dentist", kind: "fixed" }],
+      }),
+    );
+    expect(plan.blocks.some((b) => b.title === "Dentist")).toBe(false);
+  });
+});

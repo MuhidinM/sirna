@@ -77,6 +77,7 @@ import {
   RATES_SQL,
   rateOps,
   readRates,
+  syncRateBox,
 } from "../features/money/currency";
 import {
   checkRegular,
@@ -2826,7 +2827,13 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
 /** One rate: birr for one unit, with the day it was set. */
 function RateRow({ code, rates, today }: { code: string; rates: Rates; today: string }) {
   const current = rates[code];
-  const [text, setText] = useState(current?.rate ?? "");
+  const saved = current?.rate ?? "";
+  const [box, setBox] = useState({ saved, text: saved });
+  // A new saved rate shows in the box without remounting the row (note and focus stay).
+  const synced = syncRateBox(box, saved);
+  if (synced !== box) setBox(synced);
+  const text = synced.text;
+  const setText = (value: string) => setBox({ saved, text: value });
   const [note, setNote] = useState<string | null>(null);
   const save = (value: string) => {
     const problem = value.trim() ? checkRate(value) : null;
@@ -2881,12 +2888,7 @@ function RatesCard({ accounts, today }: { accounts: AccountRow[]; today: string 
       <h2 id="money-rates">Exchange rates</h2>
       <ul className="money-rates">
         {codes.map((code) => (
-          <RateRow
-            key={`${code}${rates[code]?.rate ?? ""}`}
-            code={code}
-            rates={rates}
-            today={today}
-          />
+          <RateRow key={code} code={code} rates={rates} today={today} />
         ))}
       </ul>
       <p className="hint">
