@@ -1,4 +1,5 @@
-import { type CSSProperties, type RefObject, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { type CSSProperties, type RefObject, useEffect, useRef, useState } from "react";
 
 import "../theme/pages/plan-tasks.css";
 
@@ -9,7 +10,20 @@ import { ulid } from "../kernel/ulid";
 import { echo, toOps } from "../capture/ops";
 import { parseCapture, PARSER_ID } from "../capture/parse";
 import { type ClockStyle } from "../capture/when";
-import { SPLIT_MAX_MIN } from "../features/ai/touchpoints";
+import { ask } from "../features/ai/ask";
+import { aiUnavailable } from "../features/ai/codes";
+import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
+import { label, SPLIT } from "../features/ai/touchpoints";
+import { AI_CHANGED_EVENT, type AiUsage } from "../features/settings/status";
+import {
+  canSplit,
+  canSuggest,
+  checkSteps,
+  manualSplitOps,
+  parseSteps,
+  stepsMinutes,
+  stepsText,
+} from "../features/tasks/split";
 import {
   checkTask,
   COUNTS_SQL,
@@ -28,7 +42,6 @@ import {
 } from "../features/tasks/list";
 import { IconPlus, IconSearch } from "./icons";
 import { PanelHead } from "./kit";
-import { SPLIT_FROM_MIN, SplitTask } from "./Today";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -262,6 +275,138 @@ function TaskForm({
   );
 }
 
+/** Whether a Gemini key is saved; read again when Settings changes it. */
+function useHasAiKey(): boolean {
+  const [hasKey, setHasKey] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      void invoke<AiUsage>("ai_usage")
+        .then((usage) => live && setHasKey(usage.has_key))
+        .catch(() => live && setHasKey(false));
+    read();
+    window.addEventListener(AI_CHANGED_EVENT, read);
+    return () => {
+      live = false;
+      window.removeEventListener(AI_CHANGED_EVENT, read);
+    };
+  }, []);
+  return hasKey;
+}
+
+/**
+ * Split any open task (time-first §5): type your own steps, one per line, or
+ * let the AI suggest some into the same box to edit. Nothing changes until
+ * "Use these steps"; the split is one undo.
+ */
+function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"asking" | "saving" | null>(null);
+  const hasKey = useHasAiKey();
+  const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL));
+  const steps = parseSteps(text, task.estimate_min);
+  const problem = checkSteps(steps);
+  const total = stepsMinutes(steps);
+  const suggest = () => {
+    if (strict === null || !task.estimate_min) return;
+    setBusy("asking");
+    setNote(null);
+    void ask(SPLIT, {
+      task: label(task.title, task.area_name, strict, "task"),
+      area: task.area_name,
+      estimateMin: task.estimate_min,
+      due: task.due_date,
+    }).then((result) => {
+      setBusy(null);
+      if (result.ok) setText(stepsText(result.value.steps));
+      else setNote(aiUnavailable(result.code));
+    });
+  };
+  return (
+    <form
+      className="split task-split"
+      aria-label={`Split ${task.title}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (problem) {
+          setNote(problem);
+          return;
+        }
+        setBusy("saving");
+        transact("user", manualSplitOps(task, steps, ulid), `split:${task.id}`)
+          .then(onClose)
+          .catch((failure: unknown) => {
+            setBusy(null);
+            setNote(`Couldn't split it: ${message(failure)}`);
+          });
+      }}
+    >
+      <label className="field">
+        <span>Steps, one per line (add a time like “30 min” if you know it)</span>
+        <textarea
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- opened on request
+          autoFocus
+          rows={4}
+          value={text}
+          placeholder={"Outline — 30 min\nBuild the page — 1h\nPublish"}
+          onChange={(event) => {
+            setNote(null);
+            setText(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && busy === null) {
+              event.preventDefault();
+              onClose();
+            }
+          }}
+        />
+      </label>
+      {steps.length > 0 && (
+        <p className="meta">
+          {steps.length} {steps.length === 1 ? "step" : "steps"}
+          {total > 0 && ` · ${total} min`}
+          {task.estimate_min ? ` of about ${task.estimate_min} min` : ""}
+        </p>
+      )}
+      {/* Why "Use these steps" is still off, so a disabled button is never a mystery. */}
+      {!note && problem && text.trim() && (
+        <p className="meta" id={`split-why-${task.id}`}>
+          {problem}
+        </p>
+      )}
+      {note && (
+        <p role="alert" className="error">
+          {note}
+        </p>
+      )}
+      <div className="row">
+        <Button
+          primary
+          type="submit"
+          disabled={busy !== null || problem !== null}
+          aria-describedby={problem && text.trim() ? `split-why-${task.id}` : undefined}
+        >
+          Use these steps
+        </Button>
+        {hasKey && canSuggest(task.estimate_min) && (
+          <Button disabled={busy !== null || strict === null} onClick={suggest}>
+            {busy === "asking" ? "Asking…" : "Suggest with AI"}
+          </Button>
+        )}
+        <Button className="btn-ghost" onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+      {hasKey && !canSuggest(task.estimate_min) && (task.estimate_min ?? 0) < 20 && (
+        <p className="meta">
+          Give it an estimate of 20 min or more (Edit) and the AI can suggest steps.
+        </p>
+      )}
+    </form>
+  );
+}
+
 function TaskItem({
   row,
   view,
@@ -282,10 +427,7 @@ function TaskItem({
     void transact("user", statusOps(row, to, systemClock.now()), `task:${row.id}`).catch(
       (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
     );
-  const big =
-    row.status === "todo" &&
-    (row.estimate_min ?? 0) >= SPLIT_FROM_MIN &&
-    (row.estimate_min ?? 0) <= SPLIT_MAX_MIN;
+  const splittable = canSplit(row);
   if (editing)
     return (
       <li className="task-edit-row">
@@ -357,7 +499,7 @@ function TaskItem({
               <Button className="btn-ghost" onClick={() => setEditing(true)}>
                 Edit
               </Button>
-              {big && !splitting && (
+              {splittable && !splitting && (
                 <Button className="btn-ghost" onClick={() => setSplitting(true)}>
                   Split
                 </Button>
@@ -381,7 +523,7 @@ function TaskItem({
           )}
         </span>
       </div>
-      {splitting && <SplitTask task={row} onClose={() => setSplitting(false)} />}
+      {splitting && <SplitForm task={row} onClose={() => setSplitting(false)} />}
       {error && (
         <p role="alert" className="error task-error">
           {error}

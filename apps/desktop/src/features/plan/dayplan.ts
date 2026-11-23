@@ -5,7 +5,14 @@
 import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
 import { localToEpoch } from "../../capture/when";
-import { type AreaInput, type DayPlan, generateDay, type PlanInput } from "./generate";
+import {
+  type AreaInput,
+  type DayPlan,
+  type DayWindow,
+  generateDay,
+  type PlanInput,
+  type TaskInput,
+} from "./generate";
 
 export type Query = <T extends Row>(sql: string, params?: SqlValue[]) => Promise<T[]>;
 
@@ -45,7 +52,8 @@ export const DONE_THIS_WEEK_SQL = `
 
 /** Open tasks, with what is left of their estimate after focus time on them. */
 export const OPEN_TASKS_SQL = `
-  SELECT t.id, t.title, t.area_id, t.created_at,
+  SELECT t.id, t.title, t.area_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
+         t.estimate_min,
          -- A deadline an old carry may have written isn't urgent until confirmed.
          CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date,
          CASE WHEN t.estimate_min IS NULL THEN NULL ELSE MAX(0, t.estimate_min - COALESCE((
@@ -68,8 +76,17 @@ export const CHOSEN_TOP_SQL =
   "SELECT task_id FROM task_daily_top WHERE logical_date = ? AND chosen_by = 'user' ORDER BY position";
 
 export const KEPT_BLOCKS_SQL = `
-  SELECT id, start_at, end_at FROM day_blocks
+  SELECT id, start_at, end_at, task_id FROM day_blocks
   WHERE logical_date = ? AND deleted_at IS NULL AND (source = 'user' OR user_edited_at IS NOT NULL)`;
+
+/**
+ * Tasks whose own block you deleted on this day after touching it (user_edited_at
+ * set; the planner's own clean-up skips such blocks): not made again.
+ */
+export const REMOVED_TASK_BLOCKS_SQL = `
+  SELECT DISTINCT b.task_id FROM day_blocks b
+  JOIN task_items t ON t.id = b.task_id AND t.title = b.title
+  WHERE b.logical_date = ? AND b.deleted_at IS NOT NULL AND b.user_edited_at IS NOT NULL`;
 
 /**
  * Timed calendar events that overlap a logical day, given its start and end
@@ -88,6 +105,54 @@ export const ENERGY_SQL = `
 /** A YYYY-MM-DD date moved by whole days. */
 export function shiftDate(date: string, days: number): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+export type OpenTaskRow = {
+  id: string;
+  title: string;
+  area_id: string | null;
+  due_date: string | null;
+  due_at: number | null;
+  planned_window: string | null;
+  planned_date: string | null;
+  estimate_min: number | null;
+  created_at: number;
+  remaining_min: number | null;
+};
+
+const WINDOW_NAMES = new Set<string>(["morning", "afternoon", "evening"]);
+
+/**
+ * An open task as the planner sees it on `date` (time first, rules 1 and 2):
+ * timed on that day → its minute; a part of that day → its window; set for a
+ * later day → not today (undefined). A time or window on a day already gone
+ * is forgotten, so the task is planned like any other.
+ */
+export function taskOnDay(task: OpenTaskRow, date: string): TaskInput | undefined {
+  const base: TaskInput = {
+    id: task.id,
+    title: task.title,
+    areaId: task.area_id,
+    dueDate: task.due_date,
+    createdAt: task.created_at,
+    remainingMin: task.remaining_min,
+    estimateMin: task.estimate_min,
+  };
+  if (task.due_at !== null) {
+    const timedDay = logicalDate(task.due_at);
+    // A move to another day (planned_date) outranks the old time.
+    const day = task.planned_date ?? timedDay;
+    if (day === date && timedDay === date)
+      return { ...base, atMin: Math.round((task.due_at - localToEpoch(date, 0)) / 60000) };
+    if (day > date) return undefined;
+    return base;
+  }
+  if (task.planned_window && WINDOW_NAMES.has(task.planned_window)) {
+    const day = task.planned_date ?? task.due_date;
+    if (day === date) return { ...base, window: task.planned_window as DayWindow };
+    if (day !== null && day > date) return undefined;
+  }
+  return base;
 }
 
 export async function loadPlanInput(query: Query, date: string): Promise<PlanInput> {
@@ -113,22 +178,19 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       active: number;
     }>(AREAS_SQL),
     query<{ area_id: string; minutes: number }>(DONE_THIS_WEEK_SQL, [weekStart(date), date]),
-    query<{
-      id: string;
-      title: string;
-      area_id: string | null;
-      due_date: string | null;
-      created_at: number;
-      remaining_min: number | null;
-    }>(OPEN_TASKS_SQL, [date]),
+    query<OpenTaskRow>(OPEN_TASKS_SQL, [date]),
     query<{ task_id: string }>(CHOSEN_TOP_SQL, [date]),
-    query<{ id: string; start_at: number; end_at: number }>(KEPT_BLOCKS_SQL, [date]),
+    query<{ id: string; start_at: number; end_at: number; task_id: string | null }>(
+      KEPT_BLOCKS_SQL,
+      [date],
+    ),
     query<{ value_json: string }>(REST_DAY_SQL),
     query<{ summary: string; start_at: number; end_at: number }>(DAY_EVENTS_SQL, [
       localToEpoch(shiftDate(date, 1), DAY_START_MIN),
       localToEpoch(date, DAY_START_MIN),
     ]),
   ]);
+  const removed = await query<{ task_id: string }>(REMOVED_TASK_BLOCKS_SQL, [date]);
   const energy = await query<{ energy: number }>(ENERGY_SQL, [
     shiftDate(date, -1),
     shiftDate(date, -2),
@@ -167,7 +229,9 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
     kept: kept.map((block) => ({
       startMin: minuteOf(block.start_at),
       durationMin: minuteOf(block.end_at) - minuteOf(block.start_at),
+      taskId: block.task_id,
     })),
+    removedTaskIds: removed.map((row) => row.task_id),
     areas: areas.map((area): AreaInput => ({
       id: area.id,
       name: area.name,
@@ -179,14 +243,10 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       active: area.active === 1,
     })),
     doneThisWeekMin: Object.fromEntries(done.map((row) => [row.area_id, row.minutes])),
-    tasks: tasks.map((task) => ({
-      id: task.id,
-      title: task.title,
-      areaId: task.area_id,
-      dueDate: task.due_date,
-      createdAt: task.created_at,
-      remainingMin: task.remaining_min,
-    })),
+    tasks: tasks.flatMap((task) => {
+      const planned = taskOnDay(task, date);
+      return planned ? [planned] : [];
+    }),
     chosenTop: chosen.map((row) => row.task_id),
     // Clipped to the logical day (03:00 to 03:00).
     events: events.map((event) => {
@@ -216,6 +276,8 @@ export function planOps(
       area_id: block.areaId,
       task_id: block.taskId,
       title: block.title,
+      // A task's own block is a generator block too (the schema has no 'task'
+      // source yet), so a replan remakes it from the task's current time.
       source: block.kind === "area" ? "generator" : "template",
       light_day: plan.light ? 1 : 0,
     },
@@ -236,17 +298,21 @@ export function planOps(
 /** One plan run per date at a time in this window (React may run effects twice). */
 const running = new Map<string, Promise<boolean>>();
 
-/** Makes sure today has a plan; generates it once if not. Returns true when it wrote one. */
+/**
+ * Makes sure a day has a plan; generates it once if not. Returns true when it
+ * wrote one. The day is today (the logical date of `nowMs`) unless `date` names
+ * another logical date (YYYY-MM-DD), e.g. a day opened in Plan → Day.
+ */
 export function ensureDayPlan(
   query: Query,
   transact: (ops: Op[]) => Promise<unknown>,
   nowMs: number,
   newId: () => string,
+  date: string = logicalDate(nowMs),
 ): Promise<boolean> {
-  const date = logicalDate(nowMs);
   const inFlight = running.get(date);
   if (inFlight) return inFlight.then(() => false);
-  const run = planOnce(query, transact, nowMs, newId).finally(() => running.delete(date));
+  const run = planOnce(query, transact, date, newId, nowMs).finally(() => running.delete(date));
   running.set(date, run);
   return run;
 }
@@ -269,11 +335,12 @@ export async function replanDay(
   transact: (ops: Op[]) => Promise<unknown>,
   date: string,
   newId: () => string,
+  nowMs?: number,
 ): Promise<void> {
   const [exists] = await query<{ n: number }>(PLAN_EXISTS_SQL, [date]);
   if ((exists?.n ?? 0) === 0) return;
   const stale = await query<{ id: string }>(STALE_BLOCKS_SQL, [date]);
-  const input = await loadPlanInput(query, date);
+  const input = startingNow(await loadPlanInput(query, date), nowMs);
   const plan = generateDay(input);
   await transact([
     ...stale.map(({ id }): Op => ({ op: "delete", table: "day_blocks", id })),
@@ -281,16 +348,25 @@ export async function replanDay(
   ]);
 }
 
+/** On today, a part of the day is filled from now on (the morning may be gone). */
+export function startingNow(input: PlanInput, nowMs?: number): PlanInput {
+  if (nowMs === undefined || input.date !== logicalDate(nowMs)) return input;
+  return {
+    ...input,
+    notBeforeMin: Math.round((nowMs - localToEpoch(input.date, 0)) / 60000),
+  };
+}
+
 async function planOnce(
   query: Query,
   transact: (ops: Op[]) => Promise<unknown>,
-  nowMs: number,
+  date: string,
   newId: () => string,
+  nowMs: number,
 ): Promise<boolean> {
-  const date = logicalDate(nowMs);
   const [exists] = await query<{ n: number }>(PLAN_EXISTS_SQL, [date]);
   if ((exists?.n ?? 0) > 0) return false;
-  const input = await loadPlanInput(query, date);
+  const input = startingNow(await loadPlanInput(query, date), nowMs);
   if (input.template.length === 0) return false; // no routine yet (setup not done)
   const plan = generateDay(input);
   await transact(planOps(plan, date, newId, input.chosenTop.length > 0));

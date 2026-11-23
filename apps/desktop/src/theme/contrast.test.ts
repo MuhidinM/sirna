@@ -34,7 +34,7 @@ const themes = {
   night: block('[data-theme="night"] {'),
   forest: block('[data-theme="forest"] {'),
 };
-const shared = block(":root {\n  /* The white working surface");
+const shared = block(":root {\n  /* The loud palette");
 
 describe.each(Object.entries(themes))("%s theme", (_, t) => {
   it.each(["frame", "panel", "raised"])("text is readable on %s", (surface) => {
@@ -53,14 +53,44 @@ describe.each(Object.entries(themes))("%s theme", (_, t) => {
   });
 });
 
-describe("the white canvas", () => {
-  it.each(["canvas", "canvas-2"])("text is readable on %s", (surface) => {
-    expect(ratio(shared["canvas-ink"] ?? "", shared[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(shared["canvas-ink-2"] ?? "", shared[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+describe.each(Object.entries(themes))("%s canvas", (_, t) => {
+  it("is dark, like the panels around it", () => {
+    expect(luminance(t["canvas"] ?? "")).toBeLessThan(0.06);
+    expect(luminance(t["canvas-cream"] ?? "")).toBeLessThan(0.1);
+    expect(luminance(t["canvas-mint"] ?? "")).toBeLessThan(0.1);
   });
 
-  it("hints are visible", () => {
-    expect(ratio(shared["canvas-ink-3"] ?? "", shared["canvas"] ?? "")).toBeGreaterThanOrEqual(3);
+  it.each(["canvas", "canvas-2", "canvas-3"])("text is readable on %s", (surface) => {
+    expect(ratio(t["canvas-ink"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(t["canvas-ink-2"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("hints, lines and bars are visible", () => {
+    expect(ratio(t["canvas-ink-3"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio(t["canvas-ink-3"] ?? "", t["canvas-2"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio(t["canvas-line"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(1.2);
+    expect(ratio(t["canvas-strong"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(1.6);
+    expect(ratio(t["canvas-bar-top"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it("cream and mint blocks are soft but distinct, with readable ink", () => {
+    expect(ratio(t["canvas-cream"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(1.3);
+    expect(ratio(t["canvas-mint"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(1.15);
+    expect(ratio(t["canvas-cream-ink"] ?? "", t["canvas-cream"] ?? "")).toBeGreaterThanOrEqual(7);
+    expect(ratio(t["canvas-mint-ink"] ?? "", t["canvas-mint"] ?? "")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the loud cards stay bright on the canvas", () => {
+    for (const loud of ["yellow", "orange", "pink", "purple", "sky", "leaf"]) {
+      expect(ratio(shared[loud] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(3);
+    }
+    expect(ratio(shared["area-admin"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio(shared["area-ink"] ?? "", shared["area-admin"] ?? "")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the danger red and the success green read on the canvas", () => {
+    expect(ratio("#ff8a8a", t["canvas"] ?? "")).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(shared["leaf"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(4.5);
   });
 });
 

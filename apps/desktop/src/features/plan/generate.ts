@@ -9,11 +9,19 @@
  * 3. Area blocks go to the area furthest behind its weekly target (as a share),
  *    ties broken by priority. Capped areas stop at their target. An area with a
  *    task due within 48 hours goes first.
- * 4. Tasks go into their area's blocks: deadline first, then oldest; a slot
- *    with no task of its area takes a task with no area. A task with more
- *    estimated time left than one block continues in the next one (and on
- *    later days, since it stays open).
+ * 4. Tasks go into their area's blocks: deadline first, then oldest. A task
+ *    with no area never goes into an area block. A task with more estimated
+ *    time left than one block continues in the next one (and on later days,
+ *    since it stays open).
  * 5. At least 20% of free time stays unplanned.
+ *
+ * Time first (docs/proposals/time-first.md §1):
+ * - A task with a time gets its own block at that time (its estimate long,
+ *   else 30 min). It takes its time out of focus slots like a calendar event
+ *   and may sit beside a fixed block.
+ * - A task with a part of the day goes into the first free gap in that window.
+ * - A task with no area and no time gets a neutral block in free time left
+ *   after the area slots, when it has an estimate (the buffer still holds).
  * 6. Top 3: last night's choice, then deadlines within 48 h, then the most
  *    behind area's task.
  */
@@ -45,12 +53,36 @@ export interface TaskInput {
   createdAt: number;
   /** Minutes left of its estimate; null when it has none (one block is enough). */
   remainingMin?: number | null;
+  /** Its whole estimate: the length of its own block. */
+  estimateMin?: number | null;
+  /** Minute of this day (from local midnight) it is set for; null or absent when untimed. */
+  atMin?: number | null;
+  /** The part of this day it asked for. */
+  window?: DayWindow | null;
 }
+
+export type DayWindow = "morning" | "afternoon" | "evening";
+
+/** Parts of the day, in minutes from local midnight (evening covers "tonight"). */
+export const WINDOWS: Record<DayWindow, { startMin: number; endMin: number }> = {
+  morning: { startMin: 6 * 60, endMin: 12 * 60 },
+  afternoon: { startMin: 12 * 60, endMin: 17 * 60 },
+  evening: { startMin: 17 * 60, endMin: 22 * 60 },
+};
+
+/** A timed task's block length when it has no estimate. */
+export const TASK_BLOCK_MIN = 30;
+/** The logical day ends at 03:00 the next morning, in minutes from local midnight. */
+export const DAY_END_MIN = 27 * 60;
+/** The shortest focus or task block worth planning. */
+export const MIN_BLOCK_MIN = 25;
 
 /** A block you edited or added; regeneration keeps it and plans around it. */
 export interface KeptBlock {
   startMin: number;
   durationMin: number;
+  /** The task it holds: a task block you moved isn't made again. */
+  taskId?: string | null;
 }
 
 export interface PlanInput {
@@ -68,6 +100,10 @@ export interface PlanInput {
   chosenTop: string[];
   /** Timed events from your calendar: fixed, and never filled. */
   events?: CalendarEvent[];
+  /** Window tasks are placed from this minute on (today: now). */
+  notBeforeMin?: number;
+  /** Tasks whose own block you deleted today: not made again. */
+  removedTaskIds?: string[];
 }
 
 export interface CalendarEvent {
@@ -83,6 +119,8 @@ export interface PlannedBlock {
   areaId: string | null;
   taskId: string | null;
   title: string;
+  /** A task's own block (timed, window or neutral), titled with the task. */
+  fromTask?: boolean;
 }
 
 export interface DayPlan {
@@ -128,6 +166,33 @@ function overlaps(
   return a.startMin < b.startMin + b.durationMin && b.startMin < a.startMin + a.durationMin;
 }
 
+const QUARTER = 15;
+
+/**
+ * The first start in [from, until) where `length` minutes fit between the busy
+ * blocks, on a quarter hour. Null when nothing that long is free.
+ */
+export function firstGap(
+  busy: { startMin: number; durationMin: number }[],
+  length: number,
+  from: number,
+  until: number,
+): number | null {
+  let start = Math.ceil(from / QUARTER) * QUARTER;
+  for (const block of [...busy].sort((a, b) => a.startMin - b.startMin)) {
+    const end = block.startMin + block.durationMin;
+    if (end <= start) continue;
+    if (block.startMin - start >= length) break;
+    start = Math.ceil(end / QUARTER) * QUARTER;
+  }
+  return start + length <= until ? start : null;
+}
+
+/** It has an estimate (and some of it is left). */
+export function hasEstimate(task: TaskInput): boolean {
+  return (task.remainingMin ?? task.estimateMin ?? 0) > 0;
+}
+
 /** Tasks due within 48 h (overdue included), soonest first. */
 function urgent(tasks: TaskInput[], date: string): TaskInput[] {
   return tasks
@@ -160,17 +225,65 @@ export function generateDay(input: PlanInput): DayPlan {
     blocks.push({ ...event, kind: "fixed", areaId: null, taskId: null });
 
   const activeAreas = input.areas.filter((area) => area.active);
-  const tasksLeft = [...input.tasks];
+  const keptTasks = new Set([
+    ...input.kept.flatMap((kept) => (kept.taskId ? [kept.taskId] : [])),
+    ...(input.removedTaskIds ?? []),
+  ]);
+  const tasksLeft = input.tasks.filter((task) => !keptTasks.has(task.id));
+  const planned: Record<string, number> = {};
+  /** Time tasks took for themselves: it comes out of the focus slots. */
+  const taken: { startMin: number; durationMin: number }[] = [];
+  const addTaskBlock = (task: TaskInput, startMin: number, durationMin: number) => {
+    // The same title at the same minute is already there (the database allows one).
+    if (blocks.some((b) => b.startMin === startMin && b.title === task.title)) return;
+    blocks.push({
+      startMin,
+      durationMin,
+      kind: "area",
+      areaId: task.areaId,
+      taskId: task.id,
+      title: task.title,
+      fromTask: true,
+    });
+    taken.push({ startMin, durationMin });
+    if (task.areaId) planned[task.areaId] = (planned[task.areaId] ?? 0) + durationMin;
+  };
+  const drop = (task: TaskInput) => {
+    const index = tasksLeft.indexOf(task);
+    if (index >= 0) tasksLeft.splice(index, 1);
+  };
+  const lengthOf = (task: TaskInput) =>
+    task.estimateMin && task.estimateMin > 0 ? task.estimateMin : TASK_BLOCK_MIN;
+
+  // Time first, rule 1: a task with a time gets its own block at that time.
+  for (const task of tasksLeft.filter((t) => t.atMin !== null && t.atMin !== undefined)) {
+    const startMin = task.atMin ?? 0;
+    // A block never runs past the end of its logical day (03:00 next morning).
+    addTaskBlock(task, startMin, Math.max(1, Math.min(lengthOf(task), DAY_END_MIN - startMin)));
+    drop(task);
+  }
+  // Rule 2: a task with a part of the day goes into the first free gap in it.
+  for (const task of tasksLeft.filter((t) => t.window).sort(byDeadlineThenAge)) {
+    const window = WINDOWS[task.window ?? "morning"];
+    const length = lengthOf(task);
+    const from = Math.max(window.startMin, input.notBeforeMin ?? 0);
+    const start = firstGap([...blocks, ...input.kept], length, from, window.endMin);
+    if (start === null) continue; // no room: it stays an ordinary task
+    addTaskBlock(task, start, length);
+    drop(task);
+  }
+
   const left = new Map<string, number>();
-  const takeTask = (areaId: string, minutes: number): TaskInput | undefined => {
-    const pick = (match: (task: TaskInput) => boolean) =>
-      tasksLeft.filter(match).sort(byDeadlineThenAge)[0];
-    const task = pick((t) => t.areaId === areaId) ?? pick((t) => t.areaId === null);
-    if (!task) return undefined;
+  const charge = (task: TaskInput, minutes: number) => {
     const remaining = (left.get(task.id) ?? task.remainingMin ?? 0) - minutes;
     // Done for today once its estimate is covered (or it had none).
     if (remaining > 0) left.set(task.id, remaining);
-    else tasksLeft.splice(tasksLeft.indexOf(task), 1);
+    else drop(task);
+  };
+  /** Rule 4: an area's slot holds only that area's tasks. */
+  const takeTask = (areaId: string, minutes: number): TaskInput | undefined => {
+    const task = tasksLeft.filter((t) => t.areaId === areaId).sort(byDeadlineThenAge)[0];
+    if (task) charge(task, minutes);
     return task;
   };
 
@@ -182,26 +295,29 @@ export function generateDay(input: PlanInput): DayPlan {
       .filter((block) => block.kind === "area")
       .filter(free)
       .filter((slot) => !off.some((rest) => overlaps(rest, slot)))
-      // An event takes its time out of a slot; what's left still gets filled.
-      .flatMap((slot) => cut(slot, events).map((piece) => ({ ...slot, ...piece })))
-      .filter((slot) => slot.durationMin >= 25)
+      // An event or a task's own block takes its time out of a slot; the rest still gets filled.
+      .flatMap((slot) => cut(slot, [...events, ...taken]).map((piece) => ({ ...slot, ...piece })))
+      .filter((slot) => slot.durationMin >= MIN_BLOCK_MIN)
       // Slots you tied to an area come first, so the buffer never squeezes them out.
       .sort(
         (a, b) => Number(b.areaId !== null) - Number(a.areaId !== null) || a.startMin - b.startMin,
       );
     const freeMin = areaSlots.reduce((sum, block) => sum + block.durationMin, 0);
     const budget = Math.floor(freeMin * (1 - BUFFER_SHARE));
+    /** What is left of each slot after the area blocks. */
+    const leftover: { startMin: number; durationMin: number }[] = [];
 
     // 3. Fill each slot with the area furthest behind.
-    const planned: Record<string, number> = {};
     const urgentAreas = [
       ...new Set(urgent(input.tasks, input.date).map((task) => task.areaId)),
     ].filter((id): id is string => id !== null);
     let used = 0;
     for (const slot of areaSlots) {
-      if (used >= budget) break;
       const duration = Math.min(slot.durationMin, budget - used);
-      if (duration < 25) break;
+      if (duration < MIN_BLOCK_MIN) {
+        leftover.push(slot);
+        continue;
+      }
       const fillable = activeAreas.filter(
         (area) => FILLABLE_KINDS.has(area.kind) && area.weeklyTargetMin > 0,
       );
@@ -223,11 +339,17 @@ export function generateDay(input: PlanInput): DayPlan {
         )[0];
       // A deadline beats the weekly target: an urgent area gets its block even
       // when its target is met (a capped area still stops at its cap).
-      const isUrgent = pick?.id === urgentPick;
-      if (!pick || (!tied && !isUrgent && remaining(pick) <= 0)) continue;
-      if (tied && tied.capped && remaining(tied) <= 0) continue;
-      const minutes = pick.capped ? Math.min(duration, remaining(pick)) : duration;
-      if (minutes < 25) continue;
+      const isUrgent = pick !== undefined && pick.id === urgentPick;
+      const minutes = pick?.capped ? Math.min(duration, remaining(pick)) : duration;
+      if (
+        !pick ||
+        (!tied && !isUrgent && remaining(pick) <= 0) ||
+        (tied?.capped && remaining(tied) <= 0) ||
+        minutes < MIN_BLOCK_MIN
+      ) {
+        leftover.push(slot);
+        continue;
+      }
       planned[pick.id] = (planned[pick.id] ?? 0) + minutes;
       used += minutes;
       // 4. The area's most pressing task goes into the block.
@@ -240,6 +362,34 @@ export function generateDay(input: PlanInput): DayPlan {
         taskId: task?.id ?? null,
         title: task ? `${pick.name}: ${task.title}` : pick.name,
       });
+      if (slot.durationMin - minutes >= MIN_BLOCK_MIN)
+        leftover.push({
+          startMin: slot.startMin + minutes,
+          durationMin: slot.durationMin - minutes,
+        });
+    }
+
+    // Rule 5: a task with no area and no time, with an estimate, gets a
+    // neutral block in the free time left, inside the buffer.
+    leftover.sort((a, b) => a.startMin - b.startMin);
+    const loose = tasksLeft
+      .filter((task) => task.areaId === null && hasEstimate(task))
+      .sort(byDeadlineThenAge);
+    for (const task of loose) {
+      for (let i = 0; i < leftover.length && tasksLeft.includes(task); i++) {
+        const piece = leftover[i];
+        if (!piece) continue;
+        const need = left.get(task.id) ?? task.remainingMin ?? task.estimateMin ?? 0;
+        const minutes = Math.min(need, piece.durationMin, budget - used);
+        if (minutes < MIN_BLOCK_MIN) continue;
+        addTaskBlock(task, piece.startMin, minutes);
+        used += minutes;
+        charge(task, minutes);
+        leftover[i] = {
+          startMin: piece.startMin + minutes,
+          durationMin: piece.durationMin - minutes,
+        };
+      }
     }
   }
 

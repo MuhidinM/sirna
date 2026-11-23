@@ -5,7 +5,9 @@
  * the number. Pure and tested.
  */
 import { type Op } from "../../kernel/db";
-import { parseAmount } from "../../kernel/money";
+import { parseAmount, type Santim } from "../../kernel/money";
+import { type AccountRow, transferOps } from "../money/accounts";
+import { type Rates, toEtb } from "../money/currency";
 
 export interface GoalRow {
   id: string;
@@ -15,18 +17,27 @@ export interface GoalRow {
   status: "active" | "done" | "paused";
   saved_minor: number;
   target_date: string | null;
+  /**
+   * The part of saved_minor sitting in a savings account (entries with an
+   * account). The rest is money put aside inside your spending accounts.
+   */
+  held_minor?: number;
 }
 
 export const GOALS_SQL = `
   SELECT g.id, g.title, g.target_minor, g.start_date, g.status, g.target_date,
          COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
-                   WHERE e.goal_id = g.id AND e.deleted_at IS NULL), 0) AS saved_minor
+                   WHERE e.goal_id = g.id AND e.deleted_at IS NULL), 0) AS saved_minor,
+         COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
+                   WHERE e.goal_id = g.id AND e.deleted_at IS NULL AND e.account IS NOT NULL), 0)
+           AS held_minor
   FROM savings_goals g
   WHERE g.deleted_at IS NULL
   ORDER BY g.status = 'done', g.created_at`;
 
-/** Entries waiting for a goal (saved before any goal existed). */
-export const UNASSIGNED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor, count(*) AS n
+/** Entries waiting for a goal; `held` is the part in a savings account. */
+export const UNASSIGNED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor, count(*) AS n,
+    COALESCE(sum(CASE WHEN account IS NOT NULL THEN amount_minor END), 0) AS held
   FROM savings_entries WHERE goal_id IS NULL AND deleted_at IS NULL`;
 
 export type Stage = 0 | 1 | 2 | 3 | 4 | 5;
@@ -122,6 +133,153 @@ export function assignOps(entryIds: string[], goalId: string): Op[] {
     id,
     values: { goal_id: goalId },
   }));
+}
+
+// --- Savings accounts back the goals (time-first §4) ------------------------------
+
+/**
+ * Put aside: a transfer from a spending account into the savings account,
+ * and the goal's entry tied to it (same transfer_id), in one write. Take
+ * out (`sign` −1) is the reverse. Both accounts are in ETB, or the entry
+ * is the ETB the money is worth at its rate.
+ */
+export function moveOps(input: {
+  goal: Pick<GoalRow, "id">;
+  sign: 1 | -1;
+  amount: Santim;
+  spend: Pick<AccountRow, "id" | "name" | "currency">;
+  savings: Pick<AccountRow, "id" | "name" | "currency">;
+  nowMs: number;
+  date: string;
+  ids: { entry: string; halves: [string, string]; transfer: string };
+  /** The goal's value of the money, when the savings account isn't in ETB. */
+  entryMinor?: Santim;
+}): Op[] {
+  const { goal, sign, amount, spend, savings, nowMs, date, ids } = input;
+  const [from, to] = sign > 0 ? [spend, savings] : [savings, spend];
+  return [
+    ...transferOps({
+      from,
+      to,
+      amount,
+      date,
+      nowMs,
+      ids: ids.halves,
+      transferId: ids.transfer,
+      origin: "savings",
+    }),
+    {
+      op: "insert",
+      table: "savings_entries",
+      id: ids.entry,
+      values: {
+        goal_id: goal.id,
+        occurred_at: nowMs,
+        local_date: date,
+        amount_minor: sign * (input.entryMinor ?? amount),
+        note: null,
+        origin: "savings",
+        account: savings.id,
+        transfer_id: ids.transfer,
+      },
+    },
+  ];
+}
+
+/** Put aside and take out need two accounts in the same currency. */
+export function checkMove(
+  spend: Pick<AccountRow, "id" | "currency"> | undefined,
+  savings: Pick<AccountRow, "id" | "currency"> | undefined,
+): string | null {
+  if (!savings) return "Mark an account as savings first (Money → Accounts).";
+  if (!spend) return "Pick the account the money comes from.";
+  if ((spend.currency ?? "ETB") !== (savings.currency ?? "ETB"))
+    return "Pick an account in the same currency as the savings account.";
+  return null;
+}
+
+/** Transfer halves in a savings account that have no saving yet (or one that was removed). */
+export const SAVINGS_TRANSFERS_SQL = `
+  SELECT m.id, m.transfer_id, m.amount_minor, m.local_date, m.occurred_at, m.account,
+         m.created_at, COALESCE(a.currency, m.currency) AS currency,
+         (SELECT e.id FROM savings_entries e WHERE e.transfer_id = m.transfer_id) AS entry_id,
+         (SELECT e.goal_id FROM savings_entries e WHERE e.transfer_id = m.transfer_id) AS entry_goal
+  FROM money_txns m
+  JOIN money_accounts a ON a.id = m.account AND a.is_savings = 1
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NOT NULL AND m.transfer_id NOT LIKE 'loan:%'
+    AND NOT EXISTS (SELECT 1 FROM savings_entries e
+                    WHERE e.transfer_id = m.transfer_id AND e.deleted_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM money_txns o
+                    JOIN money_accounts oa ON oa.id = o.account AND oa.is_savings = 1
+                    WHERE o.transfer_id = m.transfer_id AND o.id <> m.id AND o.deleted_at IS NULL)`;
+
+/** Savings tied to a transfer that is gone (deleted, or a capture undone). */
+export const ORPHAN_SAVINGS_SQL = `
+  SELECT e.id FROM savings_entries e
+  WHERE e.deleted_at IS NULL AND e.transfer_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM money_txns m
+                    WHERE m.transfer_id = e.transfer_id AND m.deleted_at IS NULL)`;
+
+export interface SavingsTransfer {
+  id: string;
+  transfer_id: string;
+  amount_minor: number;
+  local_date: string;
+  occurred_at: number;
+  account: string;
+  created_at: number;
+  currency: string | null;
+  /** A removed saving for this transfer, brought back rather than doubled. */
+  entry_id: string | null;
+  /** The goal that removed saving had: it keeps it when brought back. */
+  entry_goal?: string | null;
+}
+
+/**
+ * Any transfer into (or out of) a savings account counts as saving: with one
+ * active goal it goes to that goal, with several it waits for "Give it
+ * to…". Transfers from before the account became savings don't count, nor
+ * does money with no rate yet. Savings whose transfer is gone go too.
+ */
+export function savingsSyncOps(input: {
+  transfers: SavingsTransfer[];
+  orphans: { id: string }[];
+  goals: Pick<GoalRow, "id" | "status">[];
+  since: Record<string, number>;
+  rates: Rates;
+  newId: () => string;
+}): Op[] {
+  const active = input.goals.filter((goal) => goal.status === "active");
+  const goalId = active.length === 1 ? (active[0]?.id ?? null) : null;
+  const goals = new Set(input.goals.map((goal) => goal.id));
+  const ops: Op[] = input.orphans.map((row) => ({
+    op: "delete" as const,
+    table: "savings_entries" as const,
+    id: row.id,
+  }));
+  for (const half of input.transfers) {
+    if (half.created_at < (input.since[half.account] ?? 0)) continue;
+    const minor = toEtb(half.amount_minor, half.currency, input.rates);
+    if (minor === null || minor === 0) continue;
+    // A saving brought back keeps its goal while that goal is still there.
+    const kept = half.entry_goal && goals.has(half.entry_goal) ? half.entry_goal : null;
+    const values = {
+      goal_id: half.entry_id ? (kept ?? goalId) : goalId,
+      occurred_at: half.occurred_at,
+      local_date: half.local_date,
+      amount_minor: minor,
+      note: null,
+      origin: "transfer",
+      account: half.account,
+      transfer_id: half.transfer_id,
+    };
+    ops.push(
+      half.entry_id
+        ? { op: "upsert", table: "savings_entries", id: half.entry_id, values }
+        : { op: "insert", table: "savings_entries", id: input.newId(), values },
+    );
+  }
+  return ops;
 }
 
 /** A withdrawal can't take more than the goal holds. */

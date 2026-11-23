@@ -98,4 +98,33 @@ describe("the week ahead (T-069)", () => {
     ]);
     expect(fromNow(day(0, []), 21 * 60).template).toEqual([]);
   });
+
+  it("shows a timed task's own block and doesn't judge a list-only task (time first)", () => {
+    const call = task({
+      id: "c",
+      title: "Call bank",
+      areaId: null,
+      atMin: 10 * 60,
+      estimateMin: 45,
+    });
+    const milk = task({ id: "m", title: "Buy milk", areaId: null, dueDate: MON });
+    const preview = previewWeek([day(0, [call, milk])]);
+    expect(preview.days[0]?.blocks).toContainEqual({
+      startMin: 600,
+      durationMin: 45,
+      areaId: null,
+      title: "Call bank",
+      taskId: "c",
+    });
+    expect(preview.days[0]?.blocks.some((b) => b.taskId === "m")).toBe(false);
+    expect(preview.late).toEqual([]);
+  });
+
+  it("forgets a time already gone today and starts parts of the day from now", () => {
+    const gone = task({ id: "g", atMin: 9 * 60 });
+    const soon = task({ id: "s", atMin: 20 * 60 });
+    const today = fromNow(day(0, [gone, soon]), 12 * 60);
+    expect(today.tasks.map((t) => t.atMin)).toEqual([null, 20 * 60]);
+    expect(today.notBeforeMin).toBe(12 * 60);
+  });
 });

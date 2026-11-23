@@ -12,8 +12,21 @@
         <h1 id="setup-title">Focus</h1>
         <span id="setup-minutes" class="setup-meta"></span>
       </header>
+      <div class="setup-for">
+        <label for="setup-for" class="setup-label">For</label>
+        <select id="setup-for" class="setup-select"></select>
+        <input
+          id="setup-other"
+          class="setup-field setup-other"
+          type="text"
+          spellcheck="false"
+          placeholder="What is it for?"
+          aria-label="What this session is for"
+          hidden
+        />
+      </div>
       <label for="setup-intent" class="setup-label">This session I will…</label>
-      <input id="setup-intent" class="setup-intent" type="text" spellcheck="false" />
+      <input id="setup-intent" class="setup-field setup-intent" type="text" spellcheck="false" />
       <ul id="setup-checklist" class="setup-checklist"></ul>
       <ul id="setup-notes" class="setup-notes" aria-label="Cheat sheet"></ul>
       <p id="setup-actions" class="setup-meta"></p>

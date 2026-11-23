@@ -5,7 +5,7 @@
  */
 import { logicalDate } from "../kernel/dates";
 import { parseAmount, type Santim } from "../kernel/money";
-import { type ClockStyle, localToEpoch, readWhen } from "./when";
+import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
 
@@ -19,36 +19,23 @@ export type Parsed =
       estimateMin?: number;
       dueDate?: string;
       dueAt?: number;
+      /** `tomorrow morning`, `tonight`: a part of the day instead of a time. */
+      plannedWindow?: DayWindow;
       area?: string;
       waitingOn?: string;
       /** `every fri`: a new copy comes once this one is done (T-068). */
       repeat?: Rule;
     }
   | MoneyItem
-  /** Several entries on one line: `lunch 120, taxi 40`. */
-  | { kind: "money"; items: MoneyItem[] }
+  /**
+   * Several money records on one line, split by commas or " and ":
+   * `+25000 salary, saved 500 laptop, lent Abel 1500, moved 2000 cbo to cash`.
+   */
+  | { kind: "money"; items: MoneyPiece[] }
   /** A question, not a record (T-074): `afford 4500 shoes`. Nothing is written. */
   | { kind: "afford"; amount: Santim; what?: string }
-  /** Money lent or owed (T-061): `lent 1000 abel`, `abel paid back 400`. */
-  | {
-      kind: "loan";
-      loanKind: "lent" | "borrowed" | "paid_me" | "i_paid";
-      person: string;
-      amount: Santim;
-      date: string;
-      account?: string;
-      accountName?: string;
-    }
-  /** Between your own accounts: `moved 2000 cbe to telebirr`. */
-  | {
-      kind: "transfer";
-      amount: Santim;
-      from: string;
-      to: string;
-      fromName: string;
-      toName: string;
-      date: string;
-    }
+  | LoanItem
+  | TransferItem
   | { kind: "note" | "feedback" | "inbox"; body: string; area?: string }
   | {
       kind: "idea";
@@ -64,14 +51,44 @@ export type Parsed =
   | { kind: "cheat"; body: string; area?: string }
   | { kind: "search"; query: string }
   | { kind: "away"; until?: string }
-  | {
-      kind: "saving";
-      /** Santim, positive: saved; negative: taken out. */
-      amount: Santim;
-      /** Words naming the goal (`laptop`), matched in the capture box. */
-      goal?: string;
-    }
+  | SavingItem
   | { kind: "focus" };
+
+/** Money lent or owed (T-061): `lent 1000 abel`, `abel paid back 400`. */
+export interface LoanItem {
+  kind: "loan";
+  loanKind: "lent" | "borrowed" | "paid_me" | "i_paid";
+  person: string;
+  amount: Santim;
+  date: string;
+  account?: string;
+  accountName?: string;
+  /** ISO code when not birr: `lent abel $50`, or the account's currency. */
+  currency?: string;
+}
+
+/** Between your own accounts: `moved 2000 cbe to telebirr`. */
+export interface TransferItem {
+  kind: "transfer";
+  amount: Santim;
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  date: string;
+  currency?: string;
+}
+
+export interface SavingItem {
+  kind: "saving";
+  /** Santim, positive: saved; negative: taken out. */
+  amount: Santim;
+  /** Words naming the goal (`laptop`), matched in the capture box. */
+  goal?: string;
+}
+
+/** One record of a several-item money line. */
+export type MoneyPiece = MoneyItem | LoanItem | TransferItem | SavingItem;
 
 export interface MoneyItem {
   kind: "expense" | "income";
@@ -88,6 +105,8 @@ export interface MoneyItem {
   /** The account (`@telebirr`); spending defaults to cash, income to the pay account. */
   account?: string;
   accountName?: string;
+  /** ISO code when not birr (`$200`, `50 eur`, or the account's currency): minor units of it. */
+  currency?: string;
 }
 
 export interface ParseOptions {
@@ -101,8 +120,17 @@ export interface ParseOptions {
   learned?: Record<string, string>;
   /** Your jobs (work areas), so income names where it came from. */
   jobs?: { id: string; name: string }[];
-  /** Your accounts, so `@telebirr` and transfers know them (T-058). */
-  accounts?: { id: string; name: string; kind: string; pays_in: number }[];
+  /** Your accounts, so `@telebirr` and transfers know them (T-058); `currency` defaults to ETB. */
+  accounts?: {
+    id: string;
+    name: string;
+    kind: string;
+    pays_in: number;
+    currency?: string;
+    is_savings?: number;
+  }[];
+  /** Your areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3). */
+  areas?: { id: string; name: string }[];
   /** People with an open loan, so "abel paid back 400" is read only when Abel owes you. */
   loanPeople?: { name: string; owedToMe: number; iOwe: number }[];
 }
@@ -514,7 +542,100 @@ function finishMoney(item: MoneyItem, options: ParseOptions): MoneyItem {
 const isMoney = (parsed: Parsed): parsed is MoneyItem =>
   parsed.kind === "expense" || parsed.kind === "income";
 
+const isPiece = (parsed: Parsed): parsed is MoneyPiece =>
+  isMoney(parsed) ||
+  parsed.kind === "loan" ||
+  parsed.kind === "transfer" ||
+  parsed.kind === "saving";
+
+/** Where a several-item line splits: a comma not inside a number (`rent 1,200`), or " and ". */
+const PIECE_SPLIT = /\s*,\s*(?=\D)|\s+and\s+/i;
+
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
+  const parsed = parsePiece(raw, options);
+  if (isMoney(parsed) || parsed.kind === "afford" || parsed.kind === "transfer") return parsed;
+  // `lunch 120, taxi 40`, `+25000 salary, saved 500 laptop and lent abel 1500`:
+  // several records when every piece is money (time-first §2).
+  const pieces = raw.split(PIECE_SPLIT).filter((piece) => piece.trim());
+  if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
+    // "lunch 120, taxi 40 @telebirr": an account on the last piece only is
+    // for the whole line.
+    const accounts = options.accounts ?? [];
+    const own = pieces.map((piece) => readAccount(piece, accounts).account);
+    const shared =
+      own.length > 1 && own.slice(0, -1).every((a) => !a) ? own[own.length - 1] : undefined;
+    const items = pieces.map((piece) =>
+      parsePiece(
+        shared && !readAccount(piece, accounts).account ? `${piece} @${shared.id}` : piece,
+        options,
+      ),
+    );
+    if (items.every(isPiece)) return { kind: "money", items };
+  }
+  return parsed;
+}
+
+/** ISO codes by what people type: `$`, `usd`, `dollars`, `€`, `eur`, `£`, `gbp`. */
+const CURRENCY_OF: Record<string, string> = {
+  $: "USD",
+  usd: "USD",
+  dollar: "USD",
+  dollars: "USD",
+  "€": "EUR",
+  eur: "EUR",
+  euro: "EUR",
+  euros: "EUR",
+  "£": "GBP",
+  gbp: "GBP",
+};
+const NUMBER = String.raw`\d[\d,]*(?:\.\d{1,2})?k?`;
+const CURRENCY_AMOUNT = new RegExp(
+  String.raw`(?<=^|[\s+])(?:([$€£])\s?(${NUMBER})|(usd|eur|gbp)\s?(${NUMBER})|(${NUMBER})\s?(usd|eur|gbp|dollars?|euros?))(?=$|[\s,.?!])`,
+  "iu",
+);
+
+/** `$200`, `200 usd`, `usd 200`, `€50`, `50 eur`, `£20`, `20 gbp`: the number left bare, and its currency. */
+export function readCurrency(text: string): { rest: string; currency?: string } {
+  const match = CURRENCY_AMOUNT.exec(text);
+  if (!match) return { rest: text };
+  const unit = (match[1] ?? match[3] ?? match[6] ?? "").toLowerCase();
+  const number = match[2] ?? match[4] ?? match[5] ?? "";
+  const currency = CURRENCY_OF[unit];
+  if (!currency || !number) return { rest: text };
+  const rest = text.slice(0, match.index) + number + text.slice(match.index + match[0].length);
+  return { rest, currency };
+}
+
+const currencyOf = (account: AccountOption | undefined) => account?.currency ?? "ETB";
+
+/**
+ * One record's worth of text. A currency (`$200`, `50 eur`) is read off
+ * first; with no `@account`, the first account kept in that currency is
+ * used. Without one, `@wise` gives its own currency. Birr is left unmarked.
+ */
+function parsePiece(raw: string, options: ParseOptions): Parsed {
+  const accounts = options.accounts ?? [];
+  const { rest, currency } = readCurrency(raw.trim().replace(/\s+/g, " "));
+  let parsed = parsePlain(rest, options);
+  if (currency && parsed.kind !== "transfer" && !readAccount(rest, accounts).account) {
+    const home = accounts.find((a) => currencyOf(a) === currency && a.is_savings !== 1);
+    if (home) parsed = parsePlain(`${rest} @${home.id}`, options);
+  }
+  if (parsed.kind === "transfer") {
+    const from = accounts.find((a) => a.id === parsed.from);
+    const code = currency ?? currencyOf(from);
+    return code === "ETB" ? parsed : { ...parsed, currency: code };
+  }
+  if (isMoney(parsed) || parsed.kind === "loan") {
+    const account = accounts.find((a) => a.id === parsed.account);
+    const code = currency ?? currencyOf(account);
+    return code === "ETB" ? parsed : { ...parsed, currency: code };
+  }
+  // A saving, a question or a task with a currency in it: read the line as typed.
+  return currency ? parsePlain(raw, options) : parsed;
+}
+
+function parsePlain(raw: string, options: ParseOptions): Parsed {
   const transfer = readTransfer(raw.trim().replace(/\s+/g, " "), options);
   if (transfer) return transfer;
   const asked = AFFORD.exec(raw.trim().replace(/\s+/g, " "));
@@ -527,27 +648,7 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
   }
   const loan = readLoan(raw.trim().replace(/\s+/g, " "), options);
   if (loan) return loan;
-  const parsed = parseMoneyLine(raw, options);
-  if (isMoney(parsed)) return parsed;
-  // `lunch 120, taxi 40`: several entries when every piece is money. A comma
-  // before a digit is a thousands separator (`rent 1,200`), not a split.
-  const pieces = raw.split(/\s*,\s*(?=\D)/).filter((piece) => piece.trim());
-  if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
-    // "lunch 120, taxi 40 @telebirr": an account on the last piece only is
-    // for the whole line.
-    const accounts = options.accounts ?? [];
-    const own = pieces.map((piece) => readAccount(piece, accounts).account);
-    const shared =
-      own.length > 1 && own.slice(0, -1).every((a) => !a) ? own[own.length - 1] : undefined;
-    const items = pieces.map((piece) =>
-      parseMoneyLine(
-        shared && !readAccount(piece, accounts).account ? `${piece} @${shared.id}` : piece,
-        options,
-      ),
-    );
-    if (items.every(isMoney)) return { kind: "money", items };
-  }
-  return parsed;
+  return parseMoneyLine(raw, options);
 }
 
 /** One line, with its `@account` taken out first and money settled after. */
@@ -599,7 +700,8 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
 
   const prefix = /^(t|n|idea|pin|wait|fb)\s*:\s*/i.exec(text);
   const body = prefix ? text.slice(prefix[0].length) : text;
-  const { rest: untagged, area } = readTag(body);
+  const { rest: untagged, area: tag } = readTag(body);
+  const area = tag ? (areaNamed(tag, options.areas ?? [])?.id ?? tag) : undefined;
 
   switch (prefix?.[1]?.toLowerCase()) {
     case "n":
@@ -618,7 +720,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
       return withArea(task, area);
     }
     case "t":
-      return withArea(readTask(untagged, nowMs, clockStyle), area);
+      return withArea(readTask(untagged, nowMs, clockStyle, options.areas), area);
     default:
       break;
   }
@@ -692,9 +794,9 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
     }
   }
 
-  const task = readTask(untagged, nowMs, clockStyle);
+  const task = readTask(untagged, nowMs, clockStyle, options.areas);
   const firstWord = untagged.split(" ")[0]?.toLowerCase() ?? "";
-  if (task.kind === "task" && (task.dueDate || TASK_VERBS.has(firstWord) || area)) {
+  if (task.kind === "task" && (task.dueDate || TASK_VERBS.has(firstWord) || area || task.area)) {
     return withArea(task, area);
   }
   return withArea({ kind: "inbox", body: untagged }, area);
@@ -704,13 +806,45 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
 const REPEAT_TAIL =
   /\s+((?:every|weekly|monthly|daily)\b(?:\s+(?:on\s+)?(?:the\s+)?[\w,]+(?:\s*(?:,|and)\s*\w+)*)?)$/i;
 
-function readTask(raw: string, nowMs: number, clockStyle: ClockStyle): Parsed {
+type AreaOption = NonNullable<ParseOptions["areas"]>[number];
+
+/**
+ * The area or job a name means: its id (`joba`), its whole name (`Job A`,
+ * `job a`) or, when only one area starts with it, its first word (`coding`
+ * for Coding skills). Names only: nothing is guessed from other words.
+ */
+export function areaNamed(words: string, areas: AreaOption[]): AreaOption | undefined {
+  const key = squash(words);
+  if (!key) return undefined;
+  const exact = areas.find((area) => area.id === key || squash(area.name) === key);
+  if (exact) return exact;
+  const first = areas.filter((area) => squash(area.name.split(/\s+/)[0] ?? "") === key);
+  return first.length === 1 ? first[0] : undefined;
+}
+
+/** `update CV for job hunt`: a trailing `for <area or job>` names the area and leaves the title. */
+function readForArea(title: string, areas: AreaOption[]): { rest: string; area?: string } {
+  const match = /\s+for\s+(.+)$/i.exec(title);
+  const area = match?.[1] ? areaNamed(match[1], areas) : undefined;
+  if (!match || !area) return { rest: title };
+  const rest = title.slice(0, match.index).trim();
+  // "pay for gym": a bare verb says too little, so the title stays whole.
+  return { rest: TASK_VERBS.has(rest.toLowerCase()) ? title : rest, area: area.id };
+}
+
+const CONNECTOR_TAIL = /\s+(?:by|on|at|before|due|from)$/i;
+
+function readTask(
+  raw: string,
+  nowMs: number,
+  clockStyle: ClockStyle,
+  areas: AreaOption[] = [],
+): Extract<Parsed, { kind: "task" }> {
   // `t: timesheet every fri`: the repeat comes off before the date words.
   const tail = REPEAT_TAIL.exec(raw);
   const rule = tail?.[1] ? parseRule(tail[1]) : null;
   if (rule && tail) {
-    const task = readTask(raw.slice(0, tail.index), nowMs, clockStyle);
-    if (task.kind !== "task") return task;
+    const task = readTask(raw.slice(0, tail.index), nowMs, clockStyle, areas);
     task.repeat = rule;
     if (!task.dueDate) {
       const first = onOrAfter(rule, logicalDate(nowMs));
@@ -726,10 +860,16 @@ function readTask(raw: string, nowMs: number, clockStyle: ClockStyle): Parsed {
     minutes > 0 && estimate ? raw.replace(estimate[0], " ").replace(/\s+/g, " ").trim() : raw;
   const when = readWhen(text, nowMs, clockStyle);
   // "build CLI tool by 20 dec" → "build CLI tool".
-  const title = when.date ? when.rest.replace(/\s+(?:by|on|at|before|due)$/i, "") : when.rest;
-  const task: Parsed = { kind: "task", title: title || text };
-  if (minutes > 0) task.estimateMin = minutes;
+  let title = when.date ? when.rest.replace(CONNECTOR_TAIL, "") : when.rest;
+  const named = readForArea(title, areas);
+  title = named.rest.replace(CONNECTOR_TAIL, "");
+  const task: Extract<Parsed, { kind: "task" }> = { kind: "task", title: title || text };
+  // A range (`3-4:30pm`) or `for 45 min` is how long it takes, unless `~2h` said so.
+  const length = minutes > 0 ? minutes : (when.durationMin ?? 0);
+  if (length > 0) task.estimateMin = length;
   if (when.date) task.dueDate = when.date;
   if (when.date && when.minutes !== undefined) task.dueAt = localToEpoch(when.date, when.minutes);
+  if (when.window) task.plannedWindow = when.window;
+  if (named.area) task.area = named.area;
   return task;
 }

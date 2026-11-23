@@ -3,7 +3,7 @@
  * month grid, the yellow Now card, the two-tone bar chart, event cards and
  * the day board. Presentational only; pages pass the data in.
  */
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { type CSSProperties, type HTMLAttributes, type ReactNode, useState } from "react";
 
 import { IconArrowLeft, IconArrowRight, IconPlus } from "./icons";
 
@@ -339,6 +339,7 @@ export function EventCard({
   className,
   style,
   children,
+  ...rest
 }: {
   tone: Tone;
   label?: ReactNode;
@@ -350,9 +351,10 @@ export function EventCard({
   className?: string | undefined;
   style?: CSSProperties;
   children?: ReactNode;
-}) {
+} & Omit<HTMLAttributes<HTMLElement>, "title" | "className" | "style" | "children">) {
   return (
     <article
+      {...rest}
       className={[
         "event",
         `tone-${tone}`,

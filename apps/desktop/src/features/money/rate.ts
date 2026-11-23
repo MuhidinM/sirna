@@ -4,6 +4,7 @@
  * the days Sirna planned (a day the app never opened has no blocks). Pure.
  */
 import { type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
+import { convert, newConversion, type Rates, rowCurrencySql } from "./currency";
 
 /** Minutes of each job's blocks between ?1 and ?2, up to now (?3); skipped or moved ones left out. */
 export const JOB_MINUTES_SQL = `
@@ -14,12 +15,13 @@ export const JOB_MINUTES_SQL = `
     AND b.logical_date >= ?1 AND b.logical_date <= ?2 AND b.start_at < ?3
   GROUP BY b.area_id`;
 
-/** Pay received per job between ?1 and ?2. */
+/** Pay received per job and currency between ?1 and ?2. */
 export const JOB_PAY_SQL = `
-  SELECT area_id, sum(amount_minor) AS minor FROM money_txns
-  WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor > 0 AND area_id IS NOT NULL
-    AND local_date >= ?1 AND local_date <= ?2
-  GROUP BY area_id`;
+  SELECT m.area_id, sum(m.amount_minor) AS minor, ${rowCurrencySql("m")} AS currency
+  FROM money_txns m LEFT JOIN money_accounts acc ON acc.id = m.account
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL AND m.amount_minor > 0
+    AND m.area_id IS NOT NULL AND m.local_date >= ?1 AND m.local_date <= ?2
+  GROUP BY m.area_id, ${rowCurrencySql("m")}`;
 
 export interface JobRate {
   areaId: string;
@@ -30,13 +32,18 @@ export interface JobRate {
   perHour: Santim | null;
 }
 
+/** Pay in another currency counts at its rate (none without one). */
 export function jobRates(
   minutes: { area_id: string; name: string; minutes: number }[],
-  pay: { area_id: string; minor: number }[],
+  pay: { area_id: string; minor: number; currency?: string | null }[],
+  rates: Rates = {},
 ): JobRate[] {
+  const conversion = newConversion();
   return minutes
     .map((row) => {
-      const paid = pay.find((p) => p.area_id === row.area_id)?.minor ?? 0;
+      const paid = pay
+        .filter((p) => p.area_id === row.area_id)
+        .reduce((sum, p) => sum + (convert(conversion, rates, p.minor, p.currency) ?? 0), 0);
       const perHour =
         row.minutes > 0 && paid > 0
           ? Math.floor((paid * 60) / row.minutes / SANTIM_PER_BIRR) * SANTIM_PER_BIRR

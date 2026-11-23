@@ -72,6 +72,7 @@ describe("goals and entries", () => {
         status: "active",
         target_date: null,
         saved_minor: 4_300_000,
+        held_minor: 0,
       },
     ]);
     apply(db, goalStatusOps("g1", "done"));
@@ -81,13 +82,13 @@ describe("goals and entries", () => {
   it("gives savings made before any goal to the first goal", () => {
     const db = openTestDb();
     apply(db, entryOps(null, 50_000, NOW, "2026-11-12", "e1", "capture"));
-    expect(db.prepare(UNASSIGNED_SQL).get()).toEqual({ minor: 50_000, n: 1 });
+    expect(db.prepare(UNASSIGNED_SQL).get()).toEqual({ minor: 50_000, n: 1, held: 0 });
     apply(
       db,
       addGoalOps({ title: "Laptop", target: "100,000" }, "2026-11-12", "g1", [{ id: "e1" }]),
     );
     expect(goals(db)[0]?.saved_minor).toBe(50_000);
-    expect(db.prepare(UNASSIGNED_SQL).get()).toEqual({ minor: 0, n: 0 });
+    expect(db.prepare(UNASSIGNED_SQL).get()).toEqual({ minor: 0, n: 0, held: 0 });
   });
 
   it("refuses a goal without a name or a real target, and a zero entry", () => {

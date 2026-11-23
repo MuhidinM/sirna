@@ -491,12 +491,150 @@ pub fn context_for(conn: &Connection, block_id: Option<&str>) -> rusqlite::Resul
             },
         )
         .optional()?;
-    Ok(row.unwrap_or(Context {
+    Ok(row.unwrap_or_else(plain))
+}
+
+/// A session tied to nothing: 25 minutes, a 5-minute break.
+fn plain() -> Context {
+    Context {
         title: "Focus".into(),
         focus_min: 25,
         break_min: 5,
         ..Context::default()
-    }))
+    }
+}
+
+/// A session for an area with no block (spec §1 rule 7): its time counts
+/// for the area, with the area's lengths.
+pub fn context_for_area(conn: &Connection, area_id: &str) -> rusqlite::Result<Context> {
+    let row = conn
+        .query_row(
+            "SELECT name, focus_min, break_min FROM area_items WHERE id = ?1 AND deleted_at IS NULL",
+            [area_id],
+            |row| {
+                Ok(Context {
+                    area_id: Some(area_id.to_string()),
+                    title: row.get(0)?,
+                    focus_min: row.get(1)?,
+                    break_min: row.get(2)?,
+                    ..Context::default()
+                })
+            },
+        )
+        .optional()?;
+    Ok(row.unwrap_or_else(plain))
+}
+
+/// What a session is for: a block wins over an area; neither is a plain one.
+pub fn context_for_target(
+    conn: &Connection,
+    block_id: Option<&str>,
+    area_id: Option<&str>,
+) -> rusqlite::Result<Context> {
+    match (block_id, area_id) {
+        (Some(_), _) | (None, None) => context_for(conn, block_id),
+        (None, Some(area_id)) => context_for_area(conn, area_id),
+    }
+}
+
+/// A block on today's board, as the set-up sheet offers it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DayBlock {
+    pub id: String,
+    pub title: String,
+    pub start_at: i64,
+    pub end_at: i64,
+    pub kind: String,
+    pub area_id: Option<String>,
+}
+
+/// Today's blocks (logical day), skipped and moved ones left out.
+pub fn today_blocks(conn: &Connection, now: i64) -> rusqlite::Result<Vec<DayBlock>> {
+    let (date, _) = crate::tasks::logical_day(now);
+    let mut statement = conn.prepare(
+        "SELECT id, title, start_at, end_at, kind, area_id FROM day_blocks
+         WHERE logical_date = ?1 AND deleted_at IS NULL AND status NOT IN ('skipped', 'moved')
+         ORDER BY start_at, end_at, title",
+    )?;
+    statement
+        .query_map([date], |row| {
+            Ok(DayBlock {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                start_at: row.get(2)?,
+                end_at: row.get(3)?,
+                kind: row.get(4)?,
+                area_id: row.get(5)?,
+            })
+        })?
+        .collect()
+}
+
+/// An area the sheet offers ("an area" in spec §1 rule 7).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AreaChoice {
+    pub id: String,
+    pub name: String,
+}
+
+/// Active areas in planning order.
+pub fn area_choices(conn: &Connection) -> rusqlite::Result<Vec<AreaChoice>> {
+    let mut statement = conn.prepare(
+        "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL
+         ORDER BY priority_rank, name",
+    )?;
+    statement
+        .query_map([], |row| {
+            Ok(AreaChoice {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?
+        .collect()
+}
+
+/// The undo context of a block added by "Other…".
+pub fn other_context(block_id: &str) -> String {
+    format!("focus:{block_id}")
+}
+
+/// "Other…" on the sheet: adds a neutral block at `now` for `minutes`, through
+/// the allowlisted tx ops so it is logged and can be undone. Returns its id.
+pub fn add_other_block(
+    conn: &Connection,
+    title: &str,
+    minutes: i64,
+    now: i64,
+) -> Result<String, crate::tx::TxError> {
+    let id = new_id(now).replacen("fs-", "fb-", 1);
+    let (date, _) = crate::tasks::logical_day(now);
+    let mut values = serde_json::Map::new();
+    values.insert("logical_date".into(), date.into());
+    values.insert("start_at".into(), now.into());
+    values.insert("end_at".into(), (now + minutes.max(1) * MINUTE_MS).into());
+    values.insert("kind".into(), "area".into());
+    values.insert("area_id".into(), serde_json::Value::Null);
+    values.insert("title".into(), title.trim().into());
+    values.insert("source".into(), "user".into());
+    let ops = [crate::tx::Op::Insert {
+        table: "day_blocks".into(),
+        id: id.clone(),
+        values,
+    }];
+    let txn = conn
+        .unchecked_transaction()
+        .map_err(|error| crate::tx::TxError::Sql(error.to_string()))?;
+    crate::tx::apply_ops(&txn, "user", Some(&other_context(&id)), &ops, now)?;
+    txn.commit()
+        .map_err(|error| crate::tx::TxError::Sql(error.to_string()))?;
+    Ok(id)
+}
+
+/// Takes back a block "Other…" added when its session did not start.
+pub fn remove_other_block(conn: &Connection, block_id: &str, now: i64) {
+    if let Err(error) = crate::tx::undo_context(conn, "user", &other_context(block_id), now) {
+        log::warn!("could not take back the focus block: {error}");
+    }
 }
 
 /// Loads the open session (if any) and the current row after a restart.
@@ -505,7 +643,7 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
         .query_row(
             "SELECT s.id, s.kind, s.started_at, s.planned_min, s.paused_at, s.paused_ms, s.block_id,
                     s.area_id, s.task_id, s.extended,
-                    COALESCE(f.intent_text, b.title, 'Focus'), COALESCE(a.break_min, 5)
+                    COALESCE(f.intent_text, b.title, a.name, 'Focus'), COALESCE(a.break_min, 5)
              FROM focus_sessions AS s
              LEFT JOIN day_blocks AS b ON b.id = s.block_id
              LEFT JOIN area_items AS a ON a.id = s.area_id
@@ -702,7 +840,8 @@ fn show_toast(app: &AppHandle, effect: &Effect) {
                 ],
                 move |action| {
                     if action.as_deref() == Some("start") {
-                        start_with_block(&handle, last_block(&handle), false);
+                        let (block, area) = last_target_of(&handle);
+                        start_for(&handle, block.as_deref(), area.as_deref(), false);
                     }
                 },
             )
@@ -777,24 +916,47 @@ fn answer_intent(app: &AppHandle, id: &str, answer: &str) {
     let _ = app.emit("data-changed", ["focus_sessions"]);
 }
 
-fn last_block(app: &AppHandle) -> Option<String> {
+/// What the last focus session was for (its block, else its area), so the
+/// next round after a break counts for the same thing (spec §1 rule 7).
+pub fn last_target(conn: &Connection) -> (Option<String>, Option<String>) {
+    conn.query_row(
+        "SELECT block_id, area_id FROM focus_sessions WHERE kind = 'focus'
+         ORDER BY started_at DESC LIMIT 1",
+        [],
+        |row| {
+            let block: Option<String> = row.get(0)?;
+            let area: Option<String> = row.get(1)?;
+            Ok(match block {
+                Some(block) => (Some(block), None),
+                None => (None, area),
+            })
+        },
+    )
+    .unwrap_or((None, None))
+}
+
+fn last_target_of(app: &AppHandle) -> (Option<String>, Option<String>) {
     let db = app.state::<Db>();
     let conn = db.write.lock();
-    conn.query_row(
-        "SELECT block_id FROM focus_sessions WHERE kind = 'focus' ORDER BY started_at DESC LIMIT 1",
-        [],
-        |row| row.get::<_, Option<String>>(0),
-    )
-    .ok()
-    .flatten()
+    last_target(&conn)
 }
 
 /// Starts a session for a block (or a plain 25-minute one).
 pub fn start_with_block(app: &AppHandle, block_id: Option<String>, force: bool) -> Vec<Effect> {
+    start_for(app, block_id.as_deref(), None, force)
+}
+
+/// Starts a session for a block, an area with no block, or nothing.
+pub fn start_for(
+    app: &AppHandle,
+    block_id: Option<&str>,
+    area_id: Option<&str>,
+    force: bool,
+) -> Vec<Effect> {
     let context = {
         let db = app.state::<Db>();
         let conn = db.write.lock();
-        context_for(&conn, block_id.as_deref())
+        context_for_target(&conn, block_id, area_id)
     };
     match context {
         Ok(context) => {
@@ -1198,5 +1360,169 @@ mod tests {
             restored.current.map(|s| s.title),
             Some("outline the post".into())
         );
+    }
+
+    #[test]
+    fn an_area_session_takes_the_areas_name_and_lengths() {
+        let conn = conn();
+        let context = context_for_target(&conn, None, Some("coding")).expect("area");
+        assert_eq!(context.block_id, None);
+        assert_eq!(context.area_id.as_deref(), Some("coding"));
+        assert_eq!(
+            (context.title.as_str(), context.focus_min, context.break_min),
+            ("Coding skills", 50, 10)
+        );
+        // An unknown area is a plain session.
+        let unknown = context_for_target(&conn, None, Some("nope")).expect("plain");
+        assert_eq!((unknown.area_id, unknown.focus_min), (None, 25));
+        assert_eq!(
+            context_for_target(&conn, None, None).expect("plain").title,
+            "Focus"
+        );
+    }
+
+    #[test]
+    fn a_block_wins_over_an_area() {
+        let conn = conn();
+        conn.execute_batch(
+            "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, created_at, updated_at)
+             VALUES ('b1', '2026-11-11', 0, 1, 'fixed', NULL, 'Lunch', 0, 0);",
+        )
+        .expect("block");
+        let context = context_for_target(&conn, Some("b1"), Some("coding")).expect("block");
+        assert_eq!(
+            (
+                context.block_id.as_deref(),
+                context.area_id,
+                context.title.as_str()
+            ),
+            (Some("b1"), None, "Lunch")
+        );
+    }
+
+    #[test]
+    fn the_next_round_after_a_break_counts_for_the_same_block_or_area() {
+        let conn = conn();
+        assert_eq!(last_target(&conn), (None, None));
+        conn.execute(
+            "INSERT INTO focus_sessions (id, area_id, kind, started_at, planned_min)
+             VALUES ('s1', 'quran', 'focus', ?1, 20)",
+            [T0],
+        )
+        .expect("area session");
+        assert_eq!(last_target(&conn), (None, Some("quran".into())));
+        conn.execute_batch(
+            "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, created_at, updated_at)
+             VALUES ('b1', '2026-11-11', 0, 1, 'area', 'coding', 'Coding skills', 0, 0);",
+        )
+        .expect("block");
+        conn.execute(
+            "INSERT INTO focus_sessions (id, block_id, area_id, kind, started_at, planned_min)
+             VALUES ('s2', 'b1', 'coding', 'focus', ?1, 50)",
+            [T0 + minutes(30)],
+        )
+        .expect("block session");
+        assert_eq!(last_target(&conn), (Some("b1".into()), None));
+    }
+
+    #[test]
+    fn an_area_session_keeps_its_area_name_after_a_restart() {
+        let conn = conn();
+        conn.execute(
+            "INSERT INTO focus_sessions (id, area_id, kind, started_at, planned_min)
+             VALUES ('s1', 'quran', 'focus', ?1, 20)",
+            [T0],
+        )
+        .expect("session");
+        let restored = restore(&conn, T0 + minutes(5)).expect("restore");
+        assert_eq!(restored.current.map(|s| s.title), Some("Quran".into()));
+    }
+
+    #[test]
+    fn the_sheet_lists_todays_blocks_and_active_areas() {
+        let conn = conn();
+        conn.execute_batch(
+            "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, status, created_at, updated_at)
+             VALUES ('late', '2026-11-11', 20, 30, 'area', 'coding', 'Coding skills', 'planned', 0, 0),
+                    ('early', '2026-11-11', 10, 20, 'fixed', NULL, 'Lunch', 'planned', 0, 0),
+                    ('skip', '2026-11-11', 5, 9, 'area', 'gym', 'Gym', 'skipped', 0, 0),
+                    ('other-day', '2026-11-12', 10, 20, 'area', 'gym', 'Gym', 'planned', 0, 0);
+             UPDATE area_items SET active = 0 WHERE id = 'jobb';",
+        )
+        .expect("blocks");
+        let ids: Vec<String> = today_blocks(&conn, T0)
+            .expect("blocks")
+            .into_iter()
+            .map(|block| block.id)
+            .collect();
+        assert_eq!(ids, ["early", "late"]);
+        let areas = area_choices(&conn).expect("areas");
+        assert_eq!(areas.first().map(|a| a.id.as_str()), Some("joba"));
+        assert!(areas.iter().all(|a| a.id != "jobb"));
+    }
+
+    #[test]
+    fn other_adds_an_undoable_block_now_for_the_session_length() {
+        let conn = conn();
+        let id = add_other_block(&conn, "  Read a book ", 25, T0).expect("add");
+        let (date, start, end, kind, area, title, source): (
+            String,
+            i64,
+            i64,
+            String,
+            Option<String>,
+            String,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT logical_date, start_at, end_at, kind, area_id, title, source
+                 FROM day_blocks WHERE id = ?1 AND deleted_at IS NULL",
+                [&id],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .expect("block");
+        assert_eq!(
+            (
+                date.as_str(),
+                start,
+                end,
+                kind.as_str(),
+                area,
+                title.as_str(),
+                source.as_str()
+            ),
+            (
+                "2026-11-11",
+                T0,
+                T0 + minutes(25),
+                "area",
+                None,
+                "Read a book",
+                "user"
+            )
+        );
+        // The session ties to it.
+        let context = context_for(&conn, Some(&id)).expect("context");
+        assert_eq!(context.title, "Read a book");
+
+        remove_other_block(&conn, &id, T0 + 1);
+        let live: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM day_blocks WHERE id = ?1 AND deleted_at IS NULL",
+                [&id],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(live, 0);
     }
 }

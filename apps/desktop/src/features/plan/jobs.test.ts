@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
-import { JOB_TASKS_SQL, type JobTask, listBlockIds, tasksByJob } from "./jobs";
+import {
+  AREA_TASKS_SQL,
+  JOB_TASKS_SQL,
+  type JobTask,
+  listBlockIds,
+  tasksByArea,
+  tasksByJob,
+} from "./jobs";
 
 describe("work tasks inside job blocks (T-067)", () => {
   it("lists each job's open tasks, deadline first, then planned, then oldest", () => {
@@ -43,7 +50,56 @@ describe("work tasks inside job blocks (T-067)", () => {
     expect([...listBlockIds(blocks, new Set(["joba", "jobb"]), 0)].sort()).toEqual(["a1", "b1"]);
   });
 
-  it("reads tasks of any work area, a third job included", () => {
+  it("gives every area block a list when no areas are named (time first, rule 6)", () => {
+    const blocks = [
+      { id: "q", area_id: "quran", kind: "routine", end_at: 100 },
+      { id: "a", area_id: "joba", kind: "fixed", end_at: 300 },
+      { id: "g", area_id: "gym", kind: "routine", end_at: 400 },
+      { id: "c", area_id: "coding", kind: "area", end_at: 500 },
+      { id: "off", area_id: "rest", kind: "rest", end_at: 500 },
+      { id: "none", area_id: null, kind: "fixed", end_at: 500 },
+    ];
+    expect([...listBlockIds(blocks, undefined, 0)].sort()).toEqual(["a", "c", "g", "q"]);
+  });
+
+  it("puts the list under an area block, not a task's own block, when there is one", () => {
+    const own = {
+      id: "own",
+      area_id: "coding",
+      kind: "area",
+      end_at: 100,
+      task_id: "t1",
+      title: "Fix bug",
+      task_title: "Fix bug",
+    };
+    const focus = {
+      id: "focus",
+      area_id: "coding",
+      kind: "area",
+      end_at: 300,
+      task_id: "t2",
+      title: "Coding: Read docs",
+      task_title: "Read docs",
+    };
+    expect([...listBlockIds([own, focus], undefined, 0)]).toEqual(["focus"]);
+    expect([...listBlockIds([own], undefined, 0)]).toEqual(["own"]);
+  });
+
+  it("leaves out tasks shown elsewhere", () => {
+    const row: JobTask = {
+      id: "t1",
+      title: "Fix bug",
+      area_id: "coding",
+      status: "todo",
+      due_date: null,
+      planned_date: null,
+      created_at: 0,
+    };
+    expect(tasksByArea([row], new Set(["t1"])).get("coding")).toBeUndefined();
+    expect(tasksByArea([row]).get("coding")).toHaveLength(1);
+  });
+
+  it("reads tasks of any area, a third job included", () => {
     const db = openTestDb();
     db.prepare(
       "INSERT INTO area_items (id, name, kind, color, priority_rank, created_at, updated_at) VALUES ('jobc', 'Job C', 'work', 'work', 9, 0, 0)",
@@ -59,7 +115,8 @@ describe("work tasks inside job blocks (T-067)", () => {
     const ids = (db.prepare(JOB_TASKS_SQL).all("2026-11-22") as { id: string }[])
       .map((r) => r.id)
       .sort();
-    // A third job counts; too far ahead, done, or not a job: left out.
-    expect(ids).toEqual(["c1", "nodate"]);
+    // A third job and the gym count; too far ahead or done: left out.
+    expect(ids).toEqual(["c1", "gym", "nodate"]);
+    expect(AREA_TASKS_SQL).toBe(JOB_TASKS_SQL);
   });
 });

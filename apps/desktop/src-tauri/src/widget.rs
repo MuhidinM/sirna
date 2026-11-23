@@ -125,13 +125,17 @@ fn open(app: &AppHandle) -> tauri::Result<()> {
             .inner_size(WIDTH, HEIGHT)
             .resizable(false)
             .decorations(false)
+            // Only the rounded panel shows: no square window behind it, no
+            // system shadow (like the capture bar), so no second corner.
+            .transparent(true)
+            .shadow(false)
             // No taskbar button to bring it back, so it can't be minimized.
             .minimizable(false)
             .skip_taskbar(true)
             .always_on_top(false)
             .focused(false)
             .visible(false)
-            .background_color(crate::windows::BACKGROUND)
+            .background_color(tauri::window::Color(0, 0, 0, 0))
             .build()?;
 
     let screens: Vec<(i32, i32, u32, u32)> = window

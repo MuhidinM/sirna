@@ -1,10 +1,12 @@
 /*
  * Sirna's design tokens (docs/design.md). Two themes, Night (default) and
- * Forest, share one palette of loud colours and one white canvas. Colours
- * were sampled from the Neura reference. Components use only these names.
+ * Forest, share one palette of loud colours. Each theme has its own dark
+ * working canvas (time-first §5): the canvas, its cream and mint blocks are
+ * soft dark tones; only the loud cards stay bright. Components use only these
+ * names.
  *
  * The older names (--surface-*, --text-*, --accent…) stay as aliases so every
- * screen keeps working; inside `.canvas` they switch to the white surface.
+ * screen keeps working; inside `.canvas` they switch to the canvas surface.
  */
 
 :root,
@@ -22,6 +24,23 @@
   --ink-2: #a3a29c;
   --ink-3: #8a8984;
   --stars: #e9c46a;
+
+  /* The working canvas. */
+  --canvas: #1c1c1a;
+  --canvas-2: #262624;
+  --canvas-3: #31302d;
+  --canvas-line: #34332f;
+  --canvas-strong: #4a4944;
+  --canvas-ink: #f4f2ec;
+  --canvas-ink-2: #b2b1aa;
+  --canvas-ink-3: #8f8e88;
+  --canvas-bar: #373632;
+  --canvas-bar-top: #4d4c46;
+  /* Cream and mint blocks on the canvas: soft dark tones with light ink. */
+  --canvas-cream: #3a3327;
+  --canvas-cream-ink: #fdf1da;
+  --canvas-mint: #1f3a2a;
+  --canvas-mint-ink: #8fd6a8;
 }
 
 [data-theme="forest"] {
@@ -38,19 +57,27 @@
   --ink-2: #b4d3bb;
   --ink-3: #8fb59a;
   --stars: #fef4dc;
+
+  /* The working canvas. */
+  --canvas: #18442a;
+  --canvas-2: #1f5033;
+  --canvas-3: #275a3c;
+  --canvas-line: #2c5c3d;
+  --canvas-strong: #457556;
+  --canvas-ink: #fef4dc;
+  --canvas-ink-2: #c3dcc8;
+  --canvas-ink-3: #9cc2a6;
+  --canvas-bar: #2c5c3d;
+  --canvas-bar-top: #487a58;
+  /* Cream and mint blocks on the canvas: soft dark tones with light ink. */
+  --canvas-cream: #3d5634;
+  --canvas-cream-ink: #fef4dc;
+  --canvas-mint: #1d5a36;
+  --canvas-mint-ink: #a6e3bb;
 }
 
 :root {
-  /* The white working surface (both themes). */
-  --canvas: #ffffff;
-  --canvas-2: #f4f4f1;
-  --canvas-3: #eaeae6;
-  --canvas-line: #e2e2de;
-  --canvas-ink: #141414;
-  --canvas-ink-2: #55554f;
-  --canvas-ink-3: #8a8a84;
-
-  /* The loud palette. */
+  /* The loud palette (both themes). */
   --cream: #fdf1da;
   --cream-ink: #2f2319;
   --pink: #f66399;
@@ -64,6 +91,8 @@
   --sky: #8ec5ff;
   --leaf: #8fd6a8;
   --on-loud: #141414;
+  /* White titles on orange and pink, and the white pills on loud cards. */
+  --white: #ffffff;
   --danger-loud: #e5484d;
   /* Hover shades of the loud buttons, and soft ink on the yellow Now card. */
   --yellow-hover: #ffc240;
@@ -77,7 +106,8 @@
   --area-experiments: var(--yellow);
   --area-gym: var(--leaf);
   --area-quran: var(--sky);
-  --area-admin: var(--cream);
+  /* Admin keeps the bright cream even where cream blocks turn dark. */
+  --area-admin: #fdf1da;
   --area-rest: var(--raised);
   --area-ink: #141414;
 
@@ -135,10 +165,10 @@
   --focus-ring: 0 0 0 2px var(--frame), 0 0 0 4px var(--yellow);
 }
 
-/* … and on the white canvas. */
+/* … and on the canvas. */
 .canvas,
 .on-canvas {
-  color-scheme: light;
+  color-scheme: dark;
   --surface-0: var(--canvas);
   --surface-1: var(--canvas);
   --surface-2: var(--canvas-2);
@@ -147,7 +177,7 @@
   --text-secondary: var(--canvas-ink-2);
   --text-muted: var(--canvas-ink-3);
   --border: var(--canvas-line);
-  --border-strong: #cfcfca;
+  --border-strong: var(--canvas-strong);
   --panel: var(--canvas);
   --raised: var(--canvas-2);
   --chip: var(--canvas-2);
@@ -155,11 +185,11 @@
   --ink: var(--canvas-ink);
   --ink-2: var(--canvas-ink-2);
   --ink-3: var(--canvas-ink-3);
-  --bar: #e4e4df;
-  --bar-top: #d3d3cd;
-  --danger: #c8333a;
-  /* Yellow text is unreadable on white: warnings turn orange here. */
-  --warning: var(--orange);
-  --success: var(--mint-ink);
-  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--canvas-ink);
+  --bar: var(--canvas-bar);
+  --bar-top: var(--canvas-bar-top);
+  --cream: var(--canvas-cream);
+  --cream-ink: var(--canvas-cream-ink);
+  --mint: var(--canvas-mint);
+  --mint-ink: var(--canvas-mint-ink);
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--yellow);
 }

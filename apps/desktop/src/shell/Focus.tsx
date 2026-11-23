@@ -51,12 +51,16 @@ export function clock(ms: number): string {
 }
 
 /**
- * Starts focus on a block through the set-up sheet (plan §3.6a), which applies
+ * Starts focus through the set-up sheet (plan §3.6a): any time, for any block
+ * or none (spec §1 rule 7). The sheet asks what the session is for, applies
  * the area's kit and asks again during a long break or past the hard stop.
  */
 export async function startFocus(blockId: string | null): Promise<void> {
   await invoke("focus_setup_open", { blockId });
 }
+
+/** What "Distracted (+1)" does (spec §1 rule 7). */
+export const DISTRACTED_TIP = "Count an interruption; it shows on the Dashboard";
 
 const control = (action: "pause" | "resume" | "stop" | "distracted") =>
   void invoke("focus_control", { action });
@@ -111,7 +115,11 @@ export function FocusPanel({ status }: { status: FocusStatus }) {
               Pause
             </Button>
           ))}
-        {!onBreak && <Button onClick={() => control("distracted")}>Distracted</Button>}
+        {!onBreak && (
+          <Button onClick={() => control("distracted")} title={DISTRACTED_TIP}>
+            Distracted (+1)
+          </Button>
+        )}
         <Button className="btn-ghost" onClick={() => control("stop")}>
           {onBreak ? "End break" : "Stop"}
         </Button>

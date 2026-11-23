@@ -3,18 +3,20 @@ import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { localDate, showDate } from "../kernel/dates";
-import { query, transact } from "../kernel/db";
+import { commitCapture, query, transact } from "../kernel/db";
 import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
 import { splitOps } from "../features/ai/facts";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
-import { statusOps, stepLabel } from "../features/tasks/list";
-import { JOB_TASKS_SQL, type JobTask, listBlockIds, tasksByJob } from "../features/plan/jobs";
+import { stepLabel } from "../features/tasks/list";
+import { todayTask } from "../features/plan/edit";
+import { toOps } from "../capture/ops";
+import { PARSER_ID } from "../capture/parse";
 import { ensureRepeats } from "../features/tasks/repeat";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
-import { ensureDayPlan, shiftDate, weekStart } from "../features/plan/dayplan";
+import { ensureDayPlan, weekStart } from "../features/plan/dayplan";
 import { useWeekOutcomes } from "./WeekAhead";
 import {
   DUE_SQL,
@@ -29,7 +31,7 @@ import { Brief } from "./Brief";
 import { Missed } from "./Missed";
 import { TodayMoney } from "./Money";
 import { FocusPanel, useFocus } from "./Focus";
-import { NowCards, Timeline } from "./Timeline";
+import { NowCards, Timeline, useBoard } from "./Timeline";
 import { FocusWeek } from "./FocusWeek";
 import { IconPlus } from "./icons";
 import { PanelHead } from "./kit";
@@ -258,13 +260,8 @@ export function Today({
     today,
   ]);
   const minuteNow = useMinute();
-  // Each job's tasks under its next block (T-067).
-  const jobTasks = useLiveQuery<JobTask & Record<string, string | number | null>>(JOB_TASKS_SQL, [
-    shiftDate(today, 7),
-  ]);
-  const jobs = useLiveQuery<{ id: string }>(
-    "SELECT id FROM area_items WHERE kind = 'work' AND deleted_at IS NULL",
-  );
+  // Each area's tasks inside its blocks (rule 6); the board is editable (rule 8).
+  const board = useBoard(today, blocks.rows);
   const away = useLiveQuery<{ value_json: string }>(AWAY_SQL);
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
@@ -336,6 +333,7 @@ export function Today({
                       ))}
                     </ul>
                   )}
+                  <AddForToday today={today} />
                 </section>
 
                 {moreDue.length > 0 && (
@@ -357,19 +355,10 @@ export function Today({
                 <Timeline
                   blocks={blocks.rows}
                   nowMs={minuteNow}
-                  jobTasks={tasksByJob(jobTasks.rows)}
-                  listUnder={listBlockIds(
-                    blocks.rows,
-                    new Set(jobs.rows.map((row) => row.id)),
-                    minuteNow,
-                  )}
-                  onDone={(task) =>
-                    void transact(
-                      "user",
-                      statusOps(task, "done", systemClock.now()),
-                      `task:${task.id}`,
-                    )
-                  }
+                  date={today}
+                  areaTasks={board.areaTasks}
+                  onDone={board.onDone}
+                  edit={board.edit}
                 />
               </section>
             </div>
@@ -389,6 +378,61 @@ export function Today({
         </div>
       </div>
     </main>
+  );
+}
+
+/** "Add for today" (§5): a capture dated today, saved as typed first. */
+function AddForToday({ today }: { today: string }) {
+  const [text, setText] = useState("");
+  const [said, setSaid] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const add = () => {
+    const nowMs = systemClock.now();
+    const parsed = todayTask(text, today, nowMs);
+    if (!parsed || parsed.kind !== "task" || saving) return;
+    setSaving(true);
+    void commitCapture(text.trim(), toOps(parsed, { nowMs, newId: () => ulid() }), PARSER_ID)
+      .then(() => {
+        setText("");
+        const day = parsed.dueDate ?? today;
+        setSaid(
+          `Added “${parsed.title}” for ${day === today ? "today" : showDate(day, today, { weekday: true })}.`,
+        );
+      })
+      .catch((error: unknown) =>
+        setSaid(`Couldn't add it: ${error instanceof Error ? error.message : String(error)}`),
+      )
+      .finally(() => setSaving(false));
+  };
+  return (
+    <form
+      className="add-today"
+      onSubmit={(event) => {
+        event.preventDefault();
+        add();
+      }}
+    >
+      <label className="add-today-field">
+        <IconPlus size={16} />
+        <span className="visually-hidden">Add for today</span>
+        <input
+          value={text}
+          placeholder="Add for today: call bank 3pm, #jobhunt send CV…"
+          onChange={(event) => {
+            setText(event.target.value);
+            setSaid(null);
+          }}
+        />
+      </label>
+      <Button type="submit" disabled={!text.trim() || saving}>
+        Add
+      </Button>
+      {said && (
+        <p className="meta add-today-said" role="status">
+          {said}
+        </p>
+      )}
+    </form>
   );
 }
 

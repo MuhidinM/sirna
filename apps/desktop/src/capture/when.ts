@@ -14,11 +14,24 @@ export type ClockStyle = "western" | "ethiopian";
 export interface When {
   /** Local date, YYYY-MM-DD. */
   date?: string;
-  /** Minutes after local midnight. */
+  /** Minutes after the date's midnight; 24:00 or more for 00:00–03:00, which belongs to the logical day before. */
   minutes?: number;
+  /** How long, from a range (`3-4:30pm`) or `for 45 min` after a time. */
+  durationMin?: number;
+  /** A part of the day instead of a time: `tomorrow morning`, `tonight`. */
+  window?: DayWindow;
   /** The text with the date and time words removed. */
   rest: string;
 }
+
+export type DayWindow = "morning" | "afternoon" | "evening";
+
+/** Where each part of the day starts and ends, in minutes after midnight (time-first §1 rule 2). */
+export const WINDOWS: Record<DayWindow, { start: number; end: number }> = {
+  morning: { start: 6 * 60, end: 12 * 60 },
+  afternoon: { start: 12 * 60, end: 17 * 60 },
+  evening: { start: 17 * 60, end: 22 * 60 },
+};
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const WEEKDAY_WORDS: Record<string, number> = {
@@ -130,6 +143,40 @@ function readHour(hour: number, ampm: string | undefined, style: ClockStyle): nu
   return hour <= 6 ? hour + 12 : hour;
 }
 
+const AMPM = String.raw`(am|pm|a\.m\.|p\.m\.)`;
+/** `3-4:30pm`, `3pm-4pm`, `from 3pm to 4pm`, `15:00-16:00`, `from 9 to 5`. */
+const RANGE = new RegExp(
+  String.raw`\s(?:(from|at)\s+)?(\d{1,2})(?::(\d{2}))?\s*${AMPM}?(?:\s*[-–]\s*|\s+(?:to|till|until)\s+)(\d{1,2})(?::(\d{2}))?\s*${AMPM}?(?=\s)`,
+  "i",
+);
+/** `for 45 min`, `for 2h`, `for an hour` after a time. */
+const FOR_DURATION = /\s+for\s+(\d+(?:\.\d+)?|an?|one)\s*(m|mins?|minutes?|h|hrs?|hours?)(?=\s)/i;
+const WINDOW_WORD =
+  /\s(?:(this|in\s+the|tomorrow|tmrw|tmr|today)\s+)?(morning|afternoon|evening|tonight)(?=\s)/i;
+const ENDS_WITH_WEEKDAY =
+  /(?:^|\s)(?:sun|sunday|mon|monday|tue|tues|tuesday|wed|weds|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\s*$/i;
+
+/** A range's two ends in minutes; the side without am/pm borrows the other's. */
+function readRange(m: RegExpExecArray, style: ClockStyle): [number, number] | undefined {
+  const [, lead, h1, m1, ap1, h2, m2, ap2] = m;
+  // Bare numbers ("chapters 3-4") are only a time with `from`, a colon or am/pm.
+  if (!lead?.toLowerCase().startsWith("from") && !m1 && !m2 && !ap1 && !ap2) return undefined;
+  const minute = (text: string | undefined) => (text ? Number(text) : 0);
+  if (minute(m1) > 59 || minute(m2) > 59) return undefined;
+  const at = (hour: string | undefined, mins: string | undefined, ampm: string | undefined) => {
+    const h = readHour(Number(hour), ampm?.toLowerCase(), ampm || mins ? "western" : style);
+    return h === undefined ? undefined : h * 60 + minute(mins);
+  };
+  const flip = (ampm: string) => (ampm.toLowerCase().startsWith("a") ? "pm" : "am");
+  let end = at(h2, m2, ap2 ?? ap1);
+  let start = at(h1, m1, ap1 ?? ap2);
+  if (start === undefined || end === undefined) return undefined;
+  // "11-1pm" is 11:00 to 13:00; "11am-1" is 11:00 to 13:00.
+  if (!ap1 && ap2 && start > end) start = at(h1, m1, flip(ap2)) ?? start;
+  if (ap1 && !ap2 && end <= start) end = at(h2, m2, flip(ap1)) ?? end;
+  return [start, end];
+}
+
 export interface ReadOptions {
   /** Read day words backwards: "mon" is last Monday, "20 dec" the last 20 Dec. For spending. */
   past?: boolean;
@@ -166,14 +213,32 @@ export function readWhen(
     }
   };
 
-  // Times first, so "10am" isn't read as a day.
-  take(/\s(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?(?=\s)/i, (m) => {
-    const hour = readHour(Number(m[1]), m[3]?.toLowerCase(), m[3] ? style : "western");
-    const minute = Number(m[2]);
-    if (hour === undefined || minute > 59) return false;
-    minutes = hour * 60 + minute;
+  let durationMin: number | undefined;
+  let window: DayWindow | undefined;
+  /** Where `fri afternoon` had its part of the day, so `fri` still counts mid-line. */
+  let windowAfterDayAt: number | undefined;
+
+  // A range first, so its end isn't left behind in the title (time-first §2).
+  take(RANGE, (m) => {
+    const range = readRange(m, style);
+    if (!range) return false;
+    const [start, end] = range;
+    const length = end > start ? end - start : end + 24 * 60 - start;
+    if (length > 18 * 60) return false;
+    minutes = start;
+    durationMin = length;
     return true;
   });
+
+  // Times first, so "10am" isn't read as a day.
+  if (minutes === undefined)
+    take(/\s(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?(?=\s)/i, (m) => {
+      const hour = readHour(Number(m[1]), m[3]?.toLowerCase(), m[3] ? style : "western");
+      const minute = Number(m[2]);
+      if (hour === undefined || minute > 59) return false;
+      minutes = hour * 60 + minute;
+      return true;
+    });
   if (minutes === undefined) {
     // "at 10.30" or "10.30pm": a dot only counts as a time with "at" or am/pm,
     // so "coffee 30.50" stays money.
@@ -210,12 +275,36 @@ export function readWhen(
   if (minutes === undefined) {
     take(/\s(noon|midday)(?=\s)/i, () => ((minutes = 12 * 60), true));
   }
+  if (minutes !== undefined && durationMin === undefined) {
+    take(FOR_DURATION, (m) => {
+      const count = /^\d/.test(m[1] ?? "") ? Number(m[1]) : 1;
+      const length = Math.round((m[2]?.toLowerCase().startsWith("m") ? 1 : 60) * count);
+      if (length <= 0 || length > 18 * 60) return false;
+      durationMin = length;
+      return true;
+    });
+  }
 
-  take(/\s(today|tonight|tdy)(?=\s)/i, (m) => {
-    date = today;
-    if (m[1]?.toLowerCase() === "tonight" && minutes === undefined) minutes = 20 * 60;
+  // A part of the day: `tomorrow morning`, `this evening`, `fri afternoon`,
+  // `tonight`. A bare "morning" mid-line ("morning run") stays a word.
+  take(WINDOW_WORD, (m) => {
+    const word = m[2]?.toLowerCase() ?? "";
+    const lead = m[1]?.toLowerCase().replace(/\s+/g, " ");
+    const atEnd = rest.slice(m.index + m[0].length).trim() === "";
+    const afterDay = ENDS_WITH_WEEKDAY.test(rest.slice(0, m.index));
+    if (word !== "tonight" && !lead && !atEnd && !afterDay) return false;
+    if (afterDay && !lead) windowAfterDayAt = m.index;
+    // "tonight" said at 01:00 is the coming evening, not the one just gone.
+    const evening = word === "tonight" || (word === "evening" && lead === "this");
+    if (evening && calendarToday !== today) date = calendarToday;
+    else if (word === "tonight" || lead === "this" || lead === "today") date = today;
+    else if (lead && lead !== "in the") date = addDays(today, 1);
+    // A time you gave wins over the part of the day.
+    if (minutes === undefined) window = word === "tonight" ? "evening" : (word as DayWindow);
     return true;
   });
+
+  if (!date) take(/\s(today|tdy)(?=\s)/i, () => ((date = today), true));
   if (!date) take(/\s(tomorrow|tmrw|tmr)(?=\s)/i, () => ((date = addDays(today, 1)), true));
   if (!date) {
     take(/\sin\s+(\d{1,3})\s+(day|days|week|weeks)(?=\s)/i, (m) => {
@@ -233,7 +322,8 @@ export function readWhen(
       if (target === undefined) return false;
       const isLast = rest.slice(m.index + m[0].length).trim() === "";
       const prefix = m[1]?.toLowerCase();
-      if (!prefix && !isLast) return false;
+      const beforeWindow = windowAfterDayAt === m.index + m[0].length;
+      if (!prefix && !isLast && !beforeWindow) return false;
       if (past) {
         // Spending: the most recent such day, today included.
         date = addDays(today, -((weekday(today) - target + 7) % 7));
@@ -278,14 +368,32 @@ export function readWhen(
     });
   }
 
-  // A time with no day means today, or tomorrow if that time has passed.
-  if (minutes !== undefined && !date) {
-    date = localToEpoch(calendarToday, minutes) > nowMs ? calendarToday : addDays(calendarToday, 1);
+  // A time with no day means today, or tomorrow if that time has passed. A
+  // range or a part of the day counts as today until it ends: "read from 3pm
+  // to 4pm" typed at 15:12 is today's 15:00 (time-first §2).
+  if (!date) {
+    const end =
+      minutes !== undefined
+        ? minutes + (durationMin ?? 0)
+        : window !== undefined
+          ? WINDOWS[window].end
+          : undefined;
+    if (end !== undefined) {
+      date = localToEpoch(calendarToday, end) > nowMs ? calendarToday : addDays(calendarToday, 1);
+      // "at 1am" said at 00:30 is due on the logical day it falls in (it starts at 03:00).
+      // Kept as minutes past that day's midnight (25:00), so the moment is unchanged.
+      if (minutes !== undefined && logicalDate(localToEpoch(date, minutes)) !== date) {
+        date = addDays(date, -1);
+        minutes += 24 * 60;
+      }
+    }
   }
 
   const result: When = { rest: rest.replace(/\s+/g, " ").trim() };
   if (date) result.date = date;
   if (minutes !== undefined) result.minutes = minutes;
+  if (durationMin !== undefined) result.durationMin = durationMin;
+  if (window !== undefined) result.window = window;
   return result;
 }
 

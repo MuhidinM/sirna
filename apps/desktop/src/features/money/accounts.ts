@@ -6,6 +6,7 @@
  */
 import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim } from "../../kernel/money";
+import { type Conversion, convert, type Rates } from "./currency";
 
 export interface AccountRow {
   id: string;
@@ -17,10 +18,15 @@ export interface AccountRow {
   sort_order: number;
   /** Entries counted toward the balance (from the opening date, or all). */
   moved_minor: number;
+  /** The account's currency; ETB when not given. Its entries are in it too. */
+  currency?: string;
+  /** 1 = a savings account: backs the goals, left out of safe to spend. */
+  is_savings?: number;
 }
 
 export const ACCOUNTS_SQL = `
   SELECT a.id, a.name, a.kind, a.opening_minor, a.opening_date, a.pays_in, a.sort_order,
+         a.currency, a.is_savings,
          COALESCE((SELECT sum(m.amount_minor) FROM money_txns m
                    WHERE m.account = a.id AND m.deleted_at IS NULL
                      AND (a.opening_date IS NULL OR m.local_date >= a.opening_date)), 0)
@@ -48,6 +54,32 @@ export function totalBalance(accounts: AccountRow[]): { total: Santim; unknown: 
     else total += balance;
   }
   return { total, unknown };
+}
+
+/** The account's currency (ETB unless set). */
+export const currencyOf = (account: Pick<AccountRow, "currency"> | undefined) =>
+  account?.currency ?? "ETB";
+
+export const isSavings = (account: Pick<AccountRow, "is_savings">) => account.is_savings === 1;
+
+/** Accounts you spend from: everything but savings accounts. */
+export const spending = <T extends Pick<AccountRow, "is_savings">>(accounts: T[]) =>
+  accounts.filter((account) => !isSavings(account));
+
+/**
+ * The accounts in ETB for totals: a foreign balance converted at its rate,
+ * one with no rate left out (and noted in `conversion`). Accounts without a
+ * balance stay, so they still count as unknown.
+ */
+export function inEtb(accounts: AccountRow[], rates: Rates, conversion: Conversion): AccountRow[] {
+  return accounts.flatMap((account) => {
+    const balance = balanceOf(account);
+    const currency = currencyOf(account);
+    if (balance === null || currency === "ETB") return [account];
+    const etb = convert(conversion, rates, balance, currency);
+    if (etb === null) return [];
+    return [{ ...account, opening_minor: etb, moved_minor: 0, currency: "ETB" }];
+  });
 }
 
 export const payAccount = (accounts: Pick<AccountRow, "id" | "pays_in">[]) =>
@@ -91,6 +123,7 @@ export function reconcileOps(
         occurred_at: nowMs,
         local_date: today,
         amount_minor: gap,
+        currency: currencyOf(account),
         description: gap < 0 ? "Unrecorded spending" : "Unrecorded income",
         category_id: null,
         origin: "reconcile",
@@ -101,19 +134,27 @@ export function reconcileOps(
 
 export function reconcileText(account: AccountRow, typed: Santim): string {
   const balance = balanceOf(account);
-  if (balance === null) return `${account.name} starts at ${formatAmount(typed)}.`;
+  const show = (minor: Santim) => formatAmount(minor, currencyOf(account));
+  if (balance === null) return `${account.name} starts at ${show(typed)}.`;
   const gap = typed - balance;
-  if (gap === 0) return `${account.name} matches: ${formatAmount(typed)}.`;
+  if (gap === 0) return `${account.name} matches: ${show(typed)}.`;
   return gap < 0
-    ? `${formatAmount(-gap)} spent from ${account.name} wasn't recorded; booked as unrecorded spending.`
-    : `${formatAmount(gap)} more in ${account.name} than recorded; booked as unrecorded income.`;
+    ? `${show(-gap)} spent from ${account.name} wasn't recorded; booked as unrecorded spending.`
+    : `${show(gap)} more in ${account.name} than recorded; booked as unrecorded income.`;
 }
 
-/** Two linked entries: out of one account, into the other. */
+/**
+ * Two linked entries: out of one account, into the other. Between two
+ * currencies, `received` is what arrived (in the other account's currency);
+ * without it the same number lands. Each half carries its account's
+ * currency when the account says which.
+ */
 export function transferOps(input: {
-  from: Pick<AccountRow, "id" | "name">;
-  to: Pick<AccountRow, "id" | "name">;
+  from: Pick<AccountRow, "id" | "name" | "currency">;
+  to: Pick<AccountRow, "id" | "name" | "currency">;
   amount: Santim;
+  /** What arrived, when the accounts' currencies differ. */
+  received?: Santim;
   date: string;
   nowMs: number;
   ids: [string, string];
@@ -121,15 +162,21 @@ export function transferOps(input: {
   origin?: string;
 }): Op[] {
   const { from, to, amount, date, nowMs, ids, transferId, origin = "transfer" } = input;
-  const half = (id: string, account: string, minor: Santim, description: string): Op => ({
+  const half = (
+    id: string,
+    account: Pick<AccountRow, "id" | "currency">,
+    minor: Santim,
+    description: string,
+  ): Op => ({
     op: "insert",
     table: "money_txns",
     id,
     values: {
-      account,
+      account: account.id,
       occurred_at: nowMs,
       local_date: date,
       amount_minor: minor,
+      ...(account.currency ? { currency: account.currency } : {}),
       description,
       category_id: null,
       origin,
@@ -137,15 +184,26 @@ export function transferOps(input: {
     },
   });
   return [
-    half(ids[0], from.id, -amount, `Moved to ${to.name}`),
-    half(ids[1], to.id, amount, `Moved from ${from.name}`),
+    half(ids[0], from, -amount, `Moved to ${to.name}`),
+    half(ids[1], to, input.received ?? amount, `Moved from ${from.name}`),
   ];
 }
 
-export function checkTransfer(fromId: string, toId: string, amount: Santim): string | null {
+/** `received` is checked when given: between two currencies it is asked for. */
+export function checkTransfer(
+  fromId: string,
+  toId: string,
+  amount: Santim,
+  received?: Santim | null,
+): string | null {
   if (!fromId || !toId) return "Pick both accounts.";
   if (fromId === toId) return "Pick two different accounts.";
   if (!Number.isSafeInteger(amount) || amount <= 0) return "An amount above zero.";
+  if (
+    received !== undefined &&
+    (received === null || !Number.isSafeInteger(received) || received <= 0)
+  )
+    return "What arrived in the other account, above zero.";
   return null;
 }
 
@@ -184,6 +242,8 @@ export function addAccountOps(
   name: string,
   kind: AccountRow["kind"],
   accounts: AccountRow[],
+  currency = "ETB",
+  savings = false,
 ): Op[] {
   const id = accountId(
     name,
@@ -195,7 +255,13 @@ export function addAccountOps(
       op: "insert",
       table: "money_accounts",
       id,
-      values: { name: name.trim(), kind, sort_order: last + 1 },
+      values: {
+        name: name.trim(),
+        kind,
+        sort_order: last + 1,
+        currency,
+        is_savings: savings ? 1 : 0,
+      },
     },
   ];
 }
@@ -214,7 +280,7 @@ export function checkHide(
 ): string | null {
   const balance = balanceOf(account);
   if (balance !== null && balance !== 0)
-    return `${account.name} still holds ${formatAmount(balance)}: move it out first.`;
+    return `${account.name} still holds ${formatAmount(balance, currencyOf(account))}: move it out first.`;
   if (account.pays_in === 1) return "Pay lands here: pick another account for pay first.";
   const used = regulars.find((regular) => regular.active === 1 && regular.account === account.id);
   if (used) return `${used.name} uses ${account.name}: change it first.`;
@@ -223,6 +289,11 @@ export function checkHide(
 
 export function hideAccountOps(id: string): Op[] {
   return [{ op: "delete", table: "money_accounts", id }];
+}
+
+/** Pay can't land in a savings account: it is money to spend. */
+export function checkPayAccount(account: AccountRow): string | null {
+  return isSavings(account) ? `${account.name} is a savings account: pay can't land there.` : null;
 }
 
 /** Income lands in this account unless the capture says otherwise. */
@@ -235,4 +306,70 @@ export function setPayAccountOps(id: string, accounts: AccountRow[]): Op[] {
       id: account.id,
       values: { pays_in: account.id === id ? 1 : 0 },
     }));
+}
+
+// --- Savings accounts and currency ------------------------------------------------
+
+/** When each account became a savings account (epoch ms by id). */
+export const SAVINGS_SINCE_KEY = "money.savings_since";
+export const SAVINGS_SINCE_SQL = `SELECT value_json FROM core_settings WHERE key = '${SAVINGS_SINCE_KEY}'`;
+
+export function readSavingsSince(json: string | null | undefined): Record<string, number> {
+  try {
+    const value = JSON.parse(json ?? "null") as unknown;
+    if (!value || typeof value !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function checkSavings(account: AccountRow, on: boolean): string | null {
+  if (on && account.pays_in === 1) return "Pay lands here: pick another account for pay first.";
+  return null;
+}
+
+/**
+ * Marks an account as savings, or back to spending. The moment is kept, so
+ * only transfers from then on count as saving; older ones stay as they were.
+ */
+export function savingsOps(
+  account: Pick<AccountRow, "id">,
+  on: boolean,
+  sinceJson: string | null | undefined,
+  nowMs: number,
+): Op[] {
+  const since = Object.fromEntries(
+    Object.entries(readSavingsSince(sinceJson)).filter(([id]) => id !== account.id),
+  );
+  if (on) since[account.id] = nowMs;
+  return [
+    { op: "update", table: "money_accounts", id: account.id, values: { is_savings: on ? 1 : 0 } },
+    {
+      op: "upsert",
+      table: "core_settings",
+      id: SAVINGS_SINCE_KEY,
+      values: { value_json: JSON.stringify(since) },
+    },
+  ];
+}
+
+/** Entries recorded in an account (any date), for checkCurrency. */
+export const ACCOUNT_TXN_COUNT_SQL = `SELECT count(*) AS n FROM money_txns
+  WHERE account = ? AND deleted_at IS NULL`;
+
+/** An account's currency can change only while nothing is recorded in it. */
+export function checkCurrency(account: AccountRow, entries: number): string | null {
+  const balance = balanceOf(account);
+  if ((balance !== null && balance !== 0) || entries > 0)
+    return `${account.name} already has money recorded: its currency stays.`;
+  return null;
+}
+
+export function currencyOps(id: string, currency: string): Op[] {
+  return [{ op: "update", table: "money_accounts", id, values: { currency } }];
 }

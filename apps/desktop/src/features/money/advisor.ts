@@ -8,7 +8,7 @@ import { type Op } from "../../kernel/db";
 import { showDate } from "../../kernel/dates";
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
-import { type AccountRow, balanceOf, transferOps } from "./accounts";
+import { type AccountRow, balanceOf, currencyOf, isSavings, transferOps } from "./accounts";
 import { capOps, capStatus, suggestCap } from "./caps";
 import { type MonthSummary } from "./money";
 import { type DueItem, settleOps } from "./regulars";
@@ -86,7 +86,7 @@ export function findings(input: {
       key: `pay_late:${item.regular.id}:${item.date}`,
       kind: "pay_late",
       rank: 2,
-      text: `${item.regular.job ?? item.regular.name} pay is ${late} day${late === 1 ? "" : "s"} late: ${formatAmount(item.left)} still to come.`,
+      text: `${item.regular.job ?? item.regular.name} pay is ${late} day${late === 1 ? "" : "s"} late: ${formatAmount(item.left, item.regular.currency ?? "ETB")} still to come.`,
       facts: {
         finding: "pay late",
         job: safeName(item.regular.job ?? item.regular.name),
@@ -110,20 +110,27 @@ export function findings(input: {
     const move = roundUpBirr(owed - Math.max(0, balance));
     const first = bills[0];
     if (!first) continue;
+    // Amounts compare only within one currency; money comes from spending accounts.
+    const currency = currencyOf(from);
+    if (bills.some((item) => (item.regular.currency ?? "ETB") !== currency)) continue;
+    const show = (minor: Santim) => formatAmount(minor, currency);
     const richest = accounts
-      .filter((account) => account.id !== from.id)
+      .filter(
+        (account) =>
+          account.id !== from.id && !isSavings(account) && currencyOf(account) === currency,
+      )
       .map((account) => ({ account, balance: balanceOf(account) }))
       .filter((row): row is { account: AccountRow; balance: number } => row.balance !== null)
       .sort((a, b) => b.balance - a.balance)[0];
     const names =
       bills.length === 1
-        ? `${first.regular.name} ${formatAmount(first.left)} is due ${first.date === today ? "today" : `on ${showDate(first.date, today)}`}`
-        : `${bills.map((item) => item.regular.name).join(" and ")} (${formatAmount(owed)}) are due by ${showDate(bills[bills.length - 1]?.date ?? first.date, today)}`;
+        ? `${first.regular.name} ${show(first.left)} is due ${first.date === today ? "today" : `on ${showDate(first.date, today)}`}`
+        : `${bills.map((item) => item.regular.name).join(" and ")} (${show(owed)}) are due by ${showDate(bills[bills.length - 1]?.date ?? first.date, today)}`;
     out.push({
       key: `bill_short:${from.id}:${first.date}`,
       kind: "bill_short",
       rank: 3,
-      text: `${names}; ${from.name} has ${formatAmount(Math.max(0, balance))}.`,
+      text: `${names}; ${from.name} has ${show(Math.max(0, balance))}.`,
       facts: {
         finding: "bills due soon, account short",
         bills: bills.map((item) => safeName(item.regular.name)).join(", "),
@@ -135,7 +142,7 @@ export function findings(input: {
         richest && richest.balance >= move
           ? [
               {
-                label: `Move ${formatAmount(move)} from ${richest.account.name}`,
+                label: `Move ${show(move)} from ${richest.account.name}`,
                 ops: transferOps({
                   from: richest.account,
                   to: from,

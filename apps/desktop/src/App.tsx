@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 
 import { query } from "./kernel/db";
+import { systemClock } from "./kernel/clock";
+import { logicalDate } from "./kernel/dates";
 import { applyTheme, LOOK_SQL, themeFromSetting } from "./theme/theme";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { useCalendarSync } from "./shell/Calendar";
@@ -10,6 +12,7 @@ import { Kits } from "./shell/Kits";
 import { Money } from "./shell/Money";
 import { isPlanPage, Nav, type Page, PlanTabs } from "./shell/Nav";
 import { Dashboard } from "./shell/Dashboard";
+import { DayPlan } from "./shell/DayPlan";
 import { Notes } from "./shell/Notes";
 import { Projects } from "./shell/Projects";
 import { Review } from "./shell/Review";
@@ -40,6 +43,8 @@ export function App() {
   const [notes, setNotes] = useState({ query: "", visit: 0 });
   // "Start over" in My week shows the setup questions again.
   const [rebuild, setRebuild] = useState(false);
+  // The date Plan → Day shows; a Next 7 days column opens it on its date.
+  const [day, setDay] = useState(() => logicalDate(systemClock.now()));
   useCalendarSync();
 
   // The cached look is applied before the first paint; the settings confirm it.
@@ -87,6 +92,10 @@ export function App() {
     if (page === "notes") setNotes((old) => ({ query: "", visit: old.visit + 1 }));
     setScreen(page);
   };
+  const openDay = (date: string) => {
+    setDay(date);
+    go("day");
+  };
   if (screen === "loading") return null;
   if (screen === "setup") return <Setup onDone={home} />;
 
@@ -108,7 +117,8 @@ export function App() {
   else if (screen === "money") page = <Money />;
   else if (screen === "projects") page = <Projects />;
   else if (screen === "tasks") page = <Tasks />;
-  else if (screen === "weekcard") page = <WeekCard />;
+  else if (screen === "weekcard") page = <WeekCard onOpenDay={openDay} />;
+  else if (screen === "day") page = <DayPlan date={day} onDate={setDay} />;
   else if (screen === "dashboard") page = <Dashboard />;
   else if (screen === "notes")
     page = <Notes key={notes.visit} initialQuery={notes.query} onClose={home} />;

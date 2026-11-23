@@ -4,7 +4,16 @@ import { describe, expect, it } from "vitest";
 
 import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { openTestDb } from "../../test/sqlite";
-import { ensureDayPlan, isoWeekday, loadPlanInput, replanDay, weekStart } from "./dayplan";
+import {
+  ensureDayPlan,
+  isoWeekday,
+  loadPlanInput,
+  type OpenTaskRow,
+  replanDay,
+  startingNow,
+  taskOnDay,
+  weekStart,
+} from "./dayplan";
 import { DEFAULT_ANSWERS } from "./routine";
 import { setupOps } from "./setup";
 
@@ -272,5 +281,154 @@ describe("replanning after a routine change", () => {
       )
       .run();
     expect((await loadPlanInput(h.query, "2026-11-11")).isRestDay).toBe(false);
+  });
+});
+
+describe("time first: tasks with a time or a part of the day", () => {
+  const row = (over: Partial<OpenTaskRow>): OpenTaskRow => ({
+    id: "t",
+    title: "Call bank",
+    area_id: null,
+    due_date: null,
+    due_at: null,
+    planned_window: null,
+    planned_date: null,
+    estimate_min: null,
+    created_at: 0,
+    remaining_min: null,
+    ...over,
+  });
+  const at = (iso: string) => Date.parse(iso);
+
+  it("reads a task's time as a minute of its day, and leaves it out of other days", () => {
+    const timed = row({ due_at: at("2026-11-11T15:00:00+03:00"), due_date: "2026-11-11" });
+    expect(taskOnDay(timed, "2026-11-11")?.atMin).toBe(15 * 60);
+    expect(taskOnDay(timed, "2026-11-10")).toBeUndefined();
+    // A time already gone: planned like any other task.
+    expect(taskOnDay(timed, "2026-11-12")?.atMin).toBeUndefined();
+    // 01:00 belongs to the day before (the day starts at 03:00).
+    const late = row({ due_at: at("2026-11-12T01:00:00+03:00") });
+    expect(taskOnDay(late, "2026-11-11")?.atMin).toBe(25 * 60);
+    // Moved to today from another day: the old time no longer holds.
+    const moved = row({ due_at: at("2026-11-12T10:00:00+03:00"), planned_date: "2026-11-11" });
+    expect(taskOnDay(moved, "2026-11-11")).toMatchObject({ id: "t" });
+    expect(taskOnDay(moved, "2026-11-11")?.atMin).toBeUndefined();
+  });
+
+  it("reads a part of the day for its own day only", () => {
+    const evening = row({ planned_window: "evening", planned_date: "2026-11-12" });
+    expect(taskOnDay(evening, "2026-11-12")?.window).toBe("evening");
+    expect(taskOnDay(evening, "2026-11-11")).toBeUndefined();
+    expect(taskOnDay(evening, "2026-11-13")?.window).toBeUndefined();
+  });
+
+  it("saves a timed task as its own block on any date it is asked to plan", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_date, due_at, estimate_min, created_at, updated_at) VALUES ('bank', 'Call bank', 'todo', '2026-11-13', ?, 45, 0, 0)",
+      )
+      .run(at("2026-11-13T15:00:00+03:00"));
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, created_at, updated_at) VALUES ('milk', 'Buy milk', 'todo', 0, 0)",
+      )
+      .run();
+    // Today is the 11th; Plan → Day asks for the 13th.
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-13")).toBe(true);
+    const blocks = h.db
+      .prepare(
+        "SELECT logical_date, start_at, end_at, kind, area_id, task_id, title, source FROM day_blocks WHERE task_id IS NOT NULL",
+      )
+      .all();
+    expect(blocks).toEqual([
+      {
+        logical_date: "2026-11-13",
+        start_at: at("2026-11-13T15:00:00+03:00"),
+        end_at: at("2026-11-13T15:45:00+03:00"),
+        kind: "area",
+        area_id: null,
+        task_id: "bank",
+        title: "Call bank",
+        source: "generator",
+      },
+    ]);
+    // Today has no plan yet: only the asked date was planned.
+    expect(
+      h.db.prepare("SELECT count(*) AS n FROM day_blocks WHERE logical_date = '2026-11-11'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("keeps a task block you moved when the day is planned again", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps({ ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} }, [], [], h.newId),
+    );
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, created_at, updated_at) VALUES ('bank', 'Call bank', 'todo', ?, 0, 0)",
+      )
+      .run(at("2026-11-11T15:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    h.db
+      .prepare(
+        "UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 1 WHERE task_id = 'bank'",
+      )
+      .run(at("2026-11-11T16:00:00+03:00"), at("2026-11-11T16:30:00+03:00"));
+    await replanDay(h.query, h.transact, "2026-11-11", h.newId);
+    const blocks = h.db
+      .prepare("SELECT start_at FROM day_blocks WHERE task_id = 'bank' AND deleted_at IS NULL")
+      .all();
+    expect(blocks).toEqual([{ start_at: at("2026-11-11T16:00:00+03:00") }]);
+  });
+  it("fills today's part of the day from now on, and other days from their start", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps({ ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} }, [], [], h.newId),
+    );
+    const input = await loadPlanInput(h.query, "2026-11-11");
+    // NOW is 12:00 on the 11th.
+    expect(startingNow(input, NOW).notBeforeMin).toBe(12 * 60);
+    // 01:30 on the 12th still belongs to the 11th.
+    expect(startingNow(input, Date.parse("2026-11-12T01:30:00+03:00")).notBeforeMin).toBe(
+      25 * 60 + 30,
+    );
+    expect(startingNow({ ...input, date: "2026-11-12" }, NOW).notBeforeMin).toBeUndefined();
+  });
+
+  it("doesn't make again a task block you touched and then deleted", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps({ ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} }, [], [], h.newId),
+    );
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, created_at, updated_at) VALUES ('bank', 'Call bank', 'todo', ?, 0, 0)",
+      )
+      .run(at("2026-11-11T15:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    h.db
+      .prepare("UPDATE day_blocks SET user_edited_at = 1, deleted_at = 2 WHERE task_id = 'bank'")
+      .run();
+    await replanDay(h.query, h.transact, "2026-11-11", h.newId, NOW);
+    expect(
+      h.db
+        .prepare(
+          "SELECT count(*) AS n FROM day_blocks WHERE task_id = 'bank' AND deleted_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
   });
 });

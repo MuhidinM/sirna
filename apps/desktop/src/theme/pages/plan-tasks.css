@@ -66,7 +66,7 @@
   padding: 0 var(--space-2);
   border-radius: var(--pill);
   background: var(--pink);
-  color: var(--canvas);
+  color: var(--white);
 }
 
 /* The select stands in for the side list when the side column is hidden. */
@@ -137,7 +137,7 @@
 
 .tasks-canvas .seg-item[aria-selected="true"] .seg-count {
   background: var(--pink);
-  color: var(--canvas);
+  color: var(--white);
 }
 
 /* --- Quick add ------------------------------------------------------------------------------ */
@@ -314,12 +314,12 @@
 
 .tasks-canvas .task-due.late {
   background: var(--pink);
-  color: var(--canvas);
+  color: var(--white);
 }
 
 .tasks-canvas .task-check {
   background: var(--orange);
-  color: var(--canvas);
+  color: var(--white);
   cursor: help;
 }
 
@@ -365,6 +365,58 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
   background: var(--canvas-2);
+}
+
+/* Split: your own steps, one per line, or the AI's suggestion in the same box. */
+.tasks-canvas .task-split {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.tasks-canvas .task-split .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.tasks-canvas .task-split .field > span {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--canvas-ink-2);
+}
+
+.tasks-canvas .task-split textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  background: var(--canvas);
+  border: 1px solid var(--canvas-line);
+  color: var(--canvas-ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.tasks-canvas .task-split textarea:focus-visible {
+  border-color: var(--yellow);
+}
+
+.tasks-canvas .task-split .meta,
+.tasks-canvas .task-split .error {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.tasks-canvas .task-split .meta {
+  color: var(--canvas-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.tasks-canvas .task-split .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* --- Edit card -------------------------------------------------------------------------------- */

@@ -213,9 +213,9 @@ describe("the ledger", () => {
     ]);
     expect(csv).toBe(
       [
-        "date,kind,amount_etb,category,description,account",
-        "2026-11-11,in,18000.00,Salary,salary,cash",
-        '2026-11-12,out,120.50,Food,"lunch, ""big""",cash',
+        "date,kind,amount,currency,category,description,account",
+        "2026-11-11,in,18000.00,ETB,Salary,salary,cash",
+        '2026-11-12,out,120.50,ETB,Food,"lunch, ""big""",cash',
         "",
       ].join("\n"),
     );
@@ -238,8 +238,8 @@ describe("the queries", () => {
       ),
     ).toEqual(["now"]);
     expect(db.prepare(HISTORY_SQL).all(...historyParams("2026-11-14"))).toEqual([
-      { month: "2026-10", category_id: "cat_salary", out_minor: 0 },
-      { month: "2026-10", category_id: "cat_transport", out_minor: 7000 },
+      { month: "2026-10", category_id: "cat_salary", out_minor: 0, currency: "ETB" },
+      { month: "2026-10", category_id: "cat_transport", out_minor: 7000, currency: "ETB" },
     ]);
     db.prepare(
       "INSERT INTO savings_entries (id, occurred_at, local_date, amount_minor, created_at, updated_at) VALUES ('s', 0, '2026-11-05', 30000, 0, 0)",

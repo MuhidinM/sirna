@@ -6,6 +6,15 @@
 import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
+import {
+  type Conversion,
+  convert,
+  conversionNotes,
+  type ConversionNotes,
+  newConversion,
+  type Rates,
+  rowCurrencySql,
+} from "./currency";
 
 /** The calendar month a logical date is in, as inclusive dates. */
 export function monthOf(date: string): { from: string; to: string; days: number; key: string } {
@@ -47,13 +56,15 @@ export interface TxnRow {
   account_name?: string | null;
   /** Set on both halves of a transfer between accounts. */
   transfer_id?: string | null;
+  /** The account's currency (an entry is in its account's currency); ETB when not given. */
+  currency?: string | null;
 }
 
 /** Entries between ?1 and ?2 (inclusive dates), newest first. */
 export const TXNS_SQL = `
   SELECT m.id, m.local_date, m.occurred_at, m.amount_minor, m.description, m.category_id,
          c.name AS category, m.account, m.origin, a.name AS source,
-         acc.name AS account_name, m.transfer_id
+         acc.name AS account_name, m.transfer_id, ${rowCurrencySql("m")} AS currency
   FROM money_txns m
   LEFT JOIN money_categories c ON c.id = m.category_id
   LEFT JOIN area_items a ON a.id = m.area_id
@@ -72,16 +83,44 @@ export const SAVED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor FROM sa
  */
 export const HISTORY_SQL = `
   SELECT substr(m.local_date, 1, 7) AS month, m.category_id,
-         COALESCE(sum(CASE WHEN m.amount_minor < 0 THEN -m.amount_minor END), 0) AS out_minor
+         COALESCE(sum(CASE WHEN m.amount_minor < 0 THEN -m.amount_minor END), 0) AS out_minor,
+         ${rowCurrencySql("m")} AS currency
   FROM money_txns m
+  LEFT JOIN money_accounts acc ON acc.id = m.account
   WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL
     AND m.local_date >= ?1 AND m.local_date < ?2
-  GROUP BY month, m.category_id`;
+  GROUP BY month, m.category_id, ${rowCurrencySql("m")}`;
 
 export interface HistoryRow {
   month: string;
   category_id: string | null;
   out_minor: number;
+  /** ETB when not given. */
+  currency?: string | null;
+}
+
+/**
+ * History in ETB: foreign rows converted at today's rate and merged into
+ * their month and category; rows with no rate left out.
+ */
+export function historyInEtb(
+  history: HistoryRow[],
+  rates: Rates = {},
+  conversion: Conversion = newConversion(),
+): HistoryRow[] {
+  const merged = new Map<string, HistoryRow>();
+  for (const row of history) {
+    const out = convert(conversion, rates, row.out_minor, row.currency);
+    const key = `${row.month}|${row.category_id ?? ""}`;
+    const line = merged.get(key) ?? {
+      month: row.month,
+      category_id: row.category_id,
+      out_minor: 0,
+    };
+    line.out_minor += out ?? 0;
+    merged.set(key, line);
+  }
+  return [...merged.values()];
 }
 
 export function historyParams(today: string): [string, string] {
@@ -103,7 +142,11 @@ export function median(values: number[]): number | null {
  * months that have any entry (a month you spent nothing in a category counts
  * as 0 there). Null when there is no earlier month yet.
  */
-export function usualByCategory(history: HistoryRow[]): Map<string, number | null> {
+export function usualByCategory(
+  rawHistory: HistoryRow[],
+  rates: Rates = {},
+): Map<string, number | null> {
+  const history = historyInEtb(rawHistory, rates);
   const months = [...new Set(history.map((row) => row.month))];
   const categories = new Set(history.map((row) => row.category_id ?? ""));
   const usual = new Map<string, number | null>();
@@ -144,14 +187,23 @@ export interface MonthSummary {
   days: number;
   /** About how much a day is left to spend, rounded down; null when nothing is left. */
   perDay: Santim | null;
+  /** Foreign money converted ("≈ at 132.50 (23 Nov)") or left out for want of a rate. */
+  notes?: ConversionNotes;
 }
 
+/**
+ * The month in ETB: entries in another currency are converted at its rate,
+ * and left out (with a note) when it has none.
+ */
 export function monthSummary(input: {
   txns: TxnRow[];
   saved: Santim;
   history: HistoryRow[];
   today: string;
+  rates?: Rates;
 }): MonthSummary {
+  const rates = input.rates ?? {};
+  const conversion = newConversion();
   const { days } = monthOf(input.today);
   const day = Number(input.today.slice(8, 10));
   let income = 0;
@@ -161,20 +213,22 @@ export function monthSummary(input: {
   for (const txn of input.txns) {
     // Moving money between your own accounts is neither in nor out.
     if (txn.transfer_id) continue;
-    if (txn.amount_minor > 0) {
-      income += txn.amount_minor;
+    const amount = convert(conversion, rates, txn.amount_minor, txn.currency);
+    if (amount === null) continue;
+    if (amount > 0) {
+      income += amount;
       // By job when the capture named one (`got 18k job a`), else by category.
       const name = txn.source ?? txn.category ?? "Other income";
-      sources.set(name, (sources.get(name) ?? 0) + txn.amount_minor);
+      sources.set(name, (sources.get(name) ?? 0) + amount);
     } else {
-      out += -txn.amount_minor;
+      out += -amount;
       const id = txn.category_id ?? "";
       const line = spent.get(id) ?? { name: txn.category ?? "Other", amount: 0 };
-      line.amount += -txn.amount_minor;
+      line.amount += -amount;
       spent.set(id, line);
     }
   }
-  const usual = usualByCategory(input.history);
+  const usual = usualByCategory(input.history, rates);
   const categories: CategoryLine[] = [...spent.entries()].map(([id, line]) => ({
     id,
     name: line.name,
@@ -197,8 +251,12 @@ export function monthSummary(input: {
     days,
     // Rounded down to whole birr: never more than there is.
     perDay: left > 0 ? Math.floor(left / daysLeft / SANTIM_PER_BIRR) * SANTIM_PER_BIRR : null,
+    notes: conversionNotes(conversion, rates),
   };
 }
+
+/** The CSV's file name for a month. */
+export const csvName = (month: string) => `sirna-money-${monthOf(month).key}.csv`;
 
 /** "Spent 340 today · 12,400 left this month · about 740 a day". */
 export function moneyLine(summary: MonthSummary, spentToday: Santim): string {
@@ -257,6 +315,8 @@ export interface TxnDraft {
   date: string;
   /** The account; "" keeps what it was (or cash for a new entry). */
   account?: string;
+  /** The account's currency, written with the entry. */
+  currency?: string;
 }
 
 export function checkTxn(draft: TxnDraft): string | null {
@@ -299,6 +359,7 @@ export function txnEditOps(row: TxnRow, draft: TxnDraft): Op[] {
         category_id: draft.categoryId || null,
         local_date: draft.date,
         ...(draft.account ? { account: draft.account } : {}),
+        ...(draft.currency ? { currency: draft.currency } : {}),
       },
     },
   ];
@@ -324,6 +385,7 @@ export function txnRestoreOps(row: TxnRow): Op[] {
         account: row.account,
         origin: row.origin,
         transfer_id: row.transfer_id ?? null,
+        ...(row.currency ? { currency: row.currency } : {}),
       },
     },
   ];
@@ -332,9 +394,9 @@ export function txnRestoreOps(row: TxnRow): Op[] {
 const csvCell = (value: string) =>
   /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 
-/** The ledger as CSV, oldest first: amounts in birr with two decimals. */
+/** The ledger as CSV, oldest first: amounts with two decimals, in each entry's currency. */
 export function toCsv(rows: TxnRow[]): string {
-  const lines = ["date,kind,amount_etb,category,description,account"];
+  const lines = ["date,kind,amount,currency,category,description,account"];
   for (const row of [...rows].sort(
     (a, b) => a.local_date.localeCompare(b.local_date) || a.occurred_at - b.occurred_at,
   )) {
@@ -345,6 +407,7 @@ export function toCsv(rows: TxnRow[]): string {
         row.local_date,
         row.amount_minor > 0 ? "in" : "out",
         birr,
+        row.currency ?? "ETB",
         csvCell(row.category ?? ""),
         csvCell(row.description),
         csvCell(row.account),
@@ -372,6 +435,7 @@ export function txnAddOps(draft: TxnDraft, nowMs: number, id: string): Op[] {
         category_id: draft.categoryId || null,
         origin: "money",
         ...(draft.account ? { account: draft.account } : {}),
+        ...(draft.currency ? { currency: draft.currency } : {}),
       },
     },
   ];

@@ -37,9 +37,17 @@ export function parseAmount(text: string): Santim | null {
 
 const groupFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
+/** The currencies you can keep an account in; ETB first. Minor units are 1/100 in all. */
+export const CURRENCIES = ["ETB", "USD", "EUR", "GBP"] as const;
+
+/** Symbols written before the amount ("$1,200.50"); others take a code after it. */
+const SYMBOLS: Record<string, string> = { USD: "$", EUR: "€", GBP: "£" };
+
 /**
- * Formats santim for display: `12,000 ETB`, with santim only when non-zero
- * (`12,000.50 ETB`). Negative amounts get a leading minus.
+ * Formats minor units for display: `12,000 ETB`, with santim only when
+ * non-zero (`12,000.50 ETB`). Dollars, euros and pounds take their symbol
+ * (`$1,200.50`, `€50`, `£20`); any other code goes after (`1,200.50 CHF`).
+ * Negative amounts get a leading minus.
  */
 export function formatAmount(santim: Santim, currency = "ETB"): string {
   if (!Number.isSafeInteger(santim)) throw new RangeError(`Not an integer amount: ${santim}`);
@@ -48,5 +56,12 @@ export function formatAmount(santim: Santim, currency = "ETB"): string {
   const birr = Math.floor(abs / SANTIM_PER_BIRR);
   const rest = abs % SANTIM_PER_BIRR;
   const fraction = rest === 0 ? "" : `.${String(rest).padStart(2, "0")}`;
-  return `${sign}${groupFormatter.format(birr)}${fraction} ${currency}`;
+  const number = `${groupFormatter.format(birr)}${fraction}`;
+  const symbol = SYMBOLS[currency];
+  return symbol ? `${sign}${symbol}${number}` : `${sign}${number} ${currency}`;
+}
+
+/** The amount without its unit, for placeholders and short lines ("12,000", "1,200.50"). */
+export function formatNumber(santim: Santim): string {
+  return formatAmount(santim, "").trimEnd();
 }

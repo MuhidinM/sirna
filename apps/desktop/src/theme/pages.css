@@ -228,3 +228,186 @@
 .today-hint {
   margin: calc(-1 * var(--space-3)) 0 var(--space-4);
 }
+
+/* --- Editing a day's board (time-first §1 rule 8) --------------------------------------------- */
+
+.link-btn {
+  padding: 0 var(--space-1);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.day-edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.day-edit-bar > p {
+  flex: 1 1 240px;
+  margin: 0;
+}
+
+.day-edit-status {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--canvas-ink);
+}
+
+.day-edit-hint {
+  font-size: var(--text-xs);
+}
+
+.day-board.editable .day-lanes {
+  cursor: cell;
+}
+
+.day-lanes .event.editable {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.day-lanes .event.editable:focus-visible {
+  outline: 2.5px solid var(--canvas-ink);
+  outline-offset: 2px;
+}
+
+.day-lanes .event.dragging {
+  cursor: grabbing;
+  transform: none;
+  box-shadow: 0 14px 30px rgb(0 0 0 / 18%);
+  opacity: 0.92;
+}
+
+.event-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.event-resize::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 28px;
+  height: 3px;
+  margin-left: -14px;
+  border-radius: var(--pill);
+  background: currentcolor;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+
+.event.editable:hover .event-resize::after,
+.event.editable:focus-visible .event-resize::after {
+  opacity: 0.35;
+}
+
+.day-editor {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: var(--space-3);
+  width: min(320px, 100%);
+  padding: var(--space-4);
+  border: 1px solid var(--canvas-line);
+  border-radius: var(--radius-tile);
+  background: var(--canvas);
+  color: var(--canvas-ink);
+  box-shadow: 0 18px 40px rgb(0 0 0 / 18%);
+  cursor: auto;
+}
+
+.day-editor .field {
+  margin: 0;
+}
+
+.day-editor-times {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.day-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.day-editor .day-delete {
+  margin-left: auto;
+}
+
+.day-editor .error {
+  margin: 0;
+}
+
+/* --- Add for today (§5) ------------------------------------------------------------------------ */
+
+.add-today {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.add-today-field {
+  flex: 1 1 220px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border: 1.5px dashed var(--canvas-line);
+  border-radius: var(--pill);
+  color: var(--canvas-ink-3);
+}
+
+.add-today-field input:not([type]) {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.add-today-said {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* --- Night review commands (rule 9) ------------------------------------------------------------- */
+
+.rv-command-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+}
+
+.rv-commands {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.rv-commands .done {
+  text-decoration: line-through;
+  opacity: 0.6;
+}

@@ -530,3 +530,66 @@
   color: var(--yellow);
   margin-bottom: 2px;
 }
+
+/* --- Next 7 days: a column opens its day ----------------------------------------------------- */
+
+.plan-week .pw-day-open {
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plan-week .pw-day-open:hover .pw-day-num,
+.plan-week .pw-day-open:focus-visible .pw-day-num {
+  box-shadow: 0 0 0 2px var(--canvas-ink);
+}
+
+.plan-week .pw-more {
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--pill);
+  background: var(--canvas);
+  color: var(--canvas-ink-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-align: center;
+}
+
+.plan-week button.pw-more {
+  cursor: pointer;
+}
+
+.plan-week button.pw-more:hover {
+  color: var(--canvas-ink);
+}
+
+.plan-week .pw-ok {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--mint);
+  color: var(--mint-ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/* --- Plan → Day ------------------------------------------------------------------------------- */
+
+.plan-day .pd-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.plan-day .pd-date input {
+  min-height: 36px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-day .canvas > .empty {
+  margin-bottom: var(--space-3);
+}

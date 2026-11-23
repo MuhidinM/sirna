@@ -5,7 +5,9 @@ import { systemClock } from "../kernel/clock";
 import { showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { formatMinutes } from "../features/plan/now";
-import { type Query } from "../features/plan/dayplan";
+import { isoWeekday, type Query, shiftDate } from "../features/plan/dayplan";
+import { PLANNED_RANGE_SQL, weekColumn } from "../features/plan/edit";
+import { ROUTINE_SQL, type RoutineRow } from "../features/plan/editor";
 import {
   type LateTask,
   loadPreview,
@@ -22,6 +24,18 @@ const at = (minutes: number) =>
   `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 const AREA_COLORS_SQL = "SELECT id, color FROM area_items WHERE deleted_at IS NULL";
+
+/** A column shows this many cards; "+N more" opens the day for the rest. */
+export const COLUMN_CARDS = 6;
+
+type PlannedRow = {
+  logical_date: string;
+  start_at: number;
+  end_at: number;
+  kind: string;
+  area_id: string | null;
+  title: string;
+};
 
 /** The planner over the next 7 days, reloaded after any write. */
 function usePreview(today: string): Preview | null {
@@ -78,11 +92,30 @@ function LateRow({ task, today }: { task: LateTask; today: string }) {
   );
 }
 
-/** Next 7 days (T-069): what each day holds, and what won't make its deadline. */
-export function WeekPreview({ today }: { today: string }) {
+/**
+ * Next 7 days (T-069; time-first §1 rule 8): what each day holds, and what
+ * won't make its deadline. A day already planned shows its blocks; a later
+ * one shows the routine with the forecast. A column opens that day in
+ * Plan → Day.
+ */
+export function WeekPreview({
+  today,
+  onOpenDay,
+}: {
+  today: string;
+  onOpenDay?: ((date: string) => void) | undefined;
+}) {
   const preview = usePreview(today);
   const colors = useLiveQuery<{ id: string; color: string }>(AREA_COLORS_SQL);
-  if (!preview) return null;
+  const planned = useLiveQuery<PlannedRow>(PLANNED_RANGE_SQL, [today, shiftDate(today, 6)]);
+  const routine = useLiveQuery<RoutineRow & Record<string, string | number | null>>(ROUTINE_SQL);
+  if (!preview)
+    return (
+      <section className="pw-section pw-preview" aria-labelledby="week-preview">
+        <h2 id="week-preview">Next 7 days</h2>
+        <p className="meta">Checking the week…</p>
+      </section>
+    );
   const colorOf = new Map(colors.rows.map((row) => [row.id, row.color]));
   const lateCount = preview.late.length;
   return (
@@ -90,9 +123,7 @@ export function WeekPreview({ today }: { today: string }) {
       <div className="pw-section-head">
         <div>
           <h2 id="week-preview">Next 7 days</h2>
-          <p className="meta">
-            A forecast from your routine and tasks; nothing changes until you act.
-          </p>
+          <p className="meta">A forecast from your routine and tasks; open a day to change it.</p>
         </div>
         {lateCount === 0 ? (
           <span className="pw-chip">Everything due this week fits.</span>
@@ -107,21 +138,42 @@ export function WeekPreview({ today }: { today: string }) {
         {preview.days.map((day) => {
           const ms = Date.parse(`${day.date}T00:00:00Z`);
           const isToday = day.date === today;
+          const blocks = weekColumn(
+            day.date,
+            planned.rows.filter((row) => row.logical_date === day.date),
+            routine.rows.filter((row) => row.weekday === isoWeekday(day.date)),
+            day.blocks,
+          );
+          const shown = blocks.slice(0, COLUMN_CARDS);
+          const more = blocks.length - shown.length;
+          const open = onOpenDay ? () => onOpenDay(day.date) : undefined;
+          const name = `${showDate(day.date, today, { weekday: true })}${isToday ? ", today" : ""}`;
           return (
             <li key={day.date} className={isToday ? "pw-day today" : "pw-day"}>
-              <span className="visually-hidden">
-                {showDate(day.date, today, { weekday: true })}
-                {isToday ? ", today" : ""}
-              </span>
-              <div className="pw-day-head" aria-hidden="true">
-                <span className="pw-day-name">{weekday.format(ms)}</span>
-                <span className="pw-day-num">{Number(day.date.slice(8))}</span>
-              </div>
-              {day.blocks.length === 0 ? (
+              {open ? (
+                <button
+                  type="button"
+                  className="pw-day-head pw-day-open"
+                  aria-label={`Open ${name}`}
+                  onClick={open}
+                >
+                  <span className="pw-day-name">{weekday.format(ms)}</span>
+                  <span className="pw-day-num">{Number(day.date.slice(8))}</span>
+                </button>
+              ) : (
+                <>
+                  <span className="visually-hidden">{name}</span>
+                  <div className="pw-day-head" aria-hidden="true">
+                    <span className="pw-day-name">{weekday.format(ms)}</span>
+                    <span className="pw-day-num">{Number(day.date.slice(8))}</span>
+                  </div>
+                </>
+              )}
+              {blocks.length === 0 ? (
                 <p className="pw-day-empty">{day.light ? "Light day" : "Free time kept open"}</p>
               ) : (
                 <div className="pw-day-cards">
-                  {day.blocks.map((block, index) => (
+                  {shown.map((block, index) => (
                     <EventCard
                       key={`${block.startMin}-${index}`}
                       tone={toneOf(block.areaId ? colorOf.get(block.areaId) : null)}
@@ -129,6 +181,19 @@ export function WeekPreview({ today }: { today: string }) {
                       title={block.title}
                     />
                   ))}
+                  {more > 0 &&
+                    (open ? (
+                      <button
+                        type="button"
+                        className="pw-more"
+                        aria-label={`Open ${name}: ${more} more`}
+                        onClick={open}
+                      >
+                        +{more} more
+                      </button>
+                    ) : (
+                      <span className="pw-more">+{more} more</span>
+                    ))}
                 </div>
               )}
             </li>
@@ -136,7 +201,11 @@ export function WeekPreview({ today }: { today: string }) {
         })}
       </ol>
 
-      {lateCount > 0 && (
+      {lateCount === 0 ? (
+        <p className="pw-ok" role="status">
+          Nothing is late: every task due in the next 7 days fits at this pace.
+        </p>
+      ) : (
         <div className="pw-late">
           <p className="pw-late-lead">
             {lateCount} task{lateCount === 1 ? "" : "s"} won&apos;t be done by

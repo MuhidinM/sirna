@@ -414,12 +414,12 @@
 }
 
 .page.settings-page .set-theme-night .set-swatch {
-  background: var(--canvas-ink);
+  background: #1c1c1a;
   outline: 1.5px solid var(--canvas-ink-3);
 }
 
 .page.settings-page .set-theme-forest .set-swatch {
-  background: var(--mint-ink);
+  background: #2c8a50;
 }
 
 /* What was sent: one row per request; the code blocks stop at 16 lines. */
@@ -429,6 +429,20 @@
   padding: 0;
   display: grid;
   gap: var(--space-2);
+}
+
+.page.settings-page .set-log-pages {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.page.settings-page .set-log-pages .meta {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--canvas-ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
 .page.settings-page .set-log details {

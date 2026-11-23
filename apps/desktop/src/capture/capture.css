@@ -96,6 +96,22 @@ body {
   -webkit-box-orient: vertical;
 }
 
+/* The afford answer in its verdict's colour: Fine green, Tight yellow, Not now pink. */
+.capture-echo[data-state="fine"] {
+  background: var(--mint);
+  color: var(--mint-ink);
+}
+
+.capture-echo[data-state="tight"] {
+  background: var(--yellow);
+  color: var(--on-loud);
+}
+
+.capture-echo[data-state="notnow"] {
+  background: var(--pink);
+  color: var(--on-loud);
+}
+
 .capture-echo:empty {
   display: none;
 }

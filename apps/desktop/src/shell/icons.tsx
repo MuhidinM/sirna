@@ -176,17 +176,19 @@ export const IconPlay = (p: IconProps) => (
 );
 
 /**
- * Sirna's mark: a yellow rounded square with a bite at the top-right, a check
+ * Sirna's mark: a yellow rounded square with a slot at the top-right, a check
  * and a seed (src-tauri/icons/source/sirna.svg draws the app icon from it).
  */
 export function Logo({ size = 34 }: { size?: number }) {
-  const id = "sirna-bite";
+  // The slot (as wide as the check, round inner end) runs from just past the
+  // seed out through the top-right corner; matches src-tauri/icons/source/sirna.svg.
+  const id = "sirna-slot";
   return (
     <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
       <defs>
         <mask id={id}>
           <rect width="1024" height="1024" fill="#fff" />
-          <circle cx="884" cy="140" r="112" fill="#000" />
+          <path d="M919 203 L1150 -28" stroke="#000" strokeWidth="118" strokeLinecap="round" />
         </mask>
       </defs>
       <rect x="64" y="64" width="896" height="896" rx="220" fill="#ffb413" mask={`url(#${id})`} />
