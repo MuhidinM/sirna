@@ -53,10 +53,12 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 type Rows<T> = T & Record<string, string | number | null>;
 
 /**
- * Any transfer into or out of a savings account is saving (time-first §4):
- * the capture box's `moved 2000 from cbo to cbo savings` too. Each time the
- * data changes, transfers without their saving get one, and savings whose
- * transfer was deleted go. Written as a rule, so it is logged like any change.
+ * A repair, not the main path (time-first §4): the capture box, Put aside and
+ * Move money write a transfer's saving in the transfer's own transaction.
+ * This only catches what slipped through (a dollar transfer saved before its
+ * rate was set, data from an older version):
+ * transfers without their saving get one, and savings whose transfer was
+ * deleted go. Written as a rule, so it is logged like any change.
  */
 /** What the sync last wrote, shared: two mounted pages must not write it twice. */
 let lastSync = "";

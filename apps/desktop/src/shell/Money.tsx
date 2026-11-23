@@ -64,6 +64,7 @@ import {
   spendAccount,
   spending,
   totalBalance,
+  transferAmounts,
   transferOps,
 } from "../features/money/accounts";
 import {
@@ -117,7 +118,15 @@ import {
   safeLine,
   safeToSpend,
 } from "../features/money/safe";
-import { addGoalOps, type GoalRow, GOALS_SQL, UNASSIGNED_SQL } from "../features/savings/savings";
+import {
+  addGoalOps,
+  type GoalRow,
+  GOALS_SQL,
+  onlyActiveGoal,
+  transferSaving,
+  transferSavingOps,
+  UNASSIGNED_SQL,
+} from "../features/savings/savings";
 import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
@@ -1528,8 +1537,8 @@ function LedgerView({
       {toast && (
         <div className="money-toast" role="status">
           <span>
-            Exported {toast.count} {toast.count === 1 ? "entry" : "entries"} as{" "}
-            <strong>{toast.file}</strong> to your Downloads folder.
+            Exported {toast.count} {toast.count === 1 ? "entry" : "entries"}. Saved as{" "}
+            <strong>{toast.file}</strong> (or a numbered copy) in Downloads.
           </span>
           <Button className="btn-ghost" onClick={() => setToast(null)}>
             OK
@@ -2706,11 +2715,12 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
-  const [arrived, setArrived] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  const { rates } = useRates();
+  const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
   const source = accounts.find((account) => account.id === from);
   const target = accounts.find((account) => account.id === to);
-  // Between two currencies, what arrived is asked for: the bank's rate, not ours.
+  // Between two currencies, the other half is worked out at the saved rate (time-first §3).
   const exchange = source && target && currencyOf(source) !== currencyOf(target);
   return (
     <form
@@ -2718,34 +2728,63 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
       onSubmit={(event) => {
         event.preventDefault();
         const minor = parseAmount(amount) ?? 0;
-        const received = exchange ? parseAmount(arrived) : undefined;
-        const problem = checkTransfer(from, to, minor, received);
+        const problem = checkTransfer(from, to, minor);
         if (problem || !source || !target) {
           setNote(problem ?? "Pick both accounts.");
           return;
         }
+        const halves = transferAmounts({ from: source, to: target, amount: minor, rates });
+        if ("problem" in halves) {
+          setNote(`${halves.problem}.`);
+          return;
+        }
+        const transferId = ulid();
+        const nowMs = systemClock.now();
+        // Into or out of a savings account it is saving, counted in the same write.
+        const saving = transferSaving({
+          from: source,
+          to: target,
+          sent: halves.sent,
+          received: halves.received,
+          rates,
+        });
         void transact(
           "user",
-          transferOps({
-            from: source,
-            to: target,
-            amount: minor,
-            ...(received ? { received } : {}),
-            date: today,
-            nowMs: systemClock.now(),
-            ids: [ulid(), ulid()],
-            transferId: ulid(),
-          }),
+          [
+            ...transferOps({
+              from: source,
+              to: target,
+              amount: halves.sent,
+              ...(exchange ? { received: halves.received } : {}),
+              date: today,
+              nowMs,
+              ids: [ulid(), ulid()],
+              transferId,
+            }),
+            ...transferSavingOps({
+              saving,
+              goalId: onlyActiveGoal(goals.rows),
+              transferId,
+              nowMs,
+              date: today,
+              id: ulid(),
+              origin: "transfer",
+            }),
+          ],
           "transfer",
         )
           .then(() => {
             setNote(
-              `Moved ${formatAmount(minor, currencyOf(source))} from ${source.name} to ${target.name}${
-                received ? ` (${formatAmount(received, currencyOf(target))} arrived)` : ""
-              }.${isSavings(target) && !isSavings(source) ? " It counts as saving." : ""}`,
+              `Moved ${formatAmount(halves.sent, currencyOf(source))} from ${source.name} to ${target.name}${
+                exchange
+                  ? ` (${formatAmount(halves.received, currencyOf(target))} at ${
+                      rates[currencyOf(source) === "ETB" ? currencyOf(target) : currencyOf(source)]
+                        ?.rate ?? ""
+                    })`
+                  : ""
+              }.${saving ? (saving.minor > 0 ? " It counts as saving." : " Taken from savings.") : ""}`,
             );
             setAmount("");
-            setArrived("");
           })
           .catch((failure: unknown) => setNote(`Couldn't move it: ${message(failure)}`));
       }}
@@ -2753,7 +2792,7 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
       <span>Move</span>
       <input
         inputMode="decimal"
-        aria-label="Amount to move"
+        aria-label={source ? `Amount to move, ${currencyOf(source)}` : "Amount to move"}
         placeholder="2,000"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
@@ -2774,15 +2813,6 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
           </option>
         ))}
       </select>
-      {exchange && target && (
-        <input
-          inputMode="decimal"
-          aria-label={`What arrived in ${target.name}, ${currencyOf(target)}`}
-          placeholder={`arrived, ${currencyOf(target)}`}
-          value={arrived}
-          onChange={(e) => setArrived(e.target.value)}
-        />
-      )}
       <Button type="submit">Move</Button>
       {note && (
         <span className="meta" role="status">

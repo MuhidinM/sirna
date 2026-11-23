@@ -6,7 +6,7 @@
  */
 import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim } from "../../kernel/money";
-import { type Conversion, convert, type Rates } from "./currency";
+import { type Conversion, convert, exchangeAt, type Rates } from "./currency";
 
 export interface AccountRow {
   id: string;
@@ -189,7 +189,46 @@ export function transferOps(input: {
   ];
 }
 
-/** `received` is checked when given: between two currencies it is asked for. */
+/**
+ * A transfer's two halves (time-first §3): the amount is in `typed` (either
+ * account's currency; the sending account's when not given), and the other
+ * half is worth the same at the saved rate, rounded to the minor unit. With
+ * no rate, or a currency neither account is in, it says why instead.
+ */
+export function transferAmounts(input: {
+  from: Pick<AccountRow, "name" | "currency">;
+  to: Pick<AccountRow, "name" | "currency">;
+  amount: Santim;
+  rates: Rates;
+  /** The currency typed with the amount (`$200`), if any. */
+  typed?: string | undefined;
+  /** How it was typed (`$`, `usd`), for "drop the usd". */
+  word?: string | undefined;
+}): { sent: Santim; received: Santim } | { problem: string } {
+  const { from, to, amount, rates } = input;
+  const fromCode = currencyOf(from);
+  const toCode = currencyOf(to);
+  const typed = input.typed ?? fromCode;
+  if (typed !== fromCode && typed !== toCode) {
+    const word = input.word ?? typed.toLowerCase();
+    return {
+      problem:
+        fromCode === toCode
+          ? `${from.name} and ${to.name} are in ${fromCode}; drop the ${word}`
+          : `${from.name} is in ${fromCode} and ${to.name} in ${toCode}; drop the ${word}`,
+    };
+  }
+  const other = typed === fromCode ? toCode : fromCode;
+  const result = exchangeAt(amount, typed, other, rates);
+  if ("missing" in result)
+    return { problem: `Set a ${result.missing} rate in Money → Accounts first` };
+  if (result.minor <= 0) return { problem: "Too small to move at that rate" };
+  return typed === fromCode
+    ? { sent: amount, received: result.minor }
+    : { sent: result.minor, received: amount };
+}
+
+/** `received` is checked when given (between two currencies `transferAmounts` works it out). */
 export function checkTransfer(
   fromId: string,
   toId: string,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readPending } from "./App";
+import { readPending, touchesTasks } from "./App";
 
 describe("readPending", () => {
   it("opens the review, or Notes with the capture box's query", () => {
@@ -13,5 +13,14 @@ describe("readPending", () => {
   it("ignores nothing or anything unknown", () => {
     expect(readPending(null)).toEqual({ notesQuery: "" });
     expect(readPending("something")).toEqual({ notesQuery: "" });
+  });
+});
+
+describe("touchesTasks", () => {
+  it("heals plans after a task change or a new day, not after a block write", () => {
+    expect(touchesTasks(["task_items", "core_raw_items"])).toBe(true);
+    expect(touchesTasks(["day"])).toBe(true);
+    expect(touchesTasks(["day_blocks"])).toBe(false);
+    expect(touchesTasks(undefined)).toBe(false);
   });
 });

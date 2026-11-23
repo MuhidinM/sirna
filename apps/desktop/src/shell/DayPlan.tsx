@@ -58,7 +58,7 @@ export function DayPlan({ date, onDate }: { date: string; onDate: (date: string)
   const blocks = useLiveQuery<BlockRow & Record<string, string | number | null>>(TODAY_BLOCKS_SQL, [
     date,
   ]);
-  const board = useBoard(date, blocks.rows);
+  const board = useBoard(date, blocks.rows, nowMs);
   const ms = Date.parse(`${date}T00:00:00Z`);
   const when =
     date === today
@@ -134,7 +134,7 @@ export function DayPlan({ date, onDate }: { date: string; onDate: (date: string)
               blocks={blocks.rows}
               nowMs={nowMs}
               date={date}
-              areaTasks={board.areaTasks}
+              blockTasks={board.blockTasks}
               onDone={board.onDone}
               edit={board.edit}
               label={`Plan for ${showDate(date, today, { weekday: true })}`}

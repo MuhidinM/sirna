@@ -55,3 +55,16 @@ export function formatMinutes(minutes: number): string {
 export function firstStep(block: BlockRow): string {
   return block.task_title ?? block.title;
 }
+
+/**
+ * What the Now card's Start focus does (time first §1 rule 7): always offered
+ * while no session runs; during a block it starts on that block, otherwise
+ * on nothing, and the focus sheet asks what it's for. Null while a session runs.
+ */
+export function focusOffer(
+  now: Pick<BlockRow, "id"> | undefined,
+  running: string | null | undefined,
+): { blockId: string | null } | null {
+  if (running) return null;
+  return { blockId: now?.id ?? null };
+}

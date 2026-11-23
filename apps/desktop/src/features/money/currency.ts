@@ -86,6 +86,44 @@ export function toEtb(
   return minor < 0 ? -etb : etb;
 }
 
+/** ETB minor units in `currency`'s minor units at its rate (half up), or null without a rate. */
+export function fromEtb(
+  minor: Santim,
+  currency: string | null | undefined,
+  rates: Rates,
+): Santim | null {
+  if (!currency || currency === HOME) return minor;
+  const entry = rates[currency];
+  const parts = entry ? rateParts(entry.rate) : null;
+  if (!parts) return null;
+  const abs = Math.abs(minor) * parts.scale;
+  // Half up, in integers: (2·a + n) div (2·n).
+  const out = Math.floor((2 * abs + parts.num) / (2 * parts.num));
+  if (!Number.isSafeInteger(out)) return null;
+  return minor < 0 ? -out : out;
+}
+
+/**
+ * Minor units of one currency in another, through ETB at the saved rates.
+ * Null when a rate is missing; `missing` names the first currency without one.
+ */
+export function exchangeAt(
+  minor: Santim,
+  from: string,
+  to: string,
+  rates: Rates,
+): { minor: Santim } | { missing: string } {
+  if (from === to) return { minor };
+  const etb = toEtb(minor, from, rates);
+  if (etb === null) return { missing: from };
+  const out = fromEtb(etb, to, rates);
+  return out === null ? { missing: to } : { minor: out };
+}
+
+/** "at 132.50" for a currency with a rate, else "". */
+export const rateText = (currency: string, rates: Rates) =>
+  rates[currency] ? `at ${rates[currency].rate}` : "";
+
 /** What a set of totals converted, and what it had to leave out. */
 export interface Conversion {
   /** Foreign currencies that were converted. */

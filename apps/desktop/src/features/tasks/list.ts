@@ -23,6 +23,8 @@ export interface TaskListRow {
   notes: string | null;
   due_date: string | null;
   planned_date: string | null;
+  /** "morning" / "afternoon" / "evening" (time first §1 rule 2); kept by Split. */
+  planned_window: string | null;
   deadline_stale: number;
   step_no: number | null;
   step_total: number | null;
@@ -49,7 +51,8 @@ export function stepLabel(
 
 /** ?1 status list as JSON; done and dropped show the last 60 days. */
 export const TASKS_SQL = `
-SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.deadline_stale,
+SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.planned_window,
+       t.deadline_stale,
        t.step_no, t.repeat_json, (SELECT count(*) FROM task_items AS step
                    WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total,
        t.estimate_min, t.area_id,

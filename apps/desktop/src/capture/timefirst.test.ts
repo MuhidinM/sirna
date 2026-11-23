@@ -212,9 +212,14 @@ describe("several money items on one line", () => {
     });
     insertAll(db, ops);
     const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
-    expect(count("SELECT COUNT(*) AS n FROM money_txns WHERE origin = 'capture'")).toBe(3); // pay + 2 transfer halves
+    // Pay, the saving's two halves (CBO → CBO savings) and the transfer's two halves.
+    expect(count("SELECT COUNT(*) AS n FROM money_txns WHERE origin = 'capture'")).toBe(5);
     expect(count("SELECT COUNT(*) AS n FROM money_loans")).toBe(1);
-    expect(count("SELECT COUNT(*) AS n FROM savings_entries WHERE goal_id = 'g1'")).toBe(1);
+    expect(
+      count(
+        "SELECT COUNT(*) AS n FROM savings_entries e JOIN money_txns m ON m.transfer_id = e.transfer_id AND m.account = 'cbo-savings' WHERE e.goal_id = 'g1' AND e.account = 'cbo-savings'",
+      ),
+    ).toBe(1);
   });
 
   it("splits on ' and ' too, but not inside a single item", () => {
@@ -231,7 +236,14 @@ describe("several money items on one line", () => {
 });
 
 describe("currencies", () => {
-  const options: ParseOptions = { nowMs: sunday, accounts };
+  const options: ParseOptions = {
+    nowMs: sunday,
+    accounts: [
+      ...accounts,
+      { id: "revolut", name: "Revolut", kind: "other", pays_in: 0, currency: "EUR" },
+      { id: "monzo", name: "Monzo", kind: "other", pays_in: 0, currency: "GBP" },
+    ],
+  };
 
   it.each([
     ["lunch $20", "USD", 2_000],

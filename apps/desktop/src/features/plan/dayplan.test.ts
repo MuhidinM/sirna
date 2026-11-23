@@ -6,6 +6,7 @@ import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { openTestDb } from "../../test/sqlite";
 import {
   ensureDayPlan,
+  healPlans,
   isoWeekday,
   loadPlanInput,
   type OpenTaskRow,
@@ -14,6 +15,7 @@ import {
   taskOnDay,
   weekStart,
 } from "./dayplan";
+import { deleteOps } from "./edit";
 import { DEFAULT_ANSWERS } from "./routine";
 import { setupOps } from "./setup";
 
@@ -430,5 +432,186 @@ describe("time first: tasks with a time or a part of the day", () => {
         )
         .get(),
     ).toEqual({ n: 0 });
+  });
+});
+
+describe("a planned day heals itself (time first §1 rule 1)", () => {
+  const at = (iso: string) => Date.parse(iso);
+  const DAY = "2026-11-11";
+
+  function planned() {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    return h;
+  }
+  /** What tx.rs does for the user: an update stamps user_edited_at; a delete is soft. */
+  function asUser(db: DatabaseSync, ops: Op[]) {
+    for (const op of ops) {
+      if (op.op === "delete") {
+        db.prepare(`UPDATE ${op.table} SET deleted_at = 2 WHERE id = ?`).run(op.id);
+      } else if (op.op === "update") {
+        const names = Object.keys(op.values);
+        db.prepare(
+          `UPDATE ${op.table} SET ${[...names.map((n) => `${n} = ?`), "user_edited_at = 1"].join(", ")} WHERE id = ?`,
+        ).run(...(Object.values(op.values) as never[]), op.id);
+      } else throw new Error("only updates and deletes here");
+    }
+  }
+  const addTask = (h: ReturnType<typeof harness>, id: string, title: string, dueAt: number) =>
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, due_date, created_at, updated_at) VALUES (?, ?, 'todo', ?, ?, 5, 5)",
+      )
+      .run(id, title, dueAt, DAY);
+  const blocksOf = (h: ReturnType<typeof harness>, taskId: string) =>
+    h.db
+      .prepare(
+        "SELECT id, start_at FROM day_blocks WHERE task_id = ? AND deleted_at IS NULL ORDER BY start_at",
+      )
+      .all(taskId);
+
+  it("gives a task captured after the day was planned its block, once", async () => {
+    const h = planned();
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    // "call bank today 3pm", typed at noon after the day was planned.
+    addTask(h, "bank", "Call bank", at("2026-11-11T15:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(blocksOf(h, "bank")).toEqual([
+      { id: expect.any(String), start_at: at("2026-11-11T15:00:00+03:00") },
+    ]);
+    // Nothing to heal the second time: no write.
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+  });
+
+  it("moves the block when the task's time changes", async () => {
+    const h = planned();
+    addTask(h, "bank", "Call bank", at("2026-11-11T15:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    h.db
+      .prepare("UPDATE task_items SET due_at = ? WHERE id = 'bank'")
+      .run(at("2026-11-11T17:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(blocksOf(h, "bank")).toEqual([
+      { id: expect.any(String), start_at: at("2026-11-11T17:00:00+03:00") },
+    ]);
+  });
+
+  it("keeps the blocks you edited while it heals", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    const jobA = h.db
+      .prepare(
+        `SELECT id, start_at FROM day_blocks WHERE title = 'Job A' AND logical_date = '${DAY}'`,
+      )
+      .get() as { id: string; start_at: number };
+    asUser(h.db, [
+      { op: "update", table: "day_blocks", id: jobA.id, values: { title: "Job A (office)" } },
+    ]);
+    addTask(h, "bank", "Call bank", at("2026-11-11T15:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    expect(
+      h.db.prepare("SELECT title, deleted_at FROM day_blocks WHERE id = ?").get(jobA.id),
+    ).toEqual({ title: "Job A (office)", deleted_at: null });
+    expect(blocksOf(h, "bank")).toHaveLength(1);
+  });
+
+  it("places a task given a part of the day after planning", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, planned_window, due_date, created_at, updated_at) VALUES ('book', 'Read a book', 'todo', 'evening', ?, 5, 5)",
+      )
+      .run(DAY);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    const [block] = blocksOf(h, "book") as { start_at: number }[];
+    expect(block?.start_at).toBeGreaterThanOrEqual(at("2026-11-11T17:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+  });
+
+  it("heals later planned days too (Next 7 days, a capture with the window open)", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-13");
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, due_date, created_at, updated_at) VALUES ('dentist', 'Dentist', 'todo', ?, '2026-11-13', 5, 5)",
+      )
+      .run(at("2026-11-13T10:00:00+03:00"));
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual(["2026-11-13"]);
+    expect(blocksOf(h, "dentist")).toHaveLength(1);
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+  });
+
+  it("leaves a day already gone as it was", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-11");
+    addTask(h, "bank", "Call bank", at("2026-11-11T15:00:00+03:00"));
+    const nextDay = at("2026-11-12T12:00:00+03:00");
+    expect(await ensureDayPlan(h.query, h.transact, nextDay, h.newId, DAY)).toBe(false);
+    expect(blocksOf(h, "bank")).toEqual([]);
+  });
+
+  it("keeps the block a focus session runs in while it heals", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    const area = h.db
+      .prepare(
+        `SELECT id, start_at, end_at FROM day_blocks WHERE logical_date = '${DAY}' AND kind = 'area' AND task_id IS NULL AND deleted_at IS NULL ORDER BY start_at LIMIT 1`,
+      )
+      .get() as { id: string; start_at: number; end_at: number } | undefined;
+    if (!area) throw new Error("expected an area block");
+    h.db
+      .prepare(
+        "INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, paused_ms) VALUES ('s1', ?, 'focus', ?, 25, 0)",
+      )
+      .run(area.id, area.start_at);
+    addTask(h, "bank", "Call bank", at("2026-11-11T15:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(h.db.prepare("SELECT deleted_at FROM day_blocks WHERE id = ?").get(area.id)).toEqual({
+      deleted_at: null,
+    });
+    // ...and plans around it: no second block over its time.
+    expect(
+      h.db
+        .prepare(
+          `SELECT count(*) AS n FROM day_blocks WHERE logical_date = '${DAY}' AND deleted_at IS NULL AND id != ? AND start_at < ? AND end_at > ? AND kind = 'area'`,
+        )
+        .get(area.id, area.end_at, area.start_at),
+    ).toEqual({ n: 0 });
+  });
+
+  it("doesn't bring back a block you deleted on the board", async () => {
+    const h = planned();
+    addTask(h, "bank", "Call bank", at("2026-11-11T15:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    const [own] = blocksOf(h, "bank") as { id: string }[];
+    if (!own) throw new Error("expected the task's block");
+    const area = h.db
+      .prepare(
+        `SELECT id, start_at, end_at, title FROM day_blocks WHERE logical_date = '${DAY}' AND kind = 'area' AND task_id IS NULL AND deleted_at IS NULL ORDER BY start_at LIMIT 1`,
+      )
+      .get() as { id: string; start_at: number; end_at: number; title: string } | undefined;
+    if (!area) throw new Error("expected an area block");
+    asUser(h.db, deleteOps(own));
+    asUser(h.db, deleteOps(area));
+    // A new capture makes the day heal (or Plan → Day replans it): neither comes back.
+    addTask(h, "rent", "Pay rent", at("2026-11-11T19:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(blocksOf(h, "bank")).toEqual([]);
+    expect(blocksOf(h, "rent")).toHaveLength(1);
+    const overlapping = h.db
+      .prepare(
+        `SELECT count(*) AS n FROM day_blocks WHERE logical_date = '${DAY}' AND kind = 'area' AND task_id IS NULL AND deleted_at IS NULL AND start_at < ? AND end_at > ?`,
+      )
+      .get(area.end_at, area.start_at);
+    expect(overlapping).toEqual({ n: 0 });
   });
 });

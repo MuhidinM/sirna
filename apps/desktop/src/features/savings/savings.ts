@@ -144,7 +144,8 @@ export function assignOps(entryIds: string[], goalId: string): Op[] {
  * is the ETB the money is worth at its rate.
  */
 export function moveOps(input: {
-  goal: Pick<GoalRow, "id">;
+  /** Null: the saving waits for "Give it to…" (several goals, none named). */
+  goal: Pick<GoalRow, "id"> | null;
   sign: 1 | -1;
   amount: Santim;
   spend: Pick<AccountRow, "id" | "name" | "currency">;
@@ -154,8 +155,12 @@ export function moveOps(input: {
   ids: { entry: string; halves: [string, string]; transfer: string };
   /** The goal's value of the money, when the savings account isn't in ETB. */
   entryMinor?: Santim;
+  /** Who wrote it: "savings" from the goal card, "capture" from the capture box. */
+  origin?: string;
+  /** Words kept on the saving (`laptop` from `saved 500 laptop`). */
+  note?: string | null;
 }): Op[] {
-  const { goal, sign, amount, spend, savings, nowMs, date, ids } = input;
+  const { goal, sign, amount, spend, savings, nowMs, date, ids, origin = "savings" } = input;
   const [from, to] = sign > 0 ? [spend, savings] : [savings, spend];
   return [
     ...transferOps({
@@ -166,25 +171,93 @@ export function moveOps(input: {
       nowMs,
       ids: ids.halves,
       transferId: ids.transfer,
-      origin: "savings",
+      origin,
     }),
     {
       op: "insert",
       table: "savings_entries",
       id: ids.entry,
       values: {
-        goal_id: goal.id,
+        goal_id: goal?.id ?? null,
         occurred_at: nowMs,
         local_date: date,
         amount_minor: sign * (input.entryMinor ?? amount),
-        note: null,
-        origin: "savings",
+        note: input.note ?? null,
+        origin,
         account: savings.id,
         transfer_id: ids.transfer,
       },
     },
   ];
 }
+
+type SavingsSide = Pick<AccountRow, "id" | "currency" | "is_savings">;
+
+/**
+ * What a transfer saves (time-first §4): into a savings account from a
+ * spending one it is saved, the other way it is taken out; between two of
+ * the same kind, nothing. Worth its ETB value (the goals are in birr); null
+ * also when that needs a rate that isn't set.
+ */
+export function transferSaving(input: {
+  from: SavingsSide;
+  to: SavingsSide;
+  /** Left the from-account, in its currency. */
+  sent: Santim;
+  /** Arrived in the to-account, in its currency. */
+  received: Santim;
+  rates: Rates;
+}): { account: string; minor: Santim } | null {
+  const { from, to, rates } = input;
+  const into = to.is_savings === 1;
+  if (into === (from.is_savings === 1)) return null;
+  const minor = into
+    ? toEtb(input.received, to.currency ?? "ETB", rates)
+    : toEtb(input.sent, from.currency ?? "ETB", rates);
+  if (minor === null || minor === 0) return null;
+  return { account: into ? to.id : from.id, minor: into ? minor : -minor };
+}
+
+/**
+ * The saving a transfer makes, written in the transfer's own transaction so
+ * it counts at once: to the one active goal, or waiting (goal null) for
+ * "Give it to…" when there are several. The sync stays only as a repair.
+ */
+export function transferSavingOps(input: {
+  saving: { account: string; minor: Santim } | null;
+  goalId: string | null;
+  transferId: string;
+  nowMs: number;
+  date: string;
+  id: string;
+  origin: string;
+}): Op[] {
+  const { saving } = input;
+  if (!saving) return [];
+  return [
+    {
+      op: "insert",
+      table: "savings_entries",
+      id: input.id,
+      values: {
+        goal_id: input.goalId,
+        occurred_at: input.nowMs,
+        local_date: input.date,
+        amount_minor: saving.minor,
+        note: null,
+        origin: input.origin,
+        account: saving.account,
+        transfer_id: input.transferId,
+      },
+    },
+  ];
+}
+
+/** The goal a saving with no goal named goes to: the only active one, else none. */
+export const onlyActiveGoal = (goals: Pick<GoalRow, "id" | "status">[]): string | null => {
+  const active = goals.filter((goal) => goal.status === "active");
+  return active.length === 1 ? (active[0]?.id ?? null) : null;
+};
 
 /** Put aside and take out need two accounts in the same currency. */
 export function checkMove(

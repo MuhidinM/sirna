@@ -12,6 +12,7 @@ import {
   generateDay,
   type PlanInput,
   type TaskInput,
+  WINDOWS,
 } from "./generate";
 
 export type Query = <T extends Row>(sql: string, params?: SqlValue[]) => Promise<T[]>;
@@ -75,9 +76,15 @@ export const OPEN_TASKS_SQL = `
 export const CHOSEN_TOP_SQL =
   "SELECT task_id FROM task_daily_top WHERE logical_date = ? AND chosen_by = 'user' ORDER BY position";
 
+/**
+ * Blocks a replan keeps and plans around: yours, ones you edited, and ones a
+ * focus session ran in (a capture heals today's plan mid-session).
+ */
 export const KEPT_BLOCKS_SQL = `
-  SELECT id, start_at, end_at, task_id FROM day_blocks
-  WHERE logical_date = ? AND deleted_at IS NULL AND (source = 'user' OR user_edited_at IS NOT NULL)`;
+  SELECT id, start_at, end_at, task_id, title FROM day_blocks
+  WHERE logical_date = ? AND deleted_at IS NULL
+    AND (source = 'user' OR user_edited_at IS NOT NULL
+      OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`;
 
 /**
  * Tasks whose own block you deleted on this day after touching it (user_edited_at
@@ -87,6 +94,18 @@ export const REMOVED_TASK_BLOCKS_SQL = `
   SELECT DISTINCT b.task_id FROM day_blocks b
   JOIN task_items t ON t.id = b.task_id AND t.title = b.title
   WHERE b.logical_date = ? AND b.deleted_at IS NOT NULL AND b.user_edited_at IS NOT NULL`;
+
+/**
+ * Other planner blocks you deleted on this day (the board stamps
+ * user_edited_at before it deletes): the planner leaves their time empty and
+ * doesn't copy a routine block of the same name again. A task's own block is
+ * handled by REMOVED_TASK_BLOCKS_SQL.
+ */
+export const REMOVED_BLOCKS_SQL = `
+  SELECT b.start_at, b.end_at, b.kind, b.title FROM day_blocks b
+  WHERE b.logical_date = ? AND b.deleted_at IS NOT NULL AND b.user_edited_at IS NOT NULL
+    AND b.source IN ('template', 'generator')
+    AND NOT EXISTS (SELECT 1 FROM task_items t WHERE t.id = b.task_id AND t.title = b.title)`;
 
 /**
  * Timed calendar events that overlap a logical day, given its start and end
@@ -180,7 +199,7 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
     query<{ area_id: string; minutes: number }>(DONE_THIS_WEEK_SQL, [weekStart(date), date]),
     query<OpenTaskRow>(OPEN_TASKS_SQL, [date]),
     query<{ task_id: string }>(CHOSEN_TOP_SQL, [date]),
-    query<{ id: string; start_at: number; end_at: number; task_id: string | null }>(
+    query<{ id: string; start_at: number; end_at: number; task_id: string | null; title: string }>(
       KEPT_BLOCKS_SQL,
       [date],
     ),
@@ -191,6 +210,12 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
     ]),
   ]);
   const removed = await query<{ task_id: string }>(REMOVED_TASK_BLOCKS_SQL, [date]);
+  const removedBlocks = await query<{
+    start_at: number;
+    end_at: number;
+    kind: string;
+    title: string;
+  }>(REMOVED_BLOCKS_SQL, [date]);
   const energy = await query<{ energy: number }>(ENERGY_SQL, [
     shiftDate(date, -1),
     shiftDate(date, -2),
@@ -230,8 +255,15 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       startMin: minuteOf(block.start_at),
       durationMin: minuteOf(block.end_at) - minuteOf(block.start_at),
       taskId: block.task_id,
+      title: block.title,
     })),
     removedTaskIds: removed.map((row) => row.task_id),
+    removedBlocks: removedBlocks.map((block) => ({
+      startMin: minuteOf(block.start_at),
+      durationMin: minuteOf(block.end_at) - minuteOf(block.start_at),
+      kind: block.kind as PlanInput["template"][number]["kind"],
+      title: block.title,
+    })),
     areas: areas.map((area): AreaInput => ({
       id: area.id,
       name: area.name,
@@ -276,8 +308,9 @@ export function planOps(
       area_id: block.areaId,
       task_id: block.taskId,
       title: block.title,
-      // A task's own block is a generator block too (the schema has no 'task'
-      // source yet), so a replan remakes it from the task's current time.
+      // A task's own block is stored as a generator block with task_id set
+      // (the schema has no 'task' source), so a replan remakes it from the
+      // task's current time.
       source: block.kind === "area" ? "generator" : "template",
       light_day: plan.light ? 1 : 0,
     },
@@ -299,9 +332,12 @@ export function planOps(
 const running = new Map<string, Promise<boolean>>();
 
 /**
- * Makes sure a day has a plan; generates it once if not. Returns true when it
- * wrote one. The day is today (the logical date of `nowMs`) unless `date` names
- * another logical date (YYYY-MM-DD), e.g. a day opened in Plan → Day.
+ * Makes sure a day has a plan; generates it once if not. A day already planned
+ * heals itself: a task with a time or a part of that day that has no block
+ * there (captured after the day was planned, or its time changed) gets the
+ * day planned again around your edits (`healDay`). Returns true when it wrote.
+ * The day is today (the logical date of `nowMs`) unless `date` names another
+ * logical date (YYYY-MM-DD), e.g. a day opened in Plan → Day.
  */
 export function ensureDayPlan(
   query: Query,
@@ -322,7 +358,8 @@ export const REST_DAY_MIN = 6 * 60;
 
 /** Today's plan blocks Sirna made and you didn't touch. */
 export const STALE_BLOCKS_SQL = `SELECT id FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL
-  AND source IN ('template', 'generator') AND user_edited_at IS NULL`;
+  AND source IN ('template', 'generator') AND user_edited_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)`;
 
 /**
  * After the routine changes: a day that already has a plan gets a new one
@@ -357,6 +394,91 @@ export function startingNow(input: PlanInput, nowMs?: number): PlanInput {
   };
 }
 
+/** A day's live blocks that hold a task. */
+export const DAY_TASK_BLOCKS_SQL = `
+  SELECT task_id, start_at, title FROM day_blocks
+  WHERE logical_date = ? AND deleted_at IS NULL AND task_id IS NOT NULL`;
+
+/**
+ * The tasks with a time or a part of the day whose own block the planner
+ * would make but the saved day doesn't have: none at all, one at another time
+ * (a timed task), or one outside its window. Pure; empty means the day is fine,
+ * so healing a day twice writes nothing the second time.
+ */
+export function missingTaskBlocks(
+  plan: DayPlan,
+  input: PlanInput,
+  existing: { task_id: string; start_at: number; title: string }[],
+): string[] {
+  const asked = new Map(
+    input.tasks
+      .filter((task) => (task.atMin !== null && task.atMin !== undefined) || task.window)
+      .map((task) => [task.id, task]),
+  );
+  const at = (minutes: number) => localToEpoch(input.date, minutes);
+  return plan.blocks.flatMap((block) => {
+    const task = block.fromTask && block.taskId ? asked.get(block.taskId) : undefined;
+    if (!task) return [];
+    const has = existing.some((row) => {
+      if (row.task_id !== task.id || row.title !== block.title) return false;
+      if (task.atMin !== null && task.atMin !== undefined)
+        return row.start_at === at(block.startMin);
+      const window = task.window ? WINDOWS[task.window] : undefined;
+      return !window || (row.start_at >= at(window.startMin) && row.start_at < at(window.endMin));
+    });
+    return has ? [] : [task.id];
+  });
+}
+
+/**
+ * A planned day whose timed or windowed tasks lack their blocks is planned
+ * again (`replanDay`: your edits stay). Returns true when it wrote.
+ */
+export async function healDay(
+  query: Query,
+  transact: (ops: Op[]) => Promise<unknown>,
+  date: string,
+  newId: () => string,
+  nowMs?: number,
+): Promise<boolean> {
+  const input = startingNow(await loadPlanInput(query, date), nowMs);
+  if (input.template.length === 0) return false;
+  const existing = await query<{ task_id: string; start_at: number; title: string }>(
+    DAY_TASK_BLOCKS_SQL,
+    [date],
+  );
+  if (missingTaskBlocks(generateDay(input), input, existing).length === 0) return false;
+  await replanDay(query, transact, date, newId, nowMs);
+  return true;
+}
+
+/** Planned days from today on (a week ahead at most), for `healPlans`. */
+export const PLANNED_DAYS_SQL = `
+  SELECT DISTINCT logical_date FROM day_blocks
+  WHERE deleted_at IS NULL AND logical_date BETWEEN ? AND ? ORDER BY logical_date`;
+
+/**
+ * Heals every planned day from today to a week ahead (after captures, and
+ * when the window opens). Returns the dates it planned again.
+ */
+export async function healPlans(
+  query: Query,
+  transact: (ops: Op[]) => Promise<unknown>,
+  nowMs: number,
+  newId: () => string,
+): Promise<string[]> {
+  const today = logicalDate(nowMs);
+  const days = await query<{ logical_date: string }>(PLANNED_DAYS_SQL, [
+    today,
+    shiftDate(today, 7),
+  ]);
+  const healed: string[] = [];
+  for (const { logical_date: date } of days) {
+    if (await ensureDayPlan(query, transact, nowMs, newId, date)) healed.push(date);
+  }
+  return healed;
+}
+
 async function planOnce(
   query: Query,
   transact: (ops: Op[]) => Promise<unknown>,
@@ -365,7 +487,9 @@ async function planOnce(
   nowMs: number,
 ): Promise<boolean> {
   const [exists] = await query<{ n: number }>(PLAN_EXISTS_SQL, [date]);
-  if ((exists?.n ?? 0) > 0) return false;
+  // A day already gone stays as it was.
+  if ((exists?.n ?? 0) > 0)
+    return date < logicalDate(nowMs) ? false : healDay(query, transact, date, newId, nowMs);
   const input = startingNow(await loadPlanInput(query, date), nowMs);
   if (input.template.length === 0) return false; // no routine yet (setup not done)
   const plan = generateDay(input);

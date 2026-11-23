@@ -12,8 +12,20 @@ ALTER TABLE savings_entries ADD COLUMN account TEXT;
 ALTER TABLE savings_entries ADD COLUMN transfer_id TEXT;
 
 -- Your accounts (2026-11-23): a CBO savings account, and Wise in dollars.
-INSERT OR IGNORE INTO money_accounts
+-- If you already made them yourself, those are used, not copied.
+UPDATE money_accounts SET is_savings = 1
+  WHERE deleted_at IS NULL AND lower(name) LIKE 'cbo saving%';
+UPDATE money_accounts SET currency = 'USD'
+  WHERE deleted_at IS NULL AND lower(name) = 'wise';
+
+INSERT INTO money_accounts
   (id, name, kind, pays_in, sort_order, currency, is_savings, created_at, updated_at)
-VALUES
-  ('cbo-savings', 'CBO savings', 'bank',  0, 6, 'ETB', 1, 0, 0),
-  ('wise',        'Wise',        'other', 0, 7, 'USD', 0, 0, 0);
+SELECT 'cbo-savings', 'CBO savings', 'bank', 0, 6, 'ETB', 1, 0, 0
+WHERE NOT EXISTS (
+  SELECT 1 FROM money_accounts WHERE deleted_at IS NULL AND lower(name) LIKE 'cbo saving%');
+
+INSERT INTO money_accounts
+  (id, name, kind, pays_in, sort_order, currency, is_savings, created_at, updated_at)
+SELECT 'wise', 'Wise', 'other', 0, 7, 'USD', 0, 0, 0
+WHERE NOT EXISTS (
+  SELECT 1 FROM money_accounts WHERE deleted_at IS NULL AND lower(name) = 'wise');

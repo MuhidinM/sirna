@@ -170,4 +170,35 @@ describe("review fixes", () => {
     );
     expect(ops[0]).toMatchObject({ values: { project_id: "p1" } });
   });
+
+  it("keeps the task's part of the day on every step (time first §1 rule 2)", async () => {
+    const { splitOps } = await import("../ai/facts");
+    const db = seeded();
+    db.prepare("UPDATE task_items SET planned_window = 'evening' WHERE id = 'b'").run();
+    const row = list(db, "open").find((t) => t.id === "b");
+    expect(row?.planned_window).toBe("evening");
+    if (!row) throw new Error("expected task b");
+    let n = 0;
+    const ops = splitOps(
+      row,
+      [
+        { title: "Shortlist themes", minutes: 30 },
+        { title: "Try the best two", minutes: 90 },
+      ],
+      () => `s${++n}`,
+    );
+    const inserts = ops.filter((op) => op.op === "insert");
+    expect(inserts).toHaveLength(2);
+    for (const op of inserts) expect(op).toMatchObject({ values: { planned_window: "evening" } });
+    // A task with no part of the day gives its steps none.
+    expect(
+      splitOps(
+        { id: "x", area_id: null, due_date: null },
+        [{ title: "a", minutes: 5 }],
+        () => "s9",
+      )[0],
+    ).toMatchObject({
+      values: { planned_window: null },
+    });
+  });
 });

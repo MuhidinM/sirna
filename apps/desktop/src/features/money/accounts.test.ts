@@ -216,3 +216,27 @@ describe("accounts in the capture box (T-058)", () => {
     expect(parseCapture("moved 2000 boxes to the store", options).kind).not.toBe("transfer");
   });
 });
+
+describe("the savings and Wise seeds (migration 0028)", () => {
+  it("reuse an account you already made instead of adding a copy", async () => {
+    const { migrations } = await import("../../test/sqlite");
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(":memory:");
+    const all = migrations();
+    const at = all.findIndex((m) => m.name.startsWith("0028"));
+    for (const m of all.slice(0, at)) db.exec(m.sql);
+    db.exec(
+      "INSERT INTO money_accounts (id, name, kind, created_at, updated_at) VALUES ('cbosaving', 'CBO saving', 'bank', 0, 0)",
+    );
+    for (const m of all.slice(at)) db.exec(m.sql);
+    const rows = db
+      .prepare(
+        "SELECT id, is_savings, currency FROM money_accounts WHERE name LIKE 'CBO sav%' OR name = 'Wise'",
+      )
+      .all() as { id: string; is_savings: number; currency: string }[];
+    expect(rows).toEqual([
+      { id: "cbosaving", is_savings: 1, currency: "ETB" },
+      { id: "wise", is_savings: 0, currency: "USD" },
+    ]);
+  });
+});

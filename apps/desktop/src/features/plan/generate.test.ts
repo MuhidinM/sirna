@@ -560,3 +560,60 @@ describe("time first: review fixes", () => {
     expect(plan.blocks.some((b) => b.taskId === "Call bank")).toBe(false);
   });
 });
+
+describe("blocks you deleted", () => {
+  it("doesn't copy a deleted routine block again, only that one", () => {
+    const template = templateFor(3);
+    const email = template.find((b) => b.title === "Check email");
+    if (!email) throw new Error("expected a Check email block");
+    const plan = generateDay(
+      input({
+        removedBlocks: [
+          {
+            startMin: email.startMin,
+            durationMin: email.durationMin,
+            kind: "routine",
+            title: "Check email",
+          },
+        ],
+      }),
+    );
+    const emails = plan.blocks.filter((b) => b.title === "Check email");
+    expect(emails).toHaveLength(template.filter((b) => b.title === "Check email").length - 1);
+    expect(emails.some((b) => b.startMin === email.startMin)).toBe(false);
+  });
+
+  it("leaves a deleted area block's time empty", () => {
+    const first = areaBlocks(generateDay(input()))[0];
+    if (!first) throw new Error("expected an area block");
+    const plan = generateDay(
+      input({
+        removedBlocks: [
+          {
+            startMin: first.startMin,
+            durationMin: first.durationMin,
+            kind: "area",
+            title: first.title,
+          },
+        ],
+      }),
+    );
+    expect(
+      areaBlocks(plan).some(
+        (b) =>
+          b.startMin < first.startMin + first.durationMin &&
+          first.startMin < b.startMin + b.durationMin,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("a block you added by hand", () => {
+  it("stands in for a task with the same title and time, so a re-plan never clashes", () => {
+    const call = { ...task("Call bank", null), atMin: 15 * 60, estimateMin: 30 };
+    const plan = generateDay(
+      input({ tasks: [call], kept: [{ startMin: 15 * 60, durationMin: 30, title: "Call bank" }] }),
+    );
+    expect(plan.blocks.filter((block) => block.title === "Call bank")).toHaveLength(0);
+  });
+});

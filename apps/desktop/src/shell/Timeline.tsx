@@ -22,6 +22,7 @@ import {
   clockOf,
   deleteOps,
   draftOf,
+  focusAfterDelete,
   minuteOf,
   moveOps,
   moveSpan,
@@ -34,11 +35,17 @@ import {
   spanOf,
   undoOps,
 } from "../features/plan/edit";
-import { AREA_TASKS_SQL, type JobTask, tasksByJob } from "../features/plan/jobs";
+import { AREA_TASKS_SQL, blockTaskLists, type JobTask } from "../features/plan/jobs";
 import { shiftDate } from "../features/plan/dayplan";
 import { statusOps } from "../features/tasks/list";
 import { systemClock } from "../kernel/clock";
-import { type BlockRow, firstStep, formatMinutes, nowAndNext } from "../features/plan/now";
+import {
+  type BlockRow,
+  firstStep,
+  focusOffer,
+  formatMinutes,
+  nowAndNext,
+} from "../features/plan/now";
 import { type FocusStatus, startFocus } from "./Focus";
 import { IconPlus } from "./icons";
 import { EventCard, NowCard, toneOf } from "./kit";
@@ -68,7 +75,13 @@ export function NowCards({
   focus?: FocusStatus | undefined;
 }) {
   const { now, next, minutesToNext } = nowAndNext(blocks, nowMs);
-  const canFocus = focus?.kind === null && (now?.kind === "area" || !now);
+  // Always offered while no session runs (rule 7); the sheet asks what it's for.
+  const offer = focusOffer(now, focus?.kind);
+  const focusButton = offer && (
+    <Button className="btn-orange" onClick={() => void startFocus(offer.blockId)}>
+      Start focus
+    </Button>
+  );
   if (now) {
     const left = Math.max(0, Math.round((now.end_at - nowMs) / 60_000));
     return (
@@ -90,11 +103,7 @@ export function NowCards({
           </>
         }
       >
-        {canFocus && (
-          <Button className="btn-orange" onClick={() => void startFocus(now.id)}>
-            Start focus
-          </Button>
-        )}
+        {focusButton}
       </NowCard>
     );
   }
@@ -105,11 +114,7 @@ export function NowCards({
       title={next ? next.title : "Nothing else today"}
       sub={next ? "Free time until then." : "The rest of the day is yours."}
     >
-      {canFocus && (
-        <Button className="btn-orange" onClick={() => void startFocus(null)}>
-          Start focus
-        </Button>
-      )}
+      {focusButton}
     </NowCard>
   );
 }
@@ -189,7 +194,7 @@ export function Timeline({
   blocks,
   nowMs,
   date,
-  areaTasks,
+  blockTasks,
   onDone,
   edit,
   label = "Today's plan",
@@ -198,8 +203,8 @@ export function Timeline({
   nowMs: number;
   /** The logical date shown; today when left out. */
   date?: string;
-  /** Each area's open tasks, listed inside that area's blocks (rule 6). */
-  areaTasks?: Map<string, JobTask[]>;
+  /** The open tasks listed inside each block, by block id (rule 6; `blockTaskLists`). */
+  blockTasks?: Map<string, JobTask[]>;
   onDone?: (task: JobTask) => void;
   edit?: BoardEdit;
   label?: string;
@@ -212,6 +217,21 @@ export function Timeline({
   const [editing, setEditing] = useState<Editing>(null);
   const [done, setDone] = useState<Done | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Where keyboard focus goes once the popover closes: a block, or the board.
+  const lanesRef = useRef<HTMLDivElement>(null);
+  /** Focus a block's card (it is on the page already), else the board itself. */
+  const focusBlock = (blockId: string | null) => {
+    const lanes = lanesRef.current;
+    const card = blockId
+      ? lanes?.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(blockId)}"]`)
+      : null;
+    (card ?? lanes)?.focus();
+  };
+  /** The popover closes and focus goes back where you were (a11y). */
+  const closeEditor = (blockId: string | null) => {
+    focusBlock(blockId);
+    setEditing(null);
+  };
 
   const write = (ops: Op[], said: string, before: Record<string, Record<string, SqlValue>>) => {
     if (ops.length === 0) return;
@@ -338,6 +358,7 @@ export function Timeline({
     } else if (event.key === "Delete") {
       event.preventDefault();
       write(deleteOps(block), `Deleted ${block.title}.`, { [block.id]: blockBefore(block) });
+      focusBlock(focusAfterDelete(blocks, block.id));
     }
   };
 
@@ -414,13 +435,14 @@ export function Timeline({
           )}
         </div>
       )}
+      {/* A click on an empty hour adds a block; "Add a block" above is the keyboard way. */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
       <div
         className={edit ? "day-board editable" : "day-board"}
         style={
           { height: `${Math.max(y(last), editing ? editorTop + 340 : 0) + 16}px` } as CSSProperties
         }
-        role="list"
-        aria-label={label}
+        onClick={addAt}
       >
         <div className="day-hours" aria-hidden="true">
           {hours.map((t) => (
@@ -434,9 +456,13 @@ export function Timeline({
             </span>
           )}
         </div>
-        {/* A click on an empty hour adds a block; "Add a block" above is the keyboard way. */}
-        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-        <div className="day-lanes" onClick={addAt}>
+        <div
+          className="day-lanes"
+          ref={lanesRef}
+          role="list"
+          aria-label={label}
+          tabIndex={edit ? -1 : undefined}
+        >
           {hours.map((t) => (
             <span key={t} className="day-line" style={{ top: y(t) }} aria-hidden="true" />
           ))}
@@ -446,6 +472,7 @@ export function Timeline({
           {rest.map((block) => (
             <div
               key={block.id}
+              role="listitem"
               className="day-rest"
               style={{ top: y(block.start_at), height: y(block.end_at) - y(block.start_at) }}
             >
@@ -459,12 +486,8 @@ export function Timeline({
             const minutes = (block.end_at - block.start_at) / 60_000;
             const short = minutes * perMin < SHORT_PX;
             const dragging = drag?.id === block.id && drag.moved;
-            // Every block with an area lists that area's open tasks (rule 6),
-            // until it has ended.
-            const tasks =
-              block.area_id && (day !== today || block.end_at > nowMs)
-                ? (areaTasks?.get(block.area_id) ?? [])
-                : [];
+            // One block per area lists that area's open tasks (rule 6).
+            const tasks = blockTasks?.get(block.id) ?? [];
             const next = nextInLane(block);
             const room = next === null || dragging ? Infinity : y(next) - y(block.start_at) - 3;
             const height = Math.max(
@@ -514,6 +537,7 @@ export function Timeline({
                   style={style}
                   {...(edit
                     ? {
+                        "data-block-id": block.id,
                         tabIndex: 0,
                         "aria-label": `${block.title}, ${range(block)}`,
                         "aria-describedby": `day-hint-${day}`,
@@ -526,9 +550,12 @@ export function Timeline({
                       }
                     : {})}
                 >
-                  {!short && block.task_title && block.kind === "area" && (
-                    <span className="event-label">{block.task_title}</span>
-                  )}
+                  {!short &&
+                    block.task_title &&
+                    block.kind === "area" &&
+                    block.task_title !== block.title && (
+                      <span className="event-label">{block.task_title}</span>
+                    )}
                   {shownTasks.length > 0 && (
                     <ul className="event-check" aria-label={`${block.title} tasks`}>
                       {shownTasks.map((task) => (
@@ -589,23 +616,26 @@ export function Timeline({
               </div>
             );
           })}
-          {edit && editing && (
-            <BlockEditor
-              key={editing.mode === "edit" ? editing.block.id : "add"}
-              top={editorTop}
-              date={day}
-              editing={editing}
-              areas={edit.areas}
-              tasks={edit.tasks}
-              onClose={() => setEditing(null)}
-              onSave={(ops, said, before) => {
-                write(ops, said, before);
-                setEditing(null);
-              }}
-              areaName={areaName}
-            />
-          )}
         </div>
+        {/* The popover is a dialog beside the list, not an item in it. */}
+        {edit && editing && (
+          <BlockEditor
+            key={editing.mode === "edit" ? editing.block.id : "add"}
+            top={editorTop}
+            date={day}
+            editing={editing}
+            areas={edit.areas}
+            tasks={edit.tasks}
+            onClose={() => closeEditor(editing.mode === "edit" ? editing.block.id : null)}
+            onSave={(ops, said, before) => {
+              write(ops, said, before);
+              const id = editing.mode === "edit" ? editing.block.id : null;
+              const deleted = id !== null && ops.some((op) => op.op === "delete" && op.id === id);
+              closeEditor(deleted ? focusAfterDelete(blocks, id) : id);
+            }}
+            areaName={areaName}
+          />
+        )}
       </div>
     </div>
   );
@@ -681,13 +711,16 @@ function BlockEditor({
       ref={form}
       className="day-editor"
       role="dialog"
-      aria-label={block ? `Edit ${block.title}` : "Add a block"}
+      aria-labelledby={`${id}-heading`}
       style={{ top: Math.max(0, top) }}
       onSubmit={(event) => {
         event.preventDefault();
         save();
       }}
     >
+      <h3 className="day-editor-heading" id={`${id}-heading`}>
+        {block ? `Edit ${block.title}` : "Add a block"}
+      </h3>
       <label className="field">
         <span>Title</span>
         <input
@@ -781,13 +814,12 @@ const BOARD_AREAS_SQL =
  * cards (a task with its own block that day isn't listed again), and the
  * areas and tasks the popover picks from.
  */
-export function useBoard(date: string, blocks: BlockRow[]) {
+export function useBoard(date: string, blocks: BlockRow[], nowMs: number) {
   const areaRows = useLiveQuery<AreaTaskRow>(AREA_TASKS_SQL, [shiftDate(date, 7)]);
   const areas = useLiveQuery<{ id: string; name: string }>(BOARD_AREAS_SQL);
   const tasks = useLiveQuery<BoardTask & Record<string, string | number | null>>(BOARD_TASKS_SQL);
-  const own = new Set(blocks.flatMap((block) => (block.task_id ? [block.task_id] : [])));
   return {
-    areaTasks: tasksByJob(areaRows.rows, own),
+    blockTasks: blockTaskLists(blocks, areaRows.rows, nowMs),
     edit: { areas: areas.rows, tasks: tasks.rows } satisfies BoardEdit,
     onDone: (task: JobTask) =>
       void transact("user", statusOps(task, "done", systemClock.now()), `task:${task.id}`),

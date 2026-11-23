@@ -270,6 +270,11 @@
   cursor: cell;
 }
 
+/* Focus lands on the board itself after the last block is deleted. */
+.day-lanes:focus {
+  outline: none;
+}
+
 .day-lanes .event.editable {
   cursor: grab;
   touch-action: none;
@@ -330,6 +335,13 @@
   color: var(--canvas-ink);
   box-shadow: 0 18px 40px rgb(0 0 0 / 18%);
   cursor: auto;
+}
+
+.day-editor-heading {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .day-editor .field {

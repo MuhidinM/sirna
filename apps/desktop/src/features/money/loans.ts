@@ -257,3 +257,23 @@ export function owedInEtb(people: PersonBalance[], rates: Rates, conversion: Con
     0,
   );
 }
+
+/**
+ * People with an open loan for the capture parser, each name once: someone
+ * owing in birr and in dollars is one person (owing either way in any
+ * currency is enough to read "abel paid back 400").
+ */
+export function loanPeople(
+  people: Pick<PersonBalance, "person" | "owedToMe" | "iOwe">[],
+): { name: string; owedToMe: number; iOwe: number }[] {
+  const byKey = new Map<string, { name: string; owedToMe: number; iOwe: number }>();
+  for (const person of people) {
+    const key = personKey(person.person);
+    const seen = byKey.get(key);
+    if (seen) {
+      seen.owedToMe = Math.max(seen.owedToMe, person.owedToMe);
+      seen.iOwe = Math.max(seen.iOwe, person.iOwe);
+    } else byKey.set(key, { name: person.person, owedToMe: person.owedToMe, iOwe: person.iOwe });
+  }
+  return [...byKey.values()];
+}

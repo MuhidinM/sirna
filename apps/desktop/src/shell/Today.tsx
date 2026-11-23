@@ -53,6 +53,8 @@ interface TaskRow extends Record<string, string | number | null> {
   step_total: number | null;
 }
 
+const PLANNED_WINDOW_SQL = "SELECT planned_window FROM task_items WHERE id = ?";
+
 /** A task this long can be split into steps (plan §7.3, the AI's suggestion). */
 export const SPLIT_FROM_MIN = 90;
 
@@ -116,11 +118,19 @@ export function SplitTask({
           onClick={() => {
             if (using) return;
             setUsing(true);
-            void transact(
-              "user",
-              splitOps(task, state.steps, () => ulid()),
-              `split:${task.id}`,
-            )
+            // The steps keep the task's part of the day (its row here doesn't carry it).
+            void query<{ planned_window: string | null }>(PLANNED_WINDOW_SQL, [task.id])
+              .then(([row]) =>
+                transact(
+                  "user",
+                  splitOps(
+                    { ...task, planned_window: row?.planned_window ?? null },
+                    state.steps,
+                    () => ulid(),
+                  ),
+                  `split:${task.id}`,
+                ),
+              )
               .then(onClose)
               .catch(() => setUsing(false));
           }}
@@ -233,7 +243,8 @@ export function Today({
   const nowMs = useNow();
   const [today, dayStart] = todayParams(nowMs);
 
-  // Make today's plan from the routine the first time the day is opened.
+  // Make today's plan from the routine the first time the day is opened; a
+  // planned day gets blocks for tasks timed after it was planned (heals).
   useEffect(() => {
     void ensureDayPlan(
       query,
@@ -261,7 +272,7 @@ export function Today({
   ]);
   const minuteNow = useMinute();
   // Each area's tasks inside its blocks (rule 6); the board is editable (rule 8).
-  const board = useBoard(today, blocks.rows);
+  const board = useBoard(today, blocks.rows, minuteNow);
   const away = useLiveQuery<{ value_json: string }>(AWAY_SQL);
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
@@ -356,7 +367,7 @@ export function Today({
                   blocks={blocks.rows}
                   nowMs={minuteNow}
                   date={today}
-                  areaTasks={board.areaTasks}
+                  blockTasks={board.blockTasks}
                   onDone={board.onDone}
                   edit={board.edit}
                 />

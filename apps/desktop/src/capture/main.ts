@@ -14,7 +14,8 @@ import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/pr
 import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
 import { affordState, echo as echoLine, ideaInput, toOps } from "./ops";
-import { balances, type LoanEvent, LOANS_SQL } from "../features/money/loans";
+import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
+import { RATES_SQL, readRates } from "../features/money/currency";
 import { affordAnswer } from "../features/money/affordLoad";
 import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
@@ -50,7 +51,7 @@ let goalNames: string[] = [];
 /** Categories, corrections and jobs, so money lines land right (T-056). */
 let moneyContext: Pick<
   ParseOptions,
-  "categories" | "learned" | "jobs" | "accounts" | "loanPeople" | "areas"
+  "categories" | "learned" | "jobs" | "accounts" | "loanPeople" | "areas" | "rates"
 > = {};
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
@@ -116,19 +117,19 @@ void Promise.all([
   query<{ id: string; name: string }>(
     "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL",
   ),
+  // Rates, so transfers and savings across currencies are worked out here.
+  query<{ value_json: string }>(RATES_SQL),
 ])
-  .then(([categories, learned, jobs, accounts, loans, areas]) => {
+  .then(([categories, learned, jobs, accounts, loans, areas, rates]) => {
     moneyContext = {
       areas,
       categories,
       learned: Object.fromEntries(learned.map((row) => [row.id, row.category_id])),
       jobs,
       accounts,
-      loanPeople: balances(loans).map((person) => ({
-        name: person.person,
-        owedToMe: person.owedToMe,
-        iOwe: person.iOwe,
-      })),
+      // One name per person, even with loans in two currencies.
+      loanPeople: loanPeople(balances(loans)),
+      rates: readRates(rates[0]?.value_json),
     };
   })
   .catch(() => undefined);
@@ -230,9 +231,11 @@ form.addEventListener("submit", (event) => {
   // A saving goes to the goal it names, or the only one (plan §3.13).
   let savingGoal: { id: string; title: string } | null | undefined;
   type Goal = { id: string; title: string; status: "active" | "done" | "paused" };
+  // A transfer into or out of a savings account is saving too (time-first §4).
+  const savesSomething = (item: Parsed) =>
+    item.kind === "saving" || (item.kind === "transfer" && item.saving !== undefined);
   const hasSaving =
-    parsed.kind === "saving" ||
-    (parsed.kind === "money" && parsed.items.some((item) => item.kind === "saving"));
+    savesSomething(parsed) || (parsed.kind === "money" && parsed.items.some(savesSomething));
   const goalRows: Promise<Goal[]> = hasSaving
     ? query<Goal>("SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL").catch(
         () => [],
@@ -267,7 +270,7 @@ form.addEventListener("submit", (event) => {
     .then((rawId) => {
       // `afford 4500 shoes` (T-074): the answer from your real numbers.
       if (parsed.kind === "afford") {
-        void affordAnswer(query, nowMs, parsed.amount, parsed.what)
+        void affordAnswer(query, nowMs, parsed.amount, parsed.what, parsed.currency)
           // A sentence to read, not an echo: it stays a little longer, in the
           // verdict's colour (Fine green, Tight yellow, Not now pink).
           .then((answer) => {

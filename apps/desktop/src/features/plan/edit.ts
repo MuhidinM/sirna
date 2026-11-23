@@ -215,8 +215,31 @@ export function addOps(
   ];
 }
 
+/**
+ * Deletes a block so the planner doesn't make it again: an empty update first
+ * (tx.rs stamps `user_edited_at` on a user's update), then the soft delete.
+ * The planner reads a deleted block you touched as "removed" (dayplan.ts
+ * REMOVED_TASK_BLOCKS_SQL and REMOVED_BLOCKS_SQL).
+ */
 export function deleteOps(block: Pick<EditBlock, "id">): Op[] {
-  return [{ op: "delete", table: "day_blocks", id: block.id }];
+  return [
+    { op: "update", table: "day_blocks", id: block.id, values: {} },
+    { op: "delete", table: "day_blocks", id: block.id },
+  ];
+}
+
+/**
+ * Where keyboard focus goes after a block is deleted: the next block in time,
+ * else the one before, else none (the board itself).
+ */
+export function focusAfterDelete(
+  blocks: { id: string; start_at: number }[],
+  deletedId: string,
+): string | null {
+  const sorted = [...blocks].sort((a, b) => a.start_at - b.start_at);
+  const index = sorted.findIndex((block) => block.id === deletedId);
+  if (index < 0) return null;
+  return sorted[index + 1]?.id ?? sorted[index - 1]?.id ?? null;
 }
 
 /**
@@ -229,6 +252,8 @@ export function undoOps(ops: Op[], before: Record<string, Record<string, SqlValu
     const old = before[op.id] ?? {};
     if (op.op === "insert") return [{ op: "delete", table: op.table, id: op.id }];
     if (op.op === "delete") return [{ op: "upsert", table: op.table, id: op.id, values: old }];
+    // The stamp before a delete has nothing to put back.
+    if (op.op === "update" && Object.keys(op.values).length === 0) return [];
     const values: Record<string, SqlValue> = {};
     for (const key of Object.keys(op.values)) values[key] = old[key] ?? null;
     return [{ op: "update", table: op.table, id: op.id, values }];

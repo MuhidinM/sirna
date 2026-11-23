@@ -12,6 +12,7 @@ import {
   deleteOps,
   draftOf,
   type EditBlock,
+  focusAfterDelete,
   minuteOf,
   moveOps,
   moveSpan,
@@ -215,8 +216,23 @@ describe("the edit popover", () => {
     ]);
   });
 
-  it("deletes", () => {
-    expect(deleteOps(gym)).toEqual([{ op: "delete", table: "day_blocks", id: "b1" }]);
+  it("deletes after marking the block yours, so the planner doesn't make it again", () => {
+    expect(deleteOps(gym)).toEqual([
+      { op: "update", table: "day_blocks", id: "b1", values: {} },
+      { op: "delete", table: "day_blocks", id: "b1" },
+    ]);
+  });
+
+  it("moves focus to the next block after a delete, else the one before, else the board", () => {
+    const blocks = [
+      { id: "c", start_at: 300 },
+      { id: "a", start_at: 100 },
+      { id: "b", start_at: 200 },
+    ];
+    expect(focusAfterDelete(blocks, "a")).toBe("b");
+    expect(focusAfterDelete(blocks, "c")).toBe("b");
+    expect(focusAfterDelete([{ id: "a", start_at: 1 }], "a")).toBeNull();
+    expect(focusAfterDelete(blocks, "gone")).toBeNull();
   });
 });
 

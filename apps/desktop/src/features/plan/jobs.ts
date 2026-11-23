@@ -95,3 +95,33 @@ export function listBlockIds(
   }
   return new Set([...chosen.values()].map((pick) => pick.id));
 }
+
+/**
+ * The task list each block shows (rule 6), by block id: an area's open tasks
+ * sit in one block of that area (`listBlockIds`), never in a task's own block
+ * when the area has another one, and a task that already has a block that day
+ * (its own, or picked for an area block) isn't listed again.
+ */
+export function blockTaskLists(
+  blocks: {
+    id: string;
+    area_id: string | null;
+    kind: string;
+    end_at: number;
+    task_id: string | null;
+    title: string;
+    task_title: string | null;
+  }[],
+  rows: JobTask[],
+  nowMs: number,
+): Map<string, JobTask[]> {
+  const shown = new Set(blocks.flatMap((block) => (block.task_id ? [block.task_id] : [])));
+  const byArea = tasksByJob(rows, shown);
+  const lists = new Map<string, JobTask[]>();
+  for (const id of listBlockIds(blocks, undefined, nowMs)) {
+    const block = blocks.find((b) => b.id === id);
+    const tasks = block?.area_id ? byArea.get(block.area_id) : undefined;
+    if (tasks && tasks.length > 0) lists.set(id, tasks);
+  }
+  return lists;
+}

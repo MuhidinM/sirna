@@ -155,6 +155,7 @@ export function splitOps(
     due_date: string | null;
     project_id?: string | null;
     planned_date?: string | null;
+    planned_window?: string | null;
     deadline_stale?: number;
   },
   steps: { title: string; minutes: number }[],
@@ -172,6 +173,8 @@ export function splitOps(
         due_date: task.due_date,
         // Steps stay on the day the task was moved to, with its deadline mark (T-050).
         planned_date: task.planned_date ?? null,
+        // ...and in its part of the day ("this evening"), so the planner places them there.
+        planned_window: task.planned_window ?? null,
         deadline_stale: task.deadline_stale ?? 0,
         project_id: task.project_id ?? null,
         estimate_min: step.minutes,

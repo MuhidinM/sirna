@@ -83,6 +83,8 @@ export interface KeptBlock {
   durationMin: number;
   /** The task it holds: a task block you moved isn't made again. */
   taskId?: string | null;
+  /** Its title: a new block with the same title and start would clash with it. */
+  title?: string;
 }
 
 export interface PlanInput {
@@ -104,6 +106,18 @@ export interface PlanInput {
   notBeforeMin?: number;
   /** Tasks whose own block you deleted today: not made again. */
   removedTaskIds?: string[];
+  /**
+   * Other blocks you deleted today: a routine or calendar block of the same
+   * name isn't copied again, and an area block's time stays empty.
+   */
+  removedBlocks?: RemovedBlock[];
+}
+
+export interface RemovedBlock {
+  startMin: number;
+  durationMin: number;
+  kind: TemplateBlock["kind"];
+  title: string;
 }
 
 export interface CalendarEvent {
@@ -213,15 +227,25 @@ export function generateDay(input: PlanInput): DayPlan {
     (input.recentEnergy.length >= 2 && input.recentEnergy.slice(0, 2).every((e) => e <= 1));
   const free = (block: { startMin: number; durationMin: number }) =>
     !input.kept.some((kept) => overlaps(kept, block));
+  const removed = input.removedBlocks ?? [];
+  /** A routine or calendar block you deleted today (same name, same time) isn't copied again. */
+  const notRemoved = (block: { title: string; startMin: number; durationMin: number }) =>
+    !removed.some(
+      (gone) => gone.kind !== "area" && gone.title === block.title && overlaps(gone, block),
+    );
+  /** Area blocks you deleted today: their time stays empty. */
+  const removedAreaTime = removed.filter((gone) => gone.kind === "area");
 
   // 1. Fixed and routine blocks (and the rest block) from the template.
   const blocks: PlannedBlock[] = input.template
     .filter((block) => block.kind !== "area")
     .filter(free)
+    .filter(notRemoved)
     .map((block) => ({ ...block, taskId: null }));
   // Calendar events are fixed blocks; a block you edited still wins.
   const events = (input.events ?? []).filter((event) => event.durationMin > 0);
-  for (const event of events.filter(free))
+  const shownEvents = events.filter(notRemoved);
+  for (const event of shownEvents.filter(free))
     blocks.push({ ...event, kind: "fixed", areaId: null, taskId: null });
 
   const activeAreas = input.areas.filter((area) => area.active);
@@ -296,7 +320,12 @@ export function generateDay(input: PlanInput): DayPlan {
       .filter(free)
       .filter((slot) => !off.some((rest) => overlaps(rest, slot)))
       // An event or a task's own block takes its time out of a slot; the rest still gets filled.
-      .flatMap((slot) => cut(slot, [...events, ...taken]).map((piece) => ({ ...slot, ...piece })))
+      .flatMap((slot) =>
+        cut(slot, [...events, ...taken, ...removedAreaTime]).map((piece) => ({
+          ...slot,
+          ...piece,
+        })),
+      )
       .filter((slot) => slot.durationMin >= MIN_BLOCK_MIN)
       // Slots you tied to an area come first, so the buffer never squeezes them out.
       .sort(
@@ -405,5 +434,9 @@ export function generateDay(input: PlanInput): DayPlan {
   urgent(input.tasks, input.date).forEach((task) => add(task.id));
   blocks.filter((block) => block.kind === "area").forEach((block) => add(block.taskId));
 
-  return { light, blocks, top };
+  // A block you kept with the same title at the same minute stands in for a
+  // new one (the database allows one per day, title and start).
+  const keptAlready = (block: { startMin: number; title: string }) =>
+    input.kept.some((kept) => kept.title === block.title && kept.startMin === block.startMin);
+  return { light, blocks: blocks.filter((block) => !keptAlready(block)), top };
 }

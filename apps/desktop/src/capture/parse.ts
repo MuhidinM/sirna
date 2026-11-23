@@ -8,6 +8,9 @@ import { parseAmount, type Santim } from "../kernel/money";
 import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
+import { transferAmounts } from "../features/money/accounts";
+import { type Rates, toEtb } from "../features/money/currency";
+import { transferSaving } from "../features/savings/savings";
 
 export const PARSER_ID = "capture@1";
 
@@ -33,10 +36,25 @@ export type Parsed =
    */
   | { kind: "money"; items: MoneyPiece[] }
   /** A question, not a record (T-074): `afford 4500 shoes`. Nothing is written. */
-  | { kind: "afford"; amount: Santim; what?: string }
+  | {
+      kind: "afford";
+      amount: Santim;
+      what?: string;
+      /** `afford $200`: the amount is in this currency; answered in birr at the rate. */
+      currency?: string;
+    }
   | LoanItem
   | TransferItem
-  | { kind: "note" | "feedback" | "inbox"; body: string; area?: string }
+  | {
+      kind: "note" | "feedback" | "inbox";
+      body: string;
+      area?: string;
+      /**
+       * Why a money line was kept as a loose end instead of saved as money
+       * (`No USD account yet: …`): the echo says it.
+       */
+      why?: string;
+    }
   | {
       kind: "idea";
       body: string;
@@ -76,15 +94,44 @@ export interface TransferItem {
   fromName: string;
   toName: string;
   date: string;
+  /** The from-account's currency when not birr; `amount` is in it. */
+  currency?: string;
+  /** Between two currencies: what arrives, in `toCurrency`, at the saved rate. */
+  received?: Santim;
+  toCurrency?: string;
+  /** "at 132.50", for the echo, when the halves differ in currency. */
+  at?: string;
+  /** Into (or out of) a savings account: the goal's share, signed ETB minor units. */
+  saving?: { account: string; minor: Santim };
+}
+
+/** An account a saving moves between: its id, name and currency when not birr. */
+export interface AccountRef {
+  id: string;
+  name: string;
   currency?: string;
 }
 
 export interface SavingItem {
   kind: "saving";
-  /** Santim, positive: saved; negative: taken out. */
+  /** Minor units of `currency` (birr when not given), positive: saved; negative: taken out. */
   amount: Santim;
   /** Words naming the goal (`laptop`), matched in the capture box. */
   goal?: string;
+  /** `@telebirr` on the line: where the money comes from (or goes back to). */
+  account?: string;
+  /** ISO code when not birr (`saved $50 laptop`). */
+  currency?: string;
+  /** The goal's value in ETB minor units, signed, when `currency` isn't birr. */
+  worth?: Santim;
+  /**
+   * Like Put aside (time-first §4): the money moves from `spend` into
+   * `savings` (the reverse when taken out). Both are in `currency`.
+   */
+  spend?: AccountRef;
+  savings?: AccountRef;
+  /** Why it is only marked as saved, with no transfer ("no USD savings account"). */
+  unbacked?: string;
 }
 
 /** One record of a several-item money line. */
@@ -133,6 +180,8 @@ export interface ParseOptions {
   areas?: { id: string; name: string }[];
   /** People with an open loan, so "abel paid back 400" is read only when Abel owes you. */
   loanPeople?: { name: string; owedToMe: number; iOwe: number }[];
+  /** Saved rates (`money.rates`), for transfers and savings across currencies. */
+  rates?: Rates;
 }
 
 type AccountOption = NonNullable<ParseOptions["accounts"]>[number];
@@ -571,9 +620,25 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
       ),
     );
     if (items.every(isPiece)) return { kind: "money", items };
+    // One piece can't be saved as money (no account in its currency, …):
+    // the whole line stays a loose end and the echo says why.
+    const stuck = items.find(isStuck);
+    if (stuck && items.every((item) => isPiece(item) || isStuck(item)))
+      return looseEnd(raw, stuck.why);
   }
   return parsed;
 }
+
+type Stuck = { kind: "inbox"; body: string; why: string };
+const isStuck = (parsed: Parsed): parsed is Stuck =>
+  parsed.kind === "inbox" && typeof parsed.why === "string";
+
+/** A line kept as a loose end, not money, with the reason for the echo. */
+const looseEnd = (raw: string, why: string): Stuck => ({
+  kind: "inbox",
+  body: raw.trim().replace(/\s+/g, " "),
+  why,
+});
 
 /** ISO codes by what people type: `$`, `usd`, `dollars`, `€`, `eur`, `£`, `gbp`. */
 const CURRENCY_OF: Record<string, string> = {
@@ -595,7 +660,7 @@ const CURRENCY_AMOUNT = new RegExp(
 );
 
 /** `$200`, `200 usd`, `usd 200`, `€50`, `50 eur`, `£20`, `20 gbp`: the number left bare, and its currency. */
-export function readCurrency(text: string): { rest: string; currency?: string } {
+export function readCurrency(text: string): { rest: string; currency?: string; word?: string } {
   const match = CURRENCY_AMOUNT.exec(text);
   if (!match) return { rest: text };
   const unit = (match[1] ?? match[3] ?? match[6] ?? "").toLowerCase();
@@ -603,36 +668,159 @@ export function readCurrency(text: string): { rest: string; currency?: string } 
   const currency = CURRENCY_OF[unit];
   if (!currency || !number) return { rest: text };
   const rest = text.slice(0, match.index) + number + text.slice(match.index + match[0].length);
-  return { rest, currency };
+  return { rest, currency, word: unit };
 }
 
 const currencyOf = (account: AccountOption | undefined) => account?.currency ?? "ETB";
 
+/** The first spending (not savings) account kept in a currency. */
+const homeIn = (accounts: AccountOption[], code: string) =>
+  accounts.find((a) => currencyOf(a) === code && a.is_savings !== 1);
+
+const refOf = (account: AccountOption): AccountRef => ({
+  id: account.id,
+  name: account.name,
+  ...(currencyOf(account) !== "ETB" ? { currency: currencyOf(account) } : {}),
+});
+
+/** "CBO is in ETB; use @wise or drop the usd". */
+function wrongAccount(
+  account: AccountOption,
+  code: string,
+  word: string | undefined,
+  accounts: AccountOption[],
+): string {
+  const other = homeIn(accounts, code);
+  return `${account.name} is in ${currencyOf(account)}; ${other ? `use @${other.id} or ` : ""}drop the ${word ?? code.toLowerCase()}`;
+}
+
+const noAccountIn = (code: string) => `No ${code} account yet: add one in Money → Accounts`;
+const setRate = (code: string) => `Set a ${code} rate in Money → Accounts first`;
+
 /**
  * One record's worth of text. A currency (`$200`, `50 eur`) is read off
- * first; with no `@account`, the first account kept in that currency is
- * used. Without one, `@wise` gives its own currency. Birr is left unmarked.
+ * first; with no `@account`, the first spending account kept in that
+ * currency is used. Without one, `@wise` gives its own currency. Birr is
+ * left unmarked. An entry's currency is always its account's: a line that
+ * can't keep to that is a loose end that says why (time-first §3).
  */
 function parsePiece(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
-  const { rest, currency } = readCurrency(raw.trim().replace(/\s+/g, " "));
+  const text = raw.trim().replace(/\s+/g, " ");
+  const { rest, currency, word } = readCurrency(text);
+  const named = readAccount(rest, accounts).account;
   let parsed = parsePlain(rest, options);
-  if (currency && parsed.kind !== "transfer" && !readAccount(rest, accounts).account) {
-    const home = accounts.find((a) => currencyOf(a) === currency && a.is_savings !== 1);
+  if (
+    currency &&
+    !named &&
+    parsed.kind !== "transfer" &&
+    parsed.kind !== "saving" &&
+    parsed.kind !== "afford"
+  ) {
+    const home = homeIn(accounts, currency);
     if (home) parsed = parsePlain(`${rest} @${home.id}`, options);
   }
-  if (parsed.kind === "transfer") {
-    const from = accounts.find((a) => a.id === parsed.from);
-    const code = currency ?? currencyOf(from);
-    return code === "ETB" ? parsed : { ...parsed, currency: code };
-  }
+  if (parsed.kind === "transfer") return settleTransfer(parsed, currency, word, text, options);
+  if (parsed.kind === "saving") return settleSaving(parsed, currency, word, text, options);
+  if (parsed.kind === "afford") return currency ? { ...parsed, currency } : parsed;
   if (isMoney(parsed) || parsed.kind === "loan") {
     const account = accounts.find((a) => a.id === parsed.account);
-    const code = currency ?? currencyOf(account);
+    if (!account) {
+      if (currency && accounts.length > 0) return looseEnd(text, noAccountIn(currency));
+      return currency ? { ...parsed, currency } : parsed;
+    }
+    if (currency && currencyOf(account) !== currency)
+      return looseEnd(
+        text,
+        named ? wrongAccount(account, currency, word, accounts) : noAccountIn(currency),
+      );
+    const code = currencyOf(account);
     return code === "ETB" ? parsed : { ...parsed, currency: code };
   }
-  // A saving, a question or a task with a currency in it: read the line as typed.
+  // A question or a task with a currency in it: read the line as typed.
   return currency ? parsePlain(raw, options) : parsed;
+}
+
+/**
+ * `moved $200 from wise to cbo`: the from-half in Wise's dollars, the
+ * to-half the birr it is worth at the saved rate. Into or out of a savings
+ * account it is saving too, and says how much.
+ */
+function settleTransfer(
+  parsed: TransferItem,
+  typed: string | undefined,
+  word: string | undefined,
+  text: string,
+  options: ParseOptions,
+): Parsed {
+  const accounts = options.accounts ?? [];
+  const rates = options.rates ?? {};
+  const from = accounts.find((a) => a.id === parsed.from);
+  const to = accounts.find((a) => a.id === parsed.to);
+  if (!from || !to) return typed ? { ...parsed, currency: typed } : parsed;
+  const amounts = transferAmounts({ from, to, amount: parsed.amount, rates, typed, word });
+  if ("problem" in amounts) return looseEnd(text, amounts.problem);
+  const fromCode = currencyOf(from);
+  const toCode = currencyOf(to);
+  const foreign = fromCode === "ETB" ? toCode : fromCode;
+  const saving = transferSaving({
+    from,
+    to,
+    sent: amounts.sent,
+    received: amounts.received,
+    rates,
+  });
+  const rate = rates[foreign];
+  return {
+    ...parsed,
+    amount: amounts.sent,
+    ...(fromCode !== "ETB" ? { currency: fromCode } : {}),
+    ...(fromCode !== toCode
+      ? {
+          received: amounts.received,
+          toCurrency: toCode,
+          ...(rate ? { at: `at ${rate.rate}` } : {}),
+        }
+      : {}),
+    ...(saving ? { saving } : {}),
+  };
+}
+
+/**
+ * `saved 500 laptop` is Put aside (time-first §4): from the pay account (or
+ * `@account`) into the first savings account in that currency. `took 2000
+ * from laptop` is the reverse. With no savings account in that currency it
+ * is only marked as saved, as before, and says so.
+ */
+function settleSaving(
+  parsed: SavingItem,
+  typed: string | undefined,
+  word: string | undefined,
+  text: string,
+  options: ParseOptions,
+): Parsed {
+  const accounts = options.accounts ?? [];
+  const { account: namedId, ...saving } = parsed;
+  const named = namedId ? accounts.find((a) => a.id === namedId) : undefined;
+  const code = typed ?? (named ? currencyOf(named) : "ETB");
+  if (named && currencyOf(named) !== code)
+    return looseEnd(text, wrongAccount(named, code, word, accounts));
+  const worth = toEtb(parsed.amount, code, options.rates ?? {});
+  if (worth === null) return looseEnd(text, setRate(code));
+  const base: SavingItem = { ...saving, ...(code !== "ETB" ? { currency: code, worth } : {}) };
+  if (accounts.length === 0) return base;
+  const savings =
+    named?.is_savings === 1
+      ? named
+      : accounts.find((a) => a.is_savings === 1 && currencyOf(a) === code);
+  const spend =
+    named && named.is_savings !== 1
+      ? named
+      : (accounts.find((a) => a.pays_in === 1 && a.is_savings !== 1 && currencyOf(a) === code) ??
+        homeIn(accounts, code));
+  if (!savings) return { ...base, unbacked: `no ${code} savings account` };
+  if (!spend) return { ...base, unbacked: `no ${code} account to take it from` };
+  return { ...base, spend: refOf(spend), savings: refOf(savings) };
 }
 
 function parsePlain(raw: string, options: ParseOptions): Parsed {
@@ -656,6 +844,8 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
   const { rest, account } = readAccount(raw, accounts);
   let parsed = parseOne(rest, options);
+  // `saved 500 laptop @telebirr`: the money comes from Telebirr.
+  if (parsed.kind === "saving" && account) return { ...parsed, account: account.id };
   // "got 5000 @telebirr": without the account nothing names the money, so
   // read the whole line and keep the account.
   if (!isMoney(parsed) && account) {

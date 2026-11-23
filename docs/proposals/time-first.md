@@ -17,8 +17,14 @@ New rules, in order:
    Start = `due_at`; length = the end you gave, else the estimate, else 30 min.
    The block takes its time out of focus slots (like a calendar event) and may
    sit beside a fixed block (lanes). Stored as a `day_blocks` row with
-   `kind = 'area'`, `source = 'task'`, `task_id` set, `area_id` = the task's
-   area or NULL (a neutral card), title = the task title.
+   `kind = 'area'`, `source = 'generator'` (the schema has no 'task' source;
+   no migration), `task_id` set, `area_id` = the task's area or NULL (a
+   neutral card), title = the task title. A replan remakes it from the task's
+   current time unless you edited it. A day planned before the task was
+   captured (or before its time changed) heals: when Today, Plan → Day or
+   Next 7 days opens it, or a task changes while the window is open, the day
+   is planned again around your edits so the task gets its block. Deleting a
+   block marks it edited first, so the planner doesn't make it again.
 2. **A task with a part of the day** ("tomorrow morning", "this evening",
    "tonight") is placed in the first free gap inside that window, as in rule 1:
    morning 06:00–12:00, afternoon 12:00–17:00, evening/tonight 17:00–22:00.

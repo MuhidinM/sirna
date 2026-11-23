@@ -5,7 +5,8 @@ import { systemClock } from "../kernel/clock";
 import { showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
 import { formatMinutes } from "../features/plan/now";
-import { isoWeekday, type Query, shiftDate } from "../features/plan/dayplan";
+import { healPlans, isoWeekday, type Query, shiftDate } from "../features/plan/dayplan";
+import { ulid } from "../kernel/ulid";
 import { PLANNED_RANGE_SQL, weekColumn } from "../features/plan/edit";
 import { ROUTINE_SQL, type RoutineRow } from "../features/plan/editor";
 import {
@@ -40,6 +41,15 @@ type PlannedRow = {
 /** The planner over the next 7 days, reloaded after any write. */
 function usePreview(today: string): Preview | null {
   const [preview, setPreview] = useState<Preview | null>(null);
+  // Planned days get blocks for tasks timed after they were planned.
+  useEffect(() => {
+    void healPlans(
+      query as Query,
+      (ops) => transact("system", ops, "day-plan"),
+      systemClock.now(),
+      () => ulid(),
+    ).catch(() => undefined);
+  }, [today]);
   useEffect(() => {
     const load = () => {
       loadPreview(query as Query, today, systemClock.now())
@@ -125,8 +135,11 @@ export function WeekPreview({
           <h2 id="week-preview">Next 7 days</h2>
           <p className="meta">A forecast from your routine and tasks; open a day to change it.</p>
         </div>
+        {/* The late-task check, said once (time first §5). */}
         {lateCount === 0 ? (
-          <span className="pw-chip">Everything due this week fits.</span>
+          <span className="pw-chip" role="status">
+            Nothing is late: everything due this week fits.
+          </span>
         ) : (
           <span className="pw-chip warn">
             <span className="badge">{lateCount}</span> late at this pace
@@ -201,11 +214,7 @@ export function WeekPreview({
         })}
       </ol>
 
-      {lateCount === 0 ? (
-        <p className="pw-ok" role="status">
-          Nothing is late: every task due in the next 7 days fits at this pace.
-        </p>
-      ) : (
+      {lateCount > 0 && (
         <div className="pw-late">
           <p className="pw-late-lead">
             {lateCount} task{lateCount === 1 ? "" : "s"} won&apos;t be done by

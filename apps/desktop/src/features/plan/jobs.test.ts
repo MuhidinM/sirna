@@ -5,6 +5,7 @@ import {
   AREA_TASKS_SQL,
   JOB_TASKS_SQL,
   type JobTask,
+  blockTaskLists,
   listBlockIds,
   tasksByArea,
   tasksByJob,
@@ -118,5 +119,55 @@ describe("work tasks inside job blocks (T-067)", () => {
     // A third job and the gym count; too far ahead or done: left out.
     expect(ids).toEqual(["c1", "gym", "nodate"]);
     expect(AREA_TASKS_SQL).toBe(JOB_TASKS_SQL);
+  });
+});
+
+describe("task lists inside blocks", () => {
+  const row = (id: string, area: string): JobTask => ({
+    id,
+    title: id,
+    area_id: area,
+    status: "todo",
+    due_date: null,
+    planned_date: null,
+    created_at: 0,
+  });
+  const block = (
+    id: string,
+    area: string | null,
+    end: number,
+    task: string | null = null,
+    title = id,
+  ) => ({
+    id,
+    area_id: area,
+    kind: "area",
+    end_at: end,
+    task_id: task,
+    title,
+    task_title: task,
+  });
+
+  it("doesn't list a task that has its own block in an area block", () => {
+    const blocks = [
+      block("admin", "admin", 200),
+      block("bank", "admin", 300, "Call bank", "Call bank"),
+    ];
+    const lists = blockTaskLists(blocks, [row("Call bank", "admin"), row("Pay rent", "admin")], 0);
+    expect(lists.get("admin")?.map((t) => t.id)).toEqual(["Pay rent"]);
+    // The task's own block doesn't hold the area's list while the area has another block.
+    expect(lists.has("bank")).toBe(false);
+  });
+
+  it("lists an area's tasks once, in its first block still to come", () => {
+    const blocks = [block("c1", "coding", 100), block("c2", "coding", 300)];
+    const lists = blockTaskLists(blocks, [row("Read docs", "coding")], 150);
+    expect([...lists.keys()]).toEqual(["c2"]);
+  });
+
+  it("leaves out a task already picked for an area block", () => {
+    const blocks = [block("c1", "coding", 300, "Read docs", "Coding: Read docs")];
+    const lists = blockTaskLists(blocks, [row("Read docs", "coding"), row("Fix bug", "coding")], 0);
+    expect(lists.get("c1")?.map((t) => t.id)).toEqual(["Fix bug"]);
   });
 });
