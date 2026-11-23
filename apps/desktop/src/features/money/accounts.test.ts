@@ -62,7 +62,7 @@ function spend(db: Db, acc: string, date: string, minor: number) {
 }
 
 describe("your accounts (T-058)", () => {
-  it("starts with CBO, CBE, E-birr, telebirr and cash; pay goes to CBO", () => {
+  it("starts with your accounts; pay goes to CBO", () => {
     const db = openTestDb();
     expect(accounts(db).map((row) => row.name)).toEqual([
       "Cash",
@@ -70,10 +70,12 @@ describe("your accounts (T-058)", () => {
       "CBE",
       "E-birr",
       "telebirr",
+      "CBO savings",
+      "Wise",
     ]);
     expect(payAccount(accounts(db))).toBe("cbo");
     expect(spendAccount(accounts(db))).toBe("cash");
-    expect(totalBalance(accounts(db))).toEqual({ total: 0, unknown: 5 });
+    expect(totalBalance(accounts(db))).toEqual({ total: 0, unknown: 7 });
   });
 
   it("sets a first balance at the start of today, counting today's entries", () => {
@@ -142,7 +144,7 @@ describe("your accounts (T-058)", () => {
     expect(accountId("Awash Bank", ["cash"])).toBe("awashbank");
     expect(accountId("Cash", ["cash"])).toBe("cash2");
     apply(db, addAccountOps("Awash", "bank", accounts(db)));
-    expect(account(db, "awash").sort_order).toBe(6);
+    expect(account(db, "awash").sort_order).toBe(8);
     apply(db, setPayAccountOps("awash", accounts(db)));
     expect(payAccount(accounts(db))).toBe("awash");
     expect(accounts(db).filter((row) => row.pays_in === 1)).toHaveLength(1);
