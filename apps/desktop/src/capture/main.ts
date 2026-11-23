@@ -13,8 +13,9 @@ import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
 import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
-import { echo as echoLine, ideaInput, toOps } from "./ops";
-import { balances, type LoanEvent, LOANS_SQL } from "../features/money/loans";
+import { affordState, echo as echoLine, ideaInput, toOps } from "./ops";
+import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
+import { RATES_SQL, readRates } from "../features/money/currency";
 import { affordAnswer } from "../features/money/affordLoad";
 import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
@@ -50,7 +51,7 @@ let goalNames: string[] = [];
 /** Categories, corrections and jobs, so money lines land right (T-056). */
 let moneyContext: Pick<
   ParseOptions,
-  "categories" | "learned" | "jobs" | "accounts" | "loanPeople"
+  "categories" | "learned" | "jobs" | "accounts" | "loanPeople" | "areas" | "rates"
 > = {};
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
@@ -67,6 +68,16 @@ const ready = () => {
 };
 
 ready();
+
+// The input has focus whenever the bar opens or comes back, so Ctrl+Z and Up
+// arrow work at once (time-first §2). The bar is hidden and shown, not rebuilt.
+const focusInput = () => {
+  if (!input.disabled) input.focus();
+};
+window.addEventListener("focus", focusInput);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") focusInput();
+});
 
 // "at 3" follows a one-time setting (plan §3.5); western until it is set.
 void query<{ value_json: string }>("SELECT value_json FROM core_settings WHERE key = ?", [
@@ -91,22 +102,34 @@ void Promise.all([
   query<{ id: string; name: string }>(
     "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
   ),
-  query<{ id: string; name: string; kind: string; pays_in: number }>(
-    "SELECT id, name, kind, pays_in FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
+  query<{
+    id: string;
+    name: string;
+    kind: string;
+    pays_in: number;
+    currency: string;
+    is_savings: number;
+  }>(
+    "SELECT id, name, kind, pays_in, currency, is_savings FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
   ),
   query<LoanEvent & Record<string, string | number | null>>(LOANS_SQL),
+  // Areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3).
+  query<{ id: string; name: string }>(
+    "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL",
+  ),
+  // Rates, so transfers and savings across currencies are worked out here.
+  query<{ value_json: string }>(RATES_SQL),
 ])
-  .then(([categories, learned, jobs, accounts, loans]) => {
+  .then(([categories, learned, jobs, accounts, loans, areas, rates]) => {
     moneyContext = {
+      areas,
       categories,
       learned: Object.fromEntries(learned.map((row) => [row.id, row.category_id])),
       jobs,
       accounts,
-      loanPeople: balances(loans).map((person) => ({
-        name: person.person,
-        owedToMe: person.owedToMe,
-        iOwe: person.iOwe,
-      })),
+      // One name per person, even with loans in two currencies.
+      loanPeople: loanPeople(balances(loans)),
+      rates: readRates(rates[0]?.value_json),
     };
   })
   .catch(() => undefined);
@@ -144,6 +167,7 @@ function showSearch(text: string) {
 }
 
 function showChip() {
+  delete output.dataset.state;
   const current = options[picked];
   if (!current) {
     output.textContent = editing ? "Fixing your last capture" : "";
@@ -206,24 +230,34 @@ form.addEventListener("submit", (event) => {
   let idea: Placement | undefined;
   // A saving goes to the goal it names, or the only one (plan §3.13).
   let savingGoal: { id: string; title: string } | null | undefined;
+  type Goal = { id: string; title: string; status: "active" | "done" | "paused" };
+  // A transfer into or out of a savings account is saving too (time-first §4).
+  const savesSomething = (item: Parsed) =>
+    item.kind === "saving" || (item.kind === "transfer" && item.saving !== undefined);
+  const hasSaving =
+    savesSomething(parsed) || (parsed.kind === "money" && parsed.items.some(savesSomething));
+  const goalRows: Promise<Goal[]> = hasSaving
+    ? query<Goal>("SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL").catch(
+        () => [],
+      )
+    : Promise.resolve([]);
+  const goalOf = (goals: Goal[]) => (words: string | undefined) => {
+    const id = matchGoal(goals, words);
+    const goal = goals.find((row) => row.id === id);
+    return goal ? { id: goal.id, title: goal.title } : null;
+  };
   const goalFor: Promise<{ id: string; title: string } | null | undefined> =
     parsed.kind === "saving"
-      ? query<{ id: string; title: string; status: "active" | "done" | "paused" }>(
-          "SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL",
-        )
-          .then((goals) => {
-            const id = matchGoal(goals, parsed.goal);
-            return goals.find((goal) => goal.id === id) ?? null;
-          })
-          .catch(() => null)
+      ? goalRows.then((goals) => goalOf(goals)(parsed.goal))
       : Promise.resolve(undefined);
   // A fix undoes the old capture and saves the new one in one transaction.
-  const saved = Promise.all([placed, goalFor]).then(([placement, goal]) => {
+  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, goals]) => {
     idea = placement;
     savingGoal = goal;
     const ops = toOps(parsed, {
       nowMs,
       newId: () => ulid(),
+      goalOf: goalOf(goals),
       ...(placement ? { idea: placement } : {}),
       ...(goal !== undefined ? { savingGoal: goal } : {}),
     });
@@ -236,9 +270,14 @@ form.addEventListener("submit", (event) => {
     .then((rawId) => {
       // `afford 4500 shoes` (T-074): the answer from your real numbers.
       if (parsed.kind === "afford") {
-        void affordAnswer(query, nowMs, parsed.amount, parsed.what)
-          // A sentence to read, not an echo: it stays a little longer.
-          .then((answer) => finish(answer, ANSWER_MS))
+        void affordAnswer(query, nowMs, parsed.amount, parsed.what, parsed.currency)
+          // A sentence to read, not an echo: it stays a little longer, in the
+          // verdict's colour (Fine green, Tight yellow, Not now pink).
+          .then((answer) => {
+            const state = affordState(answer);
+            if (state) output.dataset.state = state;
+            finish(answer, ANSWER_MS);
+          })
           .catch(() => finish("Couldn't work it out. Open Money → Can I afford it?"));
         return;
       }

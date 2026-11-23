@@ -5,14 +5,16 @@ import { useEffect, useRef, useState } from "react";
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
 import { type Op, query, transact } from "../kernel/db";
-import { formatAmount, parseAmount } from "../kernel/money";
+import { CURRENCIES, formatAmount, formatNumber, parseAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import {
   byDay,
   CATEGORIES_SQL,
   checkTxn,
+  csvName,
   filterLedger,
   HISTORY_SQL,
+  historyInEtb,
   type HistoryRow,
   historyParams,
   type LedgerFilter,
@@ -35,24 +37,48 @@ import {
 } from "../features/money/money";
 import { shiftDate } from "../features/plan/dayplan";
 import {
+  ACCOUNT_TXN_COUNT_SQL,
   type AccountRow,
   ACCOUNTS_SQL,
   addAccountOps,
   balanceOf,
   checkAccountName,
+  checkCurrency,
   checkHide,
+  checkPayAccount,
+  checkSavings,
   checkTransfer,
+  currencyOf,
+  currencyOps,
   DAY_MOVED_SQL,
   hideAccountOps,
+  inEtb,
+  isSavings,
   payAccount,
   reconcileOps,
   reconcileText,
   renameAccountOps,
+  SAVINGS_SINCE_SQL,
+  savingsOps,
   setPayAccountOps,
   spendAccount,
+  spending,
   totalBalance,
+  transferAmounts,
   transferOps,
 } from "../features/money/accounts";
+import {
+  approxMark,
+  checkRate,
+  conversionNotes,
+  type ConversionNotes,
+  newConversion,
+  type Rates,
+  RATES_SQL,
+  rateOps,
+  readRates,
+  syncRateBox,
+} from "../features/money/currency";
 import {
   checkRegular,
   type DueItem,
@@ -93,7 +119,15 @@ import {
   safeLine,
   safeToSpend,
 } from "../features/money/safe";
-import { addGoalOps, type GoalRow, GOALS_SQL, UNASSIGNED_SQL } from "../features/savings/savings";
+import {
+  addGoalOps,
+  type GoalRow,
+  GOALS_SQL,
+  onlyActiveGoal,
+  transferSaving,
+  transferSavingOps,
+  UNASSIGNED_SQL,
+} from "../features/savings/savings";
 import {
   addCategoryOps,
   ALL_CATEGORIES_SQL,
@@ -147,7 +181,7 @@ import {
 } from "./icons";
 import { type Bar as ChartBar, BarChart, PanelHead } from "./kit";
 import { Segmented } from "./Nav";
-import { Savings } from "./Savings";
+import { Savings, useSavingsSync } from "./Savings";
 import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -159,17 +193,65 @@ interface Category extends Record<string, string> {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 /** An amount without its unit, for placeholders people type over ("e.g. 4,000"). */
-const birr = (minor: number) => formatAmount(minor).replace(/ ETB$/, "");
+const birr = (minor: number) => formatNumber(minor);
 
-/** "12,400 ETB" with the unit set small, both from formatAmount(). */
-function Amount({ minor }: { minor: number }) {
-  const text = formatAmount(minor);
+/**
+ * "12,400 ETB" with the unit set small, both from formatAmount(); "$1,200"
+ * keeps its symbol. `approx` puts "≈" before a total holding converted money.
+ */
+function Amount({
+  minor,
+  currency = "ETB",
+  approx = false,
+}: {
+  minor: number;
+  currency?: string;
+  approx?: boolean | undefined;
+}) {
+  const text = formatAmount(minor, currency);
   const cut = text.lastIndexOf(" ");
+  const mark = approx ? "≈ " : "";
+  if (cut < 0) return <>{`${mark}${text}`}</>;
   return (
     <>
+      {mark}
       {text.slice(0, cut)} <small>{text.slice(cut + 1)}</small>
     </>
   );
+}
+
+/** The exchange rates you set (Money → Accounts). */
+function useRates() {
+  const rows = useLiveQuery<{ value_json: string }>(RATES_SQL);
+  return { rates: readRates(rows.rows[0]?.value_json), loading: rows.loading };
+}
+
+/**
+ * Under a total with foreign money: the rate it was converted at, and what
+ * was left out for want of one (time-first §3).
+ */
+function RateNotes({ notes }: { notes: ConversionNotes | undefined }) {
+  if (!notes || (!notes.rate && !notes.missing)) return null;
+  return (
+    <>
+      {notes.rate && <p className="meta money-rate-note">≈ converted {notes.rate}</p>}
+      {notes.missing && <p className="warn-text money-rate-note">{notes.missing}</p>}
+    </>
+  );
+}
+
+/** "18,000 ETB + $500": sums kept apart by currency, ETB first. */
+function perCurrency(items: { minor: number; currency?: string | null | undefined }[]): string {
+  const sums = new Map<string, number>();
+  for (const item of items) {
+    const code = item.currency ?? "ETB";
+    sums.set(code, (sums.get(code) ?? 0) + item.minor);
+  }
+  if (sums.size === 0) return formatAmount(0);
+  return [...sums.entries()]
+    .sort(([a], [b]) => (a === "ETB" ? -1 : b === "ETB" ? 1 : a.localeCompare(b)))
+    .map(([code, minor]) => formatAmount(minor, code))
+    .join(" + ");
 }
 
 /** Money moved between accounts: two arrows passing (drawn like icons.tsx). */
@@ -200,6 +282,7 @@ function useMonth(month: string, today: string) {
     HISTORY_SQL,
     historyParams(month),
   );
+  const { rates, loading: ratesLoading } = useRates();
   // A past month is seen from its last day; this month from today.
   const asOf = to < today ? to : today;
   const summary = monthSummary({
@@ -207,14 +290,16 @@ function useMonth(month: string, today: string) {
     saved: saved.rows[0]?.minor ?? 0,
     history: history.rows,
     today: asOf,
+    rates,
   });
   return {
     txns,
     summary,
-    history: history.rows,
-    usual: usualByCategory(history.rows),
+    history: historyInEtb(history.rows, rates),
+    usual: usualByCategory(history.rows, rates),
+    rates,
     current: to >= today,
-    loading: txns.loading || history.loading,
+    loading: txns.loading || history.loading || ratesLoading,
   };
 }
 
@@ -224,8 +309,9 @@ export function useSafe(today: string) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
   const saved = useLiveQuery<{ goal_id: string; minor: number }>(GOAL_MONTH_SQL, [from, to]);
-  const waiting = useLiveQuery<{ minor: number; n: number }>(UNASSIGNED_SQL);
+  const waiting = useLiveQuery<{ minor: number; n: number; held: number }>(UNASSIGNED_SQL);
   const { items, loading } = useDue(today);
+  const { rates, loading: ratesLoading } = useRates();
   const safe = safeToSpend({
     accounts: accounts.rows,
     goals: goals.rows,
@@ -234,11 +320,19 @@ export function useSafe(today: string) {
     today,
     daysInMonth: days,
     unassigned: waiting.rows[0]?.minor ?? 0,
+    unassignedHeld: waiting.rows[0]?.held ?? 0,
+    rates,
   });
   return {
     safe,
     goals: goals.rows,
-    loading: loading || accounts.loading || goals.loading || saved.loading || waiting.loading,
+    loading:
+      loading ||
+      accounts.loading ||
+      goals.loading ||
+      saved.loading ||
+      waiting.loading ||
+      ratesLoading,
   };
 }
 
@@ -282,12 +376,13 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
         <p className="money-safe-total">Nothing safe</p>
       ) : (
         <p className="money-safe-total">
-          <Amount minor={safe.total} />
+          <Amount minor={safe.total} approx={safe.notes?.approx} />
         </p>
       )}
       <p className="money-safe-sub">
         {short ? safeLine(safe) : `about ${formatAmount(safe.perDay ?? 0)} a day`}
       </p>
+      <RateNotes notes={safe.notes} />
       {open && (
         <ul className="money-safe-sum">
           {safe.lines.map((line) => (
@@ -301,8 +396,12 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
           ))}
           <li className="total">
             <strong>Safe to spend</strong>
-            <strong className="money-num">{formatAmount(safe.total)}</strong>
+            <strong className="money-num">
+              {approxMark(safe.notes ?? { approx: false })}
+              {formatAmount(safe.total)}
+            </strong>
           </li>
+          <li className="meta">Savings accounts aren&apos;t counted: that money is put aside.</li>
         </ul>
       )}
       {safe.unknownAccounts > 0 && (
@@ -345,15 +444,18 @@ function CoinArt() {
 /** Every account and what it holds, as list rows in the side column. */
 function AccountsPanel({ onOpen }: { onOpen: () => void }) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
-  if (accounts.loading) return null;
-  const { total, unknown } = totalBalance(accounts.rows);
+  const { rates, loading } = useRates();
+  if (accounts.loading || loading) return null;
+  const conversion = newConversion();
+  const { total, unknown } = totalBalance(inEtb(accounts.rows, rates, conversion));
+  const notes = conversionNotes(conversion, rates);
   return (
     <section className="panel money-accounts" aria-labelledby="money-accounts">
       <PanelHead
         id="money-accounts"
         icon={<IconMoney size={18} />}
         title="Accounts"
-        sub={`${formatAmount(total)} in all${unknown > 0 ? ` · ${unknown} not set` : ""}`}
+        sub={`${approxMark(notes)}${formatAmount(total)} in all${unknown > 0 ? ` · ${unknown} not set` : ""}`}
         action={
           <button
             type="button"
@@ -377,15 +479,17 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
                 <span className="grow">
                   {account.name}
                   {account.pays_in === 1 && <span className="meta"> · pay lands here</span>}
+                  {isSavings(account) && <span className="meta"> · savings</span>}
                 </span>
                 <span className={balance === null ? "meta" : "money-num"}>
-                  {balance === null ? "not set" : formatAmount(balance)}
+                  {balance === null ? "not set" : formatAmount(balance, currencyOf(account))}
                 </span>
               </li>
             );
           })}
         </ul>
       )}
+      <RateNotes notes={notes} />
     </section>
   );
 }
@@ -396,9 +500,10 @@ function EmergencyCard({ today }: { today: string }) {
     HISTORY_SQL,
     historyParams(today),
   );
+  const { rates } = useRates();
   const [note, setNote] = useState<string | null>(null);
   if (loading || history.loading) return null;
-  const month = essentialMonth(usualByCategory(history.rows));
+  const month = essentialMonth(usualByCategory(history.rows, rates));
   const fund = goals.find((goal) => isEmergency(goal) && goal.status !== "done");
   const head = (
     <PanelHead
@@ -475,18 +580,20 @@ function Stat({
   label,
   value,
   sub,
+  approx = false,
 }: {
   tone: "purple" | "orange" | "leaf" | "cream" | "pink";
   label: string;
   /** Santim. */
   value: number;
   sub?: string | undefined;
+  approx?: boolean | undefined;
 }) {
   return (
     <div className={`money-stat tone-${tone}`}>
       <span className="money-stat-label">{label}</span>
       <strong className="money-stat-value">
-        <Amount minor={value} />
+        <Amount minor={value} approx={approx} />
       </strong>
       {sub && <span className="money-stat-sub">{sub}</span>}
     </div>
@@ -564,17 +671,19 @@ function MonthView({ month, today }: { month: string; today: string }) {
     ...summary.categories.map((line) => Math.max(line.spent, line.usual ?? 0)),
   );
   const empty = summary.in === 0 && summary.out === 0 && summary.saved === 0;
+  const approx = summary.notes?.approx;
   return (
     <>
       {!current && <MonthReviewCard month={month} today={today} />}
       <div className="money-stats">
-        <Stat tone="purple" label="In" value={summary.in} />
-        <Stat tone="orange" label="Out" value={summary.out} />
+        <Stat tone="purple" label="In" value={summary.in} approx={approx} />
+        <Stat tone="orange" label="Out" value={summary.out} approx={approx} />
         <Stat tone="leaf" label="Saved" value={summary.saved} />
         <Stat
           tone={summary.left < 0 ? "pink" : "cream"}
           label={summary.left >= 0 ? "Left" : "Over"}
           value={Math.abs(summary.left)}
+          approx={approx}
           sub={
             current && summary.perDay !== null
               ? `about ${formatAmount(summary.perDay)} a day`
@@ -582,6 +691,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
           }
         />
       </div>
+      <RateNotes notes={summary.notes} />
       {empty && (
         <p className="meta money-note">
           Nothing recorded {current ? "yet this month" : "that month"}. Type money in the capture
@@ -709,6 +819,7 @@ function CapsCard({ summary }: { summary: ReturnType<typeof monthSummary> }) {
         })}
       </ul>
       <p className="hint">The mark is how far through the month you are.</p>
+      <RateNotes notes={summary.notes} />
     </section>
   );
 }
@@ -926,7 +1037,15 @@ function AffordBox({ today, summary }: { today: string; summary: MonthSummary })
         </p>
       )}
       {answer && (
-        <div className={answer.verdict === "Fine" ? "money-verdict fine" : "money-verdict warn"}>
+        <div
+          className={
+            answer.verdict === "Fine"
+              ? "money-verdict fine"
+              : answer.verdict === "Tight"
+                ? "money-verdict warn"
+                : "money-verdict no"
+          }
+        >
           <p>
             <strong>{answer.verdict}</strong>
             {what.trim() ? ` for ${what.trim()}` : ""}
@@ -938,6 +1057,7 @@ function AffordBox({ today, summary }: { today: string; summary: MonthSummary })
               </li>
             ))}
           </ul>
+          <RateNotes notes={safe.known ? safe.notes : summary.notes} />
         </div>
       )}
     </section>
@@ -953,7 +1073,7 @@ function SideAfford({ today }: { today: string }) {
 
 /** The month review (T-066): the month that `month` starts, seen from `today`. */
 export function MonthReviewCard({ month, today }: { month: string; today: string }) {
-  const { summary, usual, loading } = useMonth(month, today);
+  const { summary, usual, rates, loading } = useMonth(month, today);
   const caps = useLiveQuery<{
     id: string;
     name: string;
@@ -975,6 +1095,7 @@ export function MonthReviewCard({ month, today }: { month: string; today: string
     usual,
     names: new Map(categories.rows.map((row) => [row.id, row.name])),
     monthEnd: monthOf(month).to,
+    rates,
   });
   if (review.in === 0 && review.out === 0) return null;
   return (
@@ -1010,10 +1131,13 @@ export function MonthReviewCard({ month, today }: { month: string; today: string
       )}
       {review.netWorth !== null && (
         <p className="meta">
-          Net worth now: {formatAmount(review.netWorth)} (accounts, plus owed to you, less what you
+          Net worth now: {approxMark(review.notes)}
+          {formatAmount(review.netWorth)} (accounts and savings, plus owed to you, less what you
           owe)
         </p>
       )}
+      <RateNotes notes={summary.notes} />
+      {review.netWorth !== null && <RateNotes notes={review.notes} />}
     </section>
   );
 }
@@ -1032,7 +1156,11 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
     JOB_MINUTES_SQL,
     [from, to, nowMs],
   );
-  const pay = useLiveQuery<{ area_id: string; minor: number }>(JOB_PAY_SQL, [from, to]);
+  const pay = useLiveQuery<{ area_id: string; minor: number; currency: string | null }>(
+    JOB_PAY_SQL,
+    [from, to],
+  );
+  const { rates } = useRates();
   // This month's hours, only to say why there is nothing yet in your first month.
   const thisMonth = monthOf(month);
   const current = useLiveQuery<{ area_id: string }>(JOB_MINUTES_SQL, [
@@ -1052,12 +1180,12 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
       </section>
     );
   }
-  const rates = jobRates(minutes.rows, pay.rows);
+  const perJob = jobRates(minutes.rows, pay.rows, rates);
   return (
     <section className="card" aria-labelledby="job-rates">
       <h2 id="job-rates">Your jobs in {monthLabel(shown.key)}</h2>
       <ul className="money-lines">
-        {rates.map((rate) => (
+        {perJob.map((rate) => (
           <li key={rate.areaId}>
             <span>{rate.name}</span>
             <span className="meta money-num">
@@ -1107,6 +1235,11 @@ function TxnForm({
   const shown = categories.filter(
     (category) => category.kind === (draft.kind === "in" ? "income" : "expense"),
   );
+  const accountId =
+    draft.account ||
+    (draft.kind === "in" ? payAccount(spending(accounts)) : spendAccount(accounts));
+  // An entry is in its account's currency.
+  const currency = currencyOf(accounts.find((account) => account.id === accountId));
   return (
     <form
       className="money-form"
@@ -1115,8 +1248,8 @@ function TxnForm({
         const full = {
           ...draft,
           amount: parseAmount(amountText) ?? 0,
-          account:
-            draft.account || (draft.kind === "in" ? payAccount(accounts) : spendAccount(accounts)),
+          account: accountId,
+          currency,
         };
         const problem = checkTxn(full);
         if (problem) {
@@ -1146,7 +1279,7 @@ function TxnForm({
           </select>
         </label>
         <label className="money-field">
-          <span>Amount (ETB)</span>
+          <span>Amount ({currency})</span>
           <input
             inputMode="decimal"
             value={amountText}
@@ -1171,15 +1304,11 @@ function TxnForm({
         </label>
         <label className="money-field">
           <span>Account</span>
-          <select
-            value={
-              draft.account || (draft.kind === "in" ? payAccount(accounts) : spendAccount(accounts))
-            }
-            onChange={(e) => set({ account: e.target.value })}
-          >
+          <select value={accountId} onChange={(e) => set({ account: e.target.value })}>
             {accounts.map((account) => (
               <option key={account.id} value={account.id}>
                 {account.name}
+                {currencyOf(account) !== "ETB" ? ` (${currencyOf(account)})` : ""}
               </option>
             ))}
           </select>
@@ -1263,7 +1392,7 @@ function LedgerRow({
       </span>
       <span className={income ? "ledger-amount money-in" : "ledger-amount"}>
         {income ? "+" : "−"}
-        {formatAmount(Math.abs(row.amount_minor))}
+        {formatAmount(Math.abs(row.amount_minor), row.currency ?? "ETB")}
       </span>
       <span className="ledger-actions">
         {!row.transfer_id && (
@@ -1334,16 +1463,24 @@ function LedgerView({
   const halvesOf = (row: TxnRow) =>
     row.transfer_id ? txns.rows.filter((other) => other.transfer_id === row.transfer_id) : [row];
   const [note, setNote] = useState("");
+  const [toast, setToast] = useState<{ file: string; count: number } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
   const shown = filterLedger(txns.rows, filter);
   const set = (part: Partial<LedgerFilter>) => setFilter((old) => ({ ...old, ...part }));
   const exportCsv = () => {
+    const file = csvName(month);
     const url = URL.createObjectURL(new Blob([toCsv(shown)], { type: "text/csv" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `sirna-money-${monthOf(month).key}.csv`;
+    link.download = file;
     link.click();
     URL.revokeObjectURL(url);
-    setNote(`Exported ${shown.length} entries to your Downloads folder.`);
+    // The window saves downloads to your Downloads folder.
+    setToast({ file, count: shown.length });
   };
   return (
     <>
@@ -1398,9 +1535,21 @@ function LedgerView({
           />
         </section>
       )}
+      {toast && (
+        <div className="money-toast" role="status">
+          <span>
+            Exported {toast.count} {toast.count === 1 ? "entry" : "entries"}. Saved as{" "}
+            <strong>{toast.file}</strong> (or a numbered copy) in Downloads.
+          </span>
+          <Button className="btn-ghost" onClick={() => setToast(null)}>
+            OK
+          </Button>
+        </div>
+      )}
       {deleted && (
         <p className="notice money-notice" role="status">
-          Deleted {deleted.label.description} ({formatAmount(Math.abs(deleted.label.amount_minor))}
+          Deleted {deleted.label.description} (
+          {formatAmount(Math.abs(deleted.label.amount_minor), deleted.label.currency ?? "ETB")}
           ).
           <Button
             onClick={() =>
@@ -1432,6 +1581,9 @@ function LedgerView({
       )}
       <div className="ledger">
         {byDay(shown).map((day) => {
+          // A day's net is shown only when its entries share one currency.
+          const codes = new Set(day.rows.map((row) => row.currency ?? "ETB"));
+          const [code = "ETB"] = [...codes];
           return (
             <section
               key={day.date}
@@ -1442,10 +1594,12 @@ function LedgerView({
                 <span className={day.date === today ? "ledger-date today" : "ledger-date"}>
                   {showDate(day.date, today, { weekday: true })}
                 </span>
-                <span className="ledger-net">
-                  {day.net >= 0 ? "+" : "−"}
-                  {formatAmount(Math.abs(day.net))}
-                </span>
+                {codes.size === 1 && (
+                  <span className="ledger-net">
+                    {day.net >= 0 ? "+" : "−"}
+                    {formatAmount(Math.abs(day.net), code)}
+                  </span>
+                )}
               </h3>
               <ul className="ledger-rows">
                 {day.rows.map((row) => (
@@ -1731,9 +1885,10 @@ export function TodayMoney({
   const { safe, loading: safeLoading } = useSafe(today);
   if (loading || safeLoading) return null;
   const short = (minor: number) => formatAmount(minor).replace(/ ETB$/, "");
+  const approx = (safe.known ? safe.notes : summary.notes)?.approx ? " (≈)" : "";
   const line = safe.known
-    ? `Spent ${short(spentToday)} today · ${safeLine(safe)}`
-    : moneyLine(summary, spentToday);
+    ? `Spent ${short(spentToday)} today · ${safeLine(safe)}${approx}`
+    : `${moneyLine(summary, spentToday)}${approx}`;
   const [lead = "", ...rest] = line.split(" · ");
   return (
     <div className="money-today-block">
@@ -1784,6 +1939,12 @@ function PersonRow({
   const theyOwe = person.owedToMe > 0;
   const open = theyOwe ? person.owedToMe : person.iOwe;
   const last = person.events[person.events.length - 1];
+  const currency = person.currency ?? "ETB";
+  // Paid back in the loan's currency, into (or from) an account in it.
+  const choices = accounts.filter((row) => currencyOf(row) === currency);
+  const chosen =
+    account ||
+    (currency === "ETB" ? spendAccount(accounts) : (choices[0]?.id ?? spendAccount(accounts)));
   const settle = () => {
     const minor = amount.trim() ? (parseAmount(amount) ?? 0) : open;
     const problem = checkLoan(person.person, minor);
@@ -1799,15 +1960,16 @@ function PersonRow({
         kind,
         amount: minor,
         date: today,
-        account: account || spendAccount(accounts),
+        account: chosen,
         nowMs: systemClock.now(),
         id: ulid(),
         txnId: ulid(),
+        currency,
       }),
       "loan",
     )
       .then(() => {
-        setNote(loanEchoText(kind, person.person, minor, Math.max(0, open - minor)));
+        setNote(loanEchoText(kind, person.person, minor, Math.max(0, open - minor), currency));
         setAmount("");
       })
       .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
@@ -1822,7 +1984,7 @@ function PersonRow({
           {person.person}
           <span className="meta">
             {" "}
-            · {formatAmount(open)}
+            · {formatAmount(open, currency)}
             {person.since ? ` since ${showDate(person.since, today)}` : ""}
             {person.followUp ? ` · ask on ${showDate(person.followUp, today)}` : ""}
           </span>
@@ -1837,12 +1999,8 @@ function PersonRow({
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
-        <select
-          aria-label="Account"
-          value={account || spendAccount(accounts)}
-          onChange={(e) => setAccount(e.target.value)}
-        >
-          {accounts.map((row) => (
+        <select aria-label="Account" value={chosen} onChange={(e) => setAccount(e.target.value)}>
+          {(choices.length > 0 ? choices : accounts).map((row) => (
             <option key={row.id} value={row.id}>
               {row.name}
             </option>
@@ -1892,6 +2050,8 @@ function LoanForm({ accounts, today }: { accounts: AccountRow[]; today: string }
           setNote(problem);
           return;
         }
+        const from = account || spendAccount(accounts);
+        const currency = currencyOf(accounts.find((row) => row.id === from));
         void transact(
           "user",
           loanOps({
@@ -1899,16 +2059,17 @@ function LoanForm({ accounts, today }: { accounts: AccountRow[]; today: string }
             kind,
             amount: minor,
             date: today,
-            account: account || spendAccount(accounts),
+            account: from,
             nowMs: systemClock.now(),
             id: ulid(),
             txnId: ulid(),
             followUp: followUp || null,
+            currency,
           }),
           "loan",
         )
           .then(() => {
-            setNote(loanEchoText(kind, person.trim(), minor, null));
+            setNote(loanEchoText(kind, person.trim(), minor, null, currency));
             setPerson("");
             setAmount("");
             setFollowUp("");
@@ -1945,6 +2106,7 @@ function LoanForm({ accounts, today }: { accounts: AccountRow[]; today: string }
         {accounts.map((row) => (
           <option key={row.id} value={row.id}>
             {row.name}
+            {currencyOf(row) !== "ETB" ? ` (${currencyOf(row)})` : ""}
           </option>
         ))}
       </select>
@@ -1969,21 +2131,22 @@ function LoansView({ today }: { today: string }) {
   if (loading) return null;
   const owedToMe = people.filter((person) => person.owedToMe > 0);
   const iOwe = people.filter((person) => person.iOwe > 0);
+  // Kept per currency: dollars lent and birr lent are two sums.
   const total = (list: PersonBalance[], key: "owedToMe" | "iOwe") =>
-    list.reduce((sum, person) => sum + person[key], 0);
+    perCurrency(list.map((person) => ({ minor: person[key], currency: person.currency })));
   return (
     <>
       <LoanForm accounts={accounts.rows} today={today} />
       <div className="money-grid">
         <section className="card" aria-labelledby="owed-to-me">
-          <h2 id="owed-to-me">Owed to you · {formatAmount(total(owedToMe, "owedToMe"))}</h2>
+          <h2 id="owed-to-me">Owed to you · {total(owedToMe, "owedToMe")}</h2>
           {owedToMe.length === 0 ? (
             <p className="empty">Nobody owes you anything. Add what you lend above.</p>
           ) : (
             <ul className="money-rows">
               {owedToMe.map((person) => (
                 <PersonRow
-                  key={person.person}
+                  key={`${person.person}|${person.currency ?? "ETB"}`}
                   person={person}
                   accounts={accounts.rows}
                   today={today}
@@ -1993,14 +2156,14 @@ function LoansView({ today }: { today: string }) {
           )}
         </section>
         <section className="card" aria-labelledby="i-owe">
-          <h2 id="i-owe">You owe · {formatAmount(total(iOwe, "iOwe"))}</h2>
+          <h2 id="i-owe">You owe · {total(iOwe, "iOwe")}</h2>
           {iOwe.length === 0 ? (
             <p className="empty">You don&apos;t owe anyone. Add what you borrow above.</p>
           ) : (
             <ul className="money-rows">
               {iOwe.map((person) => (
                 <PersonRow
-                  key={person.person}
+                  key={`${person.person}|${person.currency ?? "ETB"}`}
                   person={person}
                   accounts={accounts.rows}
                   today={today}
@@ -2083,9 +2246,10 @@ function DueRow({ item, today }: { item: DueItem; today: string }) {
           {pay ? (item.regular.job ?? item.regular.name) : item.regular.name}
           <span className="meta">
             {" "}
-            · {showDate(item.date, today)} · {formatAmount(item.regular.amount_minor)}
+            · {showDate(item.date, today)} ·{" "}
+            {formatAmount(item.regular.amount_minor, item.regular.currency ?? "ETB")}
             {item.done > 0 && item.left > 0
-              ? ` · ${formatAmount(item.left)} still to ${pay ? "come" : "pay"}`
+              ? ` · ${formatAmount(item.left, item.regular.currency ?? "ETB")} still to ${pay ? "come" : "pay"}`
               : ""}
           </span>
         </span>
@@ -2118,7 +2282,8 @@ function RegularForm() {
   const set = (part: Partial<RegularDraft>) => setDraft((old) => ({ ...old, ...part }));
   const account =
     draft.account ||
-    (draft.kind === "pay" ? payAccount(accounts.rows) : spendAccount(accounts.rows));
+    (draft.kind === "pay" ? payAccount(spending(accounts.rows)) : spendAccount(accounts.rows));
+  const currency = currencyOf(accounts.rows.find((row) => row.id === account));
   return (
     <section className="card money-full" aria-labelledby="regular-add">
       <h2 id="regular-add">Add pay or a bill</h2>
@@ -2126,7 +2291,7 @@ function RegularForm() {
         className="money-form"
         onSubmit={(event) => {
           event.preventDefault();
-          const full = { ...draft, account, amount: parseAmount(amountText) ?? 0 };
+          const full = { ...draft, account, currency, amount: parseAmount(amountText) ?? 0 };
           const problem = checkRegular(full);
           if (problem) {
             setNote(problem);
@@ -2181,7 +2346,7 @@ function RegularForm() {
             </label>
           )}
           <label className="money-field">
-            <span>Amount (ETB)</span>
+            <span>Amount ({currency})</span>
             <input
               inputMode="decimal"
               value={amountText}
@@ -2221,6 +2386,7 @@ function RegularForm() {
               {accounts.rows.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.name}
+                  {currencyOf(row) !== "ETB" ? ` (${currencyOf(row)})` : ""}
                 </option>
               ))}
             </select>
@@ -2291,8 +2457,17 @@ function RegularsView({ today }: { today: string }) {
   if (loading) return null;
   const pay = items.filter((item) => item.regular.kind === "pay");
   const bills = items.filter((item) => item.regular.kind === "bill");
-  const expected = pay.reduce((sum, item) => sum + item.regular.amount_minor, 0);
-  const received = pay.reduce((sum, item) => sum + item.done, 0);
+  // The bar compares like with like: one currency's pay at a time, the first one's.
+  const payCurrency = pay[0]?.regular.currency ?? "ETB";
+  const sameCurrency = pay.filter((item) => (item.regular.currency ?? "ETB") === payCurrency);
+  const expected = sameCurrency.reduce((sum, item) => sum + item.regular.amount_minor, 0);
+  const received = sameCurrency.reduce((sum, item) => sum + item.done, 0);
+  const allExpected = perCurrency(
+    pay.map((item) => ({ minor: item.regular.amount_minor, currency: item.regular.currency })),
+  );
+  const allReceived = perCurrency(
+    pay.map((item) => ({ minor: item.done, currency: item.regular.currency })),
+  );
   return (
     <div className="money-grid">
       <section className="card" aria-labelledby="regular-pay">
@@ -2305,8 +2480,7 @@ function RegularsView({ today }: { today: string }) {
         ) : (
           <>
             <p className="money-progress-line">
-              <strong className="money-num">{formatAmount(received)}</strong> of{" "}
-              {formatAmount(expected)} received
+              <strong className="money-num">{allReceived}</strong> of {allExpected} received
             </p>
             {expected > 0 && <Bar value={received / expected} label="Pay received this month" />}
             <ul className="money-rows">
@@ -2394,16 +2568,21 @@ function AccountItem({
   all,
   regulars,
   today,
+  sinceJson,
 }: {
   account: AccountRow;
   all: AccountRow[];
   regulars: RegularRow[];
   today: string;
+  /** When accounts became savings accounts (money.savings_since). */
+  sinceJson: string | undefined;
 }) {
   const [name, setName] = useState(account.name);
   const [typed, setTyped] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const balance = balanceOf(account);
+  const currency = currencyOf(account);
+  const savings = isSavings(account);
   const write = (ops: Op[], done?: string) =>
     transact("user", ops, `account:${account.id}`)
       .then(() => {
@@ -2453,9 +2632,28 @@ function AccountItem({
           </Button>
         )}
         <strong className="money-balance money-num">
-          {balance === null ? "Balance not set" : formatAmount(balance)}
+          {balance === null ? "Balance not set" : formatAmount(balance, currency)}
         </strong>
         {account.pays_in === 1 && <span className="chip">pay lands here</span>}
+        {savings && <span className="chip">savings</span>}
+        <select
+          aria-label={`Currency of ${account.name}`}
+          value={currency}
+          onChange={(e) => {
+            const next = e.target.value;
+            void query<{ n: number }>(ACCOUNT_TXN_COUNT_SQL, [account.id]).then(([count]) => {
+              const problem = checkCurrency(account, count?.n ?? 0);
+              if (problem) setNote(problem);
+              else void write(currencyOps(account.id, next), `${account.name} is in ${next} now.`);
+            });
+          }}
+        >
+          {[...new Set([...CURRENCIES, currency])].map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </select>
       </span>
       <span className="money-row-line">
         <input
@@ -2469,13 +2667,32 @@ function AccountItem({
         <Button onClick={reconcile} disabled={!typed.trim()}>
           {balance === null ? "Set" : "Check"}
         </Button>
-        {account.pays_in !== 1 && (
+        {account.pays_in !== 1 && !savings && (
           <Button
-            onClick={() => void write(setPayAccountOps(account.id, all), "Pay will land here.")}
+            onClick={() => {
+              const problem = checkPayAccount(account);
+              if (problem) setNote(problem);
+              else void write(setPayAccountOps(account.id, all), "Pay will land here.");
+            }}
           >
             Pay lands here
           </Button>
         )}
+        <Button
+          onClick={() => {
+            const problem = checkSavings(account, !savings);
+            if (problem) setNote(problem);
+            else
+              void write(
+                savingsOps(account, !savings, sinceJson, systemClock.now()),
+                savings
+                  ? `${account.name} is a spending account again.`
+                  : `${account.name} is a savings account: money moved in counts as saving, and safe to spend leaves it out.`,
+              );
+          }}
+        >
+          {savings ? "Back to spending" : "Make it savings"}
+        </Button>
         <Button
           onClick={() => {
             const problem = checkHide(account, regulars);
@@ -2500,6 +2717,12 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  const { rates } = useRates();
+  const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
+  const source = accounts.find((account) => account.id === from);
+  const target = accounts.find((account) => account.id === to);
+  // Between two currencies, the other half is worked out at the saved rate (time-first §3).
+  const exchange = source && target && currencyOf(source) !== currencyOf(target);
   return (
     <form
       className="money-toolbar"
@@ -2507,27 +2730,61 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
         event.preventDefault();
         const minor = parseAmount(amount) ?? 0;
         const problem = checkTransfer(from, to, minor);
-        const source = accounts.find((account) => account.id === from);
-        const target = accounts.find((account) => account.id === to);
         if (problem || !source || !target) {
           setNote(problem ?? "Pick both accounts.");
           return;
         }
+        const halves = transferAmounts({ from: source, to: target, amount: minor, rates });
+        if ("problem" in halves) {
+          setNote(`${halves.problem}.`);
+          return;
+        }
+        const transferId = ulid();
+        const nowMs = systemClock.now();
+        // Into or out of a savings account it is saving, counted in the same write.
+        const saving = transferSaving({
+          from: source,
+          to: target,
+          sent: halves.sent,
+          received: halves.received,
+          rates,
+        });
         void transact(
           "user",
-          transferOps({
-            from: source,
-            to: target,
-            amount: minor,
-            date: today,
-            nowMs: systemClock.now(),
-            ids: [ulid(), ulid()],
-            transferId: ulid(),
-          }),
+          [
+            ...transferOps({
+              from: source,
+              to: target,
+              amount: halves.sent,
+              ...(exchange ? { received: halves.received } : {}),
+              date: today,
+              nowMs,
+              ids: [ulid(), ulid()],
+              transferId,
+            }),
+            ...transferSavingOps({
+              saving,
+              goalId: onlyActiveGoal(goals.rows),
+              transferId,
+              nowMs,
+              date: today,
+              id: ulid(),
+              origin: "transfer",
+            }),
+          ],
           "transfer",
         )
           .then(() => {
-            setNote(`Moved ${formatAmount(minor)} from ${source.name} to ${target.name}.`);
+            setNote(
+              `Moved ${formatAmount(halves.sent, currencyOf(source))} from ${source.name} to ${target.name}${
+                exchange
+                  ? ` (${formatAmount(halves.received, currencyOf(target))} at ${
+                      rates[currencyOf(source) === "ETB" ? currencyOf(target) : currencyOf(source)]
+                        ?.rate ?? ""
+                    })`
+                  : ""
+              }.${saving ? (saving.minor > 0 ? " It counts as saving." : " Taken from savings.") : ""}`,
+            );
             setAmount("");
           })
           .catch((failure: unknown) => setNote(`Couldn't move it: ${message(failure)}`));
@@ -2536,7 +2793,7 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
       <span>Move</span>
       <input
         inputMode="decimal"
-        aria-label="Amount to move"
+        aria-label={source ? `Amount to move, ${currencyOf(source)}` : "Amount to move"}
         placeholder="2,000"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
@@ -2567,18 +2824,103 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
   );
 }
 
+/** One rate: birr for one unit, with the day it was set. */
+function RateRow({ code, rates, today }: { code: string; rates: Rates; today: string }) {
+  const current = rates[code];
+  const saved = current?.rate ?? "";
+  const [box, setBox] = useState({ saved, text: saved });
+  // A new saved rate shows in the box without remounting the row (note and focus stay).
+  const synced = syncRateBox(box, saved);
+  if (synced !== box) setBox(synced);
+  const text = synced.text;
+  const setText = (value: string) => setBox({ saved, text: value });
+  const [note, setNote] = useState<string | null>(null);
+  const save = (value: string) => {
+    const problem = value.trim() ? checkRate(value) : null;
+    if (problem) {
+      setNote(problem);
+      return;
+    }
+    void transact("user", rateOps(rates, code, value, today), "money.rates")
+      .then(() => setNote(value.trim() ? `1 ${code} = ${value.trim()} ETB from today.` : null))
+      .catch((failure: unknown) => setNote(`Couldn't save it: ${message(failure)}`));
+  };
+  return (
+    <li>
+      <span className="money-num">1 {code} =</span>
+      <input
+        className="money-input"
+        inputMode="decimal"
+        aria-label={`ETB for one ${code}`}
+        placeholder="132.50"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <span className="meta">ETB</span>
+      <Button disabled={text.trim() === (current?.rate ?? "")} onClick={() => save(text)}>
+        Set
+      </Button>
+      <span className="meta">
+        {current ? `set ${showDate(current.set_on, today)}` : "no rate: left out of totals"}
+      </span>
+      {note && (
+        <span className="meta" role="status">
+          {note}
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** Rates for the currencies you hold (time-first §3): totals convert at these. */
+function RatesCard({ accounts, today }: { accounts: AccountRow[]; today: string }) {
+  const { rates, loading } = useRates();
+  if (loading) return null;
+  const codes = [
+    ...new Set([
+      ...accounts.map(currencyOf),
+      ...Object.keys(rates),
+      ...CURRENCIES.filter((code) => code !== "ETB"),
+    ]),
+  ].filter((code) => code !== "ETB");
+  return (
+    <section className="card" aria-labelledby="money-rates">
+      <h2 id="money-rates">Exchange rates</h2>
+      <ul className="money-rates">
+        {codes.map((code) => (
+          <RateRow key={code} code={code} rates={rates} today={today} />
+        ))}
+      </ul>
+      <p className="hint">
+        Totals, safe to spend and net worth count other currencies at these rates, marked ≈. Update
+        one when it moves; money with no rate is left out and the page says so.
+      </p>
+    </section>
+  );
+}
+
 /** Accounts (T-058): balances, checking them against the bank, moving money. */
 function AccountsView({ today }: { today: string }) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
+  const since = useLiveQuery<{ value_json: string }>(SAVINGS_SINCE_SQL);
+  const { rates } = useRates();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<AccountRow["kind"]>("bank");
+  const [currency, setCurrency] = useState("ETB");
+  const [savings, setSavings] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const { total, unknown } = totalBalance(accounts.rows);
+  const conversion = newConversion();
+  const { total, unknown } = totalBalance(inEtb(accounts.rows, rates, conversion));
+  const notes = conversionNotes(conversion, rates);
   return (
     <>
       <p className="money-headline">
-        <strong className="money-num">{formatAmount(total)}</strong> in your accounts
+        <strong className="money-num">
+          {approxMark(notes)}
+          {formatAmount(total)}
+        </strong>{" "}
+        in your accounts
         {unknown > 0 && (
           <span className="meta">
             {" "}
@@ -2586,6 +2928,7 @@ function AccountsView({ today }: { today: string }) {
           </span>
         )}
       </p>
+      <RateNotes notes={notes} />
       <section className="card" aria-label="Accounts">
         {accounts.rows.length === 0 && !accounts.loading && (
           <p className="empty">No accounts yet. Add one under Add an account.</p>
@@ -2598,6 +2941,7 @@ function AccountsView({ today }: { today: string }) {
               all={accounts.rows}
               regulars={regulars.rows}
               today={today}
+              sinceJson={since.rows[0]?.value_json}
             />
           ))}
         </ul>
@@ -2622,10 +2966,15 @@ function AccountsView({ today }: { today: string }) {
                 setNote(problem);
                 return;
               }
-              void transact("user", addAccountOps(name, kind, accounts.rows), "account")
+              void transact(
+                "user",
+                addAccountOps(name, kind, accounts.rows, currency, savings),
+                "account",
+              )
                 .then(() => {
                   setNote(`Added ${name.trim()}.`);
                   setName("");
+                  setSavings(false);
                 })
                 .catch((failure: unknown) => setNote(`Couldn't add it: ${message(failure)}`));
             }}
@@ -2646,6 +2995,25 @@ function AccountsView({ today }: { today: string }) {
               <option value="cash">Cash</option>
               <option value="other">Other (equb…)</option>
             </select>
+            <select
+              aria-label="Currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+            >
+              {CURRENCIES.map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </select>
+            <label className="money-inline">
+              <input
+                type="checkbox"
+                checked={savings}
+                onChange={(e) => setSavings(e.target.checked)}
+              />
+              <span>Savings account</span>
+            </label>
             <Button type="submit">Add account</Button>
             {note && (
               <span className="meta" role="status">
@@ -2655,9 +3023,12 @@ function AccountsView({ today }: { today: string }) {
           </form>
         </section>
       </div>
+      <RatesCard accounts={accounts.rows} today={today} />
       <p className="hint money-note">
         In the capture box: <code>lunch 120 @telebirr</code> spends from telebirr;{" "}
-        <code>moved 2000 cbe to telebirr</code> moves money between accounts.
+        <code>moved 2000 cbe to telebirr</code> moves money between accounts. A savings account
+        backs your goals: money moved into it counts as saving, and safe to spend leaves it out (net
+        worth keeps it).
       </p>
     </>
   );
@@ -2674,6 +3045,8 @@ export function Money() {
   const isCurrent = month === monthOf(today).from;
   const [year = 1970, monthNo = 1] = month.split("-").map(Number);
   const openAccounts = () => setTab("accounts");
+  // A move into a savings account counts as saving on every tab, not only Month.
+  useSavingsSync();
   return (
     <main className="page money-page">
       <div className="layout-split">

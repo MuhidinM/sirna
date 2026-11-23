@@ -1,16 +1,20 @@
-/* The desktop widget (280 x 300): a compact dark panel. The current block is
-   a yellow strip (cream when it is only the next block), the timer sits in a
-   raised card with a yellow ring, and the Top 3 are numbered list rows. */
+/* The desktop widget (280 x 300): a compact dark panel in a transparent,
+   shadowless window (src-tauri widget.rs), so only the rounded panel shows.
+   The current block is a yellow strip (cream when it is only the next block),
+   the timer sits in a raised card with a yellow ring, and the Top 3 are
+   numbered list rows. */
 :root {
   font-family: var(--font-sans);
-  background: var(--frame);
+  background: transparent;
   color: var(--ink);
 }
 
+html,
 body {
   margin: 0;
   overflow: hidden;
   user-select: none;
+  background: transparent;
 }
 
 .widget {

@@ -177,9 +177,72 @@
   color: var(--mint-ink);
 }
 
+/* Fine green, Tight yellow, Not now pink (time-first §2). */
 .money-verdict.warn {
+  background: var(--yellow);
+  color: var(--on-yellow-soft);
+}
+
+.money-verdict.no {
   background: var(--pink);
   color: var(--canvas);
+}
+
+/* "≈ converted at 132.50 (23 Nov)" and what was left out, under a total. */
+.money-rate-note {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+}
+
+.money-stats + .money-rate-note,
+.money-stats + .money-rate-note + .money-rate-note {
+  margin: calc(-1 * var(--space-2)) 0 var(--space-3);
+}
+
+/* Ledger → Export CSV: where the file went, for a few seconds. */
+.money-toast {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(480px, calc(100vw - 2 * var(--space-5)));
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--panel-line);
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.money-toast strong {
+  word-break: break-all;
+}
+
+.money-toast .btn {
+  flex: none;
+}
+
+/* Exchange rates on Money → Accounts. */
+.money-rates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.money-rates li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.money-rates .money-input {
+  width: 9em;
 }
 
 /* --- The advisor (side panel on Money, inside "Money today" on Today) -------------------- */

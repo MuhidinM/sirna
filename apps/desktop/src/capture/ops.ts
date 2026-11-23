@@ -1,12 +1,20 @@
 /** Turns a parsed capture into database ops and a one-line echo (plan §3.5). */
 import { type Op } from "../kernel/db";
 import { logicalDate } from "../kernel/dates";
-import { formatAmount } from "../kernel/money";
+import { formatAmount, formatNumber } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
 import { transferOps } from "../features/money/accounts";
 import { ruleText } from "../features/money/regulars";
 import { loanEchoText, loanOps } from "../features/money/loans";
-import { type MoneyItem, type Parsed } from "./parse";
+import { moveOps, transferSavingOps } from "../features/savings/savings";
+import {
+  type LoanItem,
+  type MoneyItem,
+  type MoneyPiece,
+  type Parsed,
+  type SavingItem,
+  type TransferItem,
+} from "./parse";
 import { weekdayName } from "./when";
 
 export interface OpsContext {
@@ -16,6 +24,18 @@ export interface OpsContext {
   idea?: Placement;
   /** The goal a saving goes to (matched in the capture box); null waits for one. */
   savingGoal?: { id: string; title: string } | null;
+  /** The goal each saving on a several-item line goes to, by its words. */
+  goalOf?: (words: string | undefined) => { id: string; title: string } | null;
+}
+
+/** Sets `currency` on the money rows of some ops, when it isn't birr. */
+function inCurrency(ops: Op[], currency: string | undefined): Op[] {
+  if (!currency || currency === "ETB") return ops;
+  return ops.map((op) =>
+    op.op === "insert" && (op.table === "money_txns" || op.table === "money_loans")
+      ? { ...op, values: { ...op.values, currency } }
+      : op,
+  );
 }
 
 const CATEGORY_NAMES: Record<string, string> = {
@@ -47,6 +67,7 @@ function moneyOp(item: MoneyItem, nowMs: number, id: string): Op {
       // Income from a job you named: the Money page groups by it.
       area_id: item.jobId ?? null,
       ...(item.account ? { account: item.account } : {}),
+      ...(item.currency && item.currency !== "ETB" ? { currency: item.currency } : {}),
       origin: "capture",
     },
   };
@@ -71,7 +92,131 @@ export function ideaInput(parsed: Extract<Parsed, { kind: "idea" }>) {
   };
 }
 
-export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsContext): Op[] {
+function loanPieceOps(parsed: LoanItem, nowMs: number, newId: () => string): Op[] {
+  return inCurrency(
+    loanOps({
+      person: parsed.person,
+      kind: parsed.loanKind,
+      amount: parsed.amount,
+      date: parsed.date,
+      account: parsed.account ?? "cash",
+      nowMs,
+      id: newId(),
+      txnId: newId(),
+    }),
+    parsed.currency,
+  );
+}
+
+/**
+ * Each half in its own account's currency: between two currencies the
+ * to-half is what the parser worked out at the rate. Into or out of a
+ * savings account, the saving is written in the same transaction (time-first
+ * §4), to the only active goal or waiting for one.
+ */
+function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
+  const { nowMs, newId } = context;
+  const transferId = newId();
+  const ops = transferOps({
+    from: { id: parsed.from, name: parsed.fromName, currency: parsed.currency ?? "ETB" },
+    to: {
+      id: parsed.to,
+      name: parsed.toName,
+      currency: parsed.toCurrency ?? parsed.currency ?? "ETB",
+    },
+    amount: parsed.amount,
+    ...(parsed.received !== undefined ? { received: parsed.received } : {}),
+    date: parsed.date,
+    nowMs,
+    ids: [newId(), newId()],
+    transferId,
+    origin: "capture",
+  }).map((op) => withoutBirr(op));
+  if (!parsed.saving) return ops;
+  return [
+    ...ops,
+    ...transferSavingOps({
+      saving: parsed.saving,
+      goalId: context.goalOf?.(undefined)?.id ?? null,
+      transferId,
+      nowMs,
+      date: parsed.date,
+      id: newId(),
+      origin: "capture",
+    }),
+  ];
+}
+
+/** Birr is the column's default: left unmarked, like every other capture. */
+function withoutBirr(op: Op): Op {
+  if (op.op !== "insert" || op.values.currency !== "ETB") return op;
+  const { currency: _birr, ...values } = op.values;
+  return { ...op, values };
+}
+
+/**
+ * `saved 500 laptop` is Put aside: a transfer into the savings account and
+ * the goal's entry tied to it. With no savings account in that currency,
+ * only the entry (worth its birr), as before.
+ */
+function savingOps(
+  parsed: SavingItem,
+  nowMs: number,
+  newId: () => string,
+  goal: { id: string; title: string } | null | undefined,
+): Op[] {
+  const date = logicalDate(nowMs);
+  const worth = parsed.worth ?? parsed.amount;
+  if (parsed.spend && parsed.savings) {
+    const currency = parsed.currency ?? "ETB";
+    return moveOps({
+      goal: goal ?? null,
+      sign: parsed.amount < 0 ? -1 : 1,
+      amount: Math.abs(parsed.amount),
+      spend: { ...parsed.spend, currency },
+      savings: { ...parsed.savings, currency },
+      nowMs,
+      date,
+      ids: { entry: newId(), halves: [newId(), newId()], transfer: newId() },
+      entryMinor: Math.abs(worth),
+      origin: "capture",
+      note: parsed.goal ?? null,
+    }).map((op) => withoutBirr(op));
+  }
+  return [
+    {
+      op: "insert",
+      table: "savings_entries",
+      id: newId(),
+      values: {
+        goal_id: goal?.id ?? null,
+        occurred_at: nowMs,
+        local_date: date,
+        amount_minor: worth,
+        note: parsed.goal ?? null,
+        origin: "capture",
+      },
+    },
+  ];
+}
+
+function pieceOps(piece: MoneyPiece, context: OpsContext): Op[] {
+  const { nowMs, newId, goalOf } = context;
+  switch (piece.kind) {
+    case "expense":
+    case "income":
+      return [moneyOp(piece, nowMs, newId())];
+    case "loan":
+      return loanPieceOps(piece, nowMs, newId);
+    case "transfer":
+      return transferPieceOps(piece, context);
+    case "saving":
+      return savingOps(piece, nowMs, newId, goalOf ? goalOf(piece.goal) : null);
+  }
+}
+
+export function toOps(parsed: Parsed, context: OpsContext): Op[] {
+  const { nowMs, newId, idea, savingGoal } = context;
   switch (parsed.kind) {
     case "task":
       return [
@@ -96,6 +241,10 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
             waiting_on: parsed.waitingOn ?? null,
             follow_up_date: parsed.waitingOn ? (parsed.dueDate ?? null) : null,
             repeat_json: parsed.repeat ? JSON.stringify(parsed.repeat) : null,
+            // `tomorrow morning`: the day planner places it in that part of the day.
+            ...(parsed.plannedWindow
+              ? { planned_window: parsed.plannedWindow, planned_date: parsed.dueDate ?? null }
+              : {}),
             origin: "capture",
           },
         },
@@ -104,32 +253,14 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
     case "income":
       return [moneyOp(parsed, nowMs, newId())];
     case "money":
-      return parsed.items.map((item) => moneyOp(item, nowMs, newId()));
+      return parsed.items.flatMap((item) => pieceOps(item, context));
     case "afford":
       // A question: the line is kept as typed, nothing else is written.
       return [];
     case "loan":
-      return loanOps({
-        person: parsed.person,
-        kind: parsed.loanKind,
-        amount: parsed.amount,
-        date: parsed.date,
-        account: parsed.account ?? "cash",
-        nowMs,
-        id: newId(),
-        txnId: newId(),
-      });
+      return loanPieceOps(parsed, nowMs, newId);
     case "transfer":
-      return transferOps({
-        from: { id: parsed.from, name: parsed.fromName },
-        to: { id: parsed.to, name: parsed.toName },
-        amount: parsed.amount,
-        date: parsed.date,
-        nowMs,
-        ids: [newId(), newId()],
-        transferId: newId(),
-        origin: "capture",
-      });
+      return transferPieceOps(parsed, context);
     case "idea":
       return [
         {
@@ -158,21 +289,7 @@ export function toOps(parsed: Parsed, { nowMs, newId, idea, savingGoal }: OpsCon
         },
       ];
     case "saving":
-      return [
-        {
-          op: "insert",
-          table: "savings_entries",
-          id: newId(),
-          values: {
-            goal_id: savingGoal?.id ?? null,
-            occurred_at: nowMs,
-            local_date: logicalDate(nowMs),
-            amount_minor: parsed.amount,
-            note: parsed.goal ?? null,
-            origin: "capture",
-          },
-        },
-      ];
+      return savingOps(parsed, nowMs, newId, savingGoal);
     case "search":
     case "away":
     case "focus":
@@ -209,6 +326,59 @@ function timeLabel(epochMs: number): string {
   return `${String(local.getUTCHours()).padStart(2, "0")}:${String(local.getUTCMinutes()).padStart(2, "0")}`;
 }
 
+const capitalise = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** An amount on a list: bare for birr (`1,500`), with its sign otherwise (`$200`). */
+const listAmount = (amount: number, currency: string | undefined) =>
+  currency && currency !== "ETB" ? formatAmount(amount, currency) : formatNumber(amount);
+
+/** " (26,500 ETB at 132.50)" when the halves of a transfer are in two currencies. */
+const arrived = (piece: TransferItem) =>
+  piece.received !== undefined && piece.toCurrency
+    ? ` (${formatAmount(piece.received, piece.toCurrency)}${piece.at ? ` ${piece.at}` : ""})`
+    : "";
+
+/** " · counts as saving" / " · taken from savings" for a transfer into or out of one. */
+const savingNote = (piece: TransferItem) =>
+  piece.saving ? (piece.saving.minor > 0 ? " · counts as saving" : " · taken from savings") : "";
+
+/** One record of a several-item line, short: `lunch 120`, `lent Abel 1,500`. */
+export function pieceText(piece: MoneyPiece): string {
+  switch (piece.kind) {
+    case "expense":
+      return `${piece.description} ${listAmount(piece.amount, piece.currency)}`;
+    case "income":
+      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}`;
+    case "saving":
+      return `${piece.amount > 0 ? "saved" : "took out"} ${listAmount(Math.abs(piece.amount), piece.currency)}${piece.goal ? ` ${piece.goal}` : ""}${piece.unbacked ? ` (${piece.unbacked}, money stays put)` : ""}`;
+    case "transfer":
+      return `moved ${listAmount(piece.amount, piece.currency)} ${piece.fromName} → ${piece.toName}${arrived(piece)}`;
+    case "loan": {
+      const amount = listAmount(piece.amount, piece.currency);
+      switch (piece.loanKind) {
+        case "lent":
+          return `lent ${piece.person} ${amount}`;
+        case "borrowed":
+          return `borrowed ${amount} from ${piece.person}`;
+        case "paid_me":
+          return `${piece.person} paid back ${amount}`;
+        case "i_paid":
+          return `paid back ${piece.person} ${amount}`;
+      }
+    }
+  }
+}
+
+/** The afford answer's colour (time-first §2): Fine green, Tight yellow, Not now pink. */
+export type AffordState = "fine" | "tight" | "notnow";
+
+export function affordState(answer: string): AffordState | undefined {
+  if (answer.startsWith("Fine")) return "fine";
+  if (answer.startsWith("Tight")) return "tight";
+  if (answer.startsWith("Not now")) return "notnow";
+  return undefined;
+}
+
 /** The short confirmation shown in the capture box. */
 export function echo(
   parsed: Parsed,
@@ -223,35 +393,48 @@ export function echo(
         const follow = parsed.dueDate ? ` · follow up ${dayLabel(parsed.dueDate, nowMs)}` : "";
         return `Waiting on ${parsed.waitingOn}${follow}${area}`;
       }
+      // "Today 15:00–16:00" when it has a time and a length; "Tomorrow morning".
+      const span =
+        parsed.dueAt !== undefined && parsed.estimateMin
+          ? ` ${timeLabel(parsed.dueAt)}–${timeLabel(parsed.dueAt + parsed.estimateMin * 60_000)}`
+          : parsed.dueAt !== undefined
+            ? ` ${timeLabel(parsed.dueAt)}`
+            : parsed.plannedWindow
+              ? ` ${parsed.plannedWindow}`
+              : "";
       const when = parsed.dueDate
-        ? ` · ${dayLabel(parsed.dueDate, nowMs)}${parsed.dueAt ? ` ${timeLabel(parsed.dueAt)}` : ""}`
+        ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
         : parsed.estimateMin
           ? " · planned into free time"
           : " · Someday";
-      const size = parsed.estimateMin
-        ? ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
-        : "";
+      const size =
+        parsed.estimateMin && parsed.dueAt === undefined
+          ? ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
+          : "";
       const repeat = parsed.repeat ? ` · ${ruleText(parsed.repeat)}` : "";
       return `Task${when}${repeat}${size}${area}`;
     }
     case "transfer":
-      return `Moved ${formatAmount(parsed.amount)} · ${parsed.fromName} → ${parsed.toName}`;
+      return `Moved ${formatAmount(parsed.amount, parsed.currency)} · ${parsed.fromName} → ${parsed.toName}${arrived(parsed)}${savingNote(parsed)}`;
     case "afford":
       return "Checking…";
-    case "loan":
-      return `${loanEchoText(parsed.loanKind, parsed.person, parsed.amount, null)}${
-        parsed.accountName && parsed.account !== "cash" ? ` · ${parsed.accountName}` : ""
-      }`;
+    case "loan": {
+      const text = parsed.currency
+        ? capitalise(pieceText(parsed))
+        : loanEchoText(parsed.loanKind, parsed.person, parsed.amount, null);
+      return `${text}${parsed.accountName && parsed.account !== "cash" ? ` · ${parsed.accountName}` : ""}`;
+    }
     case "expense":
-      return `${formatAmount(parsed.amount)} · ${categoryOf(parsed)}${accountOf(parsed)}${area}`;
+      return `${formatAmount(parsed.amount, parsed.currency)} · ${categoryOf(parsed)}${accountOf(parsed)}${area}`;
     case "income":
-      return `Income · ${formatAmount(parsed.amount)} · ${parsed.jobName ?? categoryOf(parsed)}${accountOf(parsed)}${area}`;
+      return `Income · ${formatAmount(parsed.amount, parsed.currency)} · ${parsed.jobName ?? categoryOf(parsed)}${accountOf(parsed)}${area}`;
     case "money": {
-      const out = parsed.items.filter((item) => item.kind === "expense");
-      const total = out.reduce((sum, item) => sum + item.amount, 0);
-      const parts = parsed.items.map(
-        (item) => `${item.description} ${formatAmount(item.amount, "").trim()}`,
+      // Birr spending adds up; other currencies are listed with their sign.
+      const out = parsed.items.filter(
+        (item): item is MoneyItem => item.kind === "expense" && (item.currency ?? "ETB") === "ETB",
       );
+      const total = out.reduce((sum, item) => sum + item.amount, 0);
+      const parts = parsed.items.map(pieceText);
       return `${parsed.items.length} entries · ${parts.join(", ")}${out.length ? ` · ${formatAmount(total)} out` : ""}`;
     }
     case "note":
@@ -263,7 +446,7 @@ export function echo(
     case "feedback":
       return "Feedback noted";
     case "inbox":
-      return "Saved · will ask tonight";
+      return parsed.why ?? "Saved · will ask tonight";
     case "search":
       return `Search: ${parsed.query}`;
     case "away":
@@ -277,7 +460,15 @@ export function echo(
         : savingGoal === null
           ? " · no goal yet: add one on the Dashboard"
           : "";
-      return `${what} ${formatAmount(Math.abs(parsed.amount))}${where}`;
+      const moved =
+        parsed.spend && parsed.savings
+          ? parsed.amount > 0
+            ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
+            : ` · ${parsed.savings.name} → ${parsed.spend.name}`
+          : parsed.unbacked
+            ? ` · ${parsed.unbacked}, so the money stays where it is`
+            : "";
+      return `${what} ${formatAmount(Math.abs(parsed.amount), parsed.currency)}${where}${moved}`;
     }
   }
 }

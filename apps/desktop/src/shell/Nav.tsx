@@ -24,6 +24,7 @@ export type Page =
   | "projects"
   | "money"
   | "weekcard"
+  | "day"
   | "dashboard"
   | "notes"
   | "kits"
@@ -34,6 +35,7 @@ export type Page =
 /** The pages that open under Plan, in tab order. */
 export const PLAN_TABS: { page: Page; label: string }[] = [
   { page: "weekcard", label: "This week" },
+  { page: "day", label: "Day" },
   { page: "tasks", label: "Tasks" },
   { page: "week", label: "Routine" },
   { page: "review", label: "Night review" },

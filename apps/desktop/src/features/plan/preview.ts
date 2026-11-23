@@ -6,7 +6,14 @@
  */
 import { type Op } from "../../kernel/db";
 import { localToEpoch } from "../../capture/when";
-import { FILLABLE_KINDS, generateDay, type PlanInput, type TaskInput } from "./generate";
+import {
+  FILLABLE_KINDS,
+  generateDay,
+  hasEstimate,
+  type PlanInput,
+  TASK_BLOCK_MIN,
+  type TaskInput,
+} from "./generate";
 import { loadPlanInput, type Query, shiftDate, weekStart } from "./dayplan";
 
 export const PREVIEW_DAYS = 7;
@@ -76,7 +83,13 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
         title: block.title,
         taskId: block.taskId,
       }));
-    for (const block of blocks) {
+    // A task block you moved or added (kept) covers its task that day too.
+    const keptTaskTime = input.kept.flatMap((kept) =>
+      kept.taskId && tasks.some((t) => t.id === kept.taskId)
+        ? [{ areaId: null, taskId: kept.taskId, durationMin: kept.durationMin }]
+        : [],
+    );
+    for (const block of [...blocks, ...keptTaskTime]) {
       if (block.areaId) already[block.areaId] = (already[block.areaId] ?? 0) + block.durationMin;
       if (!block.taskId || finished.has(block.taskId)) continue;
       const task = tasks.find((t) => t.id === block.taskId);
@@ -102,6 +115,11 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
     // tasks are done inside their own blocks.
     const kind = task.areaId ? kinds.get(task.areaId) : undefined;
     if (task.areaId !== null && (kind === undefined || !FILLABLE_KINDS.has(kind))) continue;
+    // A task with no area gets time only by its own time, part of the day or
+    // estimate (time first, rule 5); without any of them it is a list item.
+    const placeable =
+      hasEstimate(task) || (task.atMin !== null && task.atMin !== undefined) || !!task.window;
+    if (task.areaId === null && !placeable && !finished.has(task.id)) continue;
     const finishedOn = finished.get(task.id) ?? null;
     if (finishedOn !== null && finishedOn <= task.dueDate) continue;
     // What was still missing at the end of the due day (or now, if already overdue).
@@ -122,11 +140,22 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
   return { days, late };
 }
 
-/** Loads the next 7 days' inputs and runs them. */
-/** Today's free slots from now on: time already gone can't be planned. */
+/**
+ * Today's free slots from now on: time already gone can't be planned. A task
+ * whose time has passed is planned like any other; a part of the day starts now.
+ */
 export function fromNow(input: PlanInput, nowMin: number): PlanInput {
   return {
     ...input,
+    notBeforeMin: Math.max(input.notBeforeMin ?? 0, nowMin),
+    tasks: input.tasks.map((task) =>
+      task.atMin !== null &&
+      task.atMin !== undefined &&
+      task.atMin + (task.estimateMin && task.estimateMin > 0 ? task.estimateMin : TASK_BLOCK_MIN) <=
+        nowMin
+        ? { ...task, atMin: null }
+        : task,
+    ),
     template: input.template.flatMap((block) => {
       if (block.kind !== "area") return [block];
       const end = block.startMin + block.durationMin;

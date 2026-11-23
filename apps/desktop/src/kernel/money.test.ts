@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatAmount, parseAmount } from "./money";
+import { formatAmount, formatNumber, parseAmount } from "./money";
 
 describe("parseAmount", () => {
   it.each([
@@ -51,5 +51,23 @@ describe("formatAmount", () => {
     for (const santim of [1, 99, 100, 35_000, 1_200_050]) {
       expect(parseAmount(formatAmount(santim))).toBe(santim);
     }
+  });
+});
+
+describe("formatAmount in other currencies", () => {
+  it.each([
+    [120_050, "USD", "$1,200.50"],
+    [5_000, "EUR", "€50"],
+    [2_000, "GBP", "£20"],
+    [-1_550, "USD", "-$15.50"],
+    [120_050, "CHF", "1,200.50 CHF"],
+    [1_200_000, "ETB", "12,000 ETB"],
+  ])("formats %i in %s as %j", (minor, currency, text) => {
+    expect(formatAmount(minor, currency)).toBe(text);
+  });
+
+  it("gives the number alone", () => {
+    expect(formatNumber(1_200_050)).toBe("12,000.50");
+    expect(formatNumber(-35_000)).toBe("-350");
   });
 });

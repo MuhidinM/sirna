@@ -9,6 +9,7 @@ import { logicalDate, showDate } from "../../kernel/dates";
 import { formatAmount, type Santim } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
 import { monthOf, previousMonthStart } from "./money";
+import { rowCurrencySql } from "./currency";
 
 // --- The repeat rule ------------------------------------------------------------
 
@@ -119,13 +120,17 @@ export interface RegularRow {
   job: string | null;
   /** When you added it: earlier occurrences aren't asked about. */
   created_at: number;
+  /** Its account's currency; ETB when not given. */
+  currency?: string | null;
 }
 
 export const REGULARS_SQL = `
   SELECT r.id, r.kind, r.name, r.amount_minor, r.rule_json, r.category_id, r.account,
-         r.area_id, r.active, a.name AS job, r.created_at
+         r.area_id, r.active, a.name AS job, r.created_at,
+         ${rowCurrencySql("r")} AS currency
   FROM money_regulars r
   LEFT JOIN area_items a ON a.id = r.area_id
+  LEFT JOIN money_accounts acc ON acc.id = r.account
   WHERE r.deleted_at IS NULL
   ORDER BY r.kind DESC, r.name`;
 
@@ -368,6 +373,7 @@ export function settleOps(item: DueItem, today: string, nowMs: number, id: strin
         origin: "regular",
         regular_id: item.regular.id,
         due_date: item.date,
+        ...(item.regular.currency ? { currency: item.regular.currency } : {}),
       },
     },
   ];
@@ -381,11 +387,12 @@ export function dueLines(items: DueItem[], today?: string): string[] {
         ? item.state === "due" || item.state === "late"
         : item.state === "late",
     )
-    .map((item) =>
-      item.regular.kind === "bill"
-        ? `${item.regular.name} ${formatAmount(item.left)} ${item.state === "late" ? `was due ${showDate(item.date, today)}` : "due today"}`
-        : `${item.regular.job ?? item.regular.name} pay is late: ${formatAmount(item.left)} expected on ${showDate(item.date, today)}`,
-    );
+    .map((item) => {
+      const left = formatAmount(item.left, item.regular.currency ?? "ETB");
+      return item.regular.kind === "bill"
+        ? `${item.regular.name} ${left} ${item.state === "late" ? `was due ${showDate(item.date, today)}` : "due today"}`
+        : `${item.regular.job ?? item.regular.name} pay is late: ${left} expected on ${showDate(item.date, today)}`;
+    });
 }
 
 // --- Adding and changing ----------------------------------------------------------
@@ -398,6 +405,8 @@ export interface RegularDraft {
   categoryId: string;
   account: string;
   areaId: string;
+  /** The account's currency, kept with the regular. */
+  currency?: string;
 }
 
 export function checkRegular(draft: RegularDraft): string | null {
@@ -425,6 +434,7 @@ export function regularOps(draft: RegularDraft, id: string, existing = false): O
         category_id: draft.kind === "bill" ? draft.categoryId || null : "cat_salary",
         account: draft.account,
         area_id: draft.kind === "pay" ? draft.areaId || null : null,
+        ...(draft.currency ? { currency: draft.currency } : {}),
       },
     },
   ];
@@ -437,5 +447,5 @@ export function removeRegularOps(id: string): Op[] {
 /** "Rent 6,000 · monthly on the 1st". */
 export function regularText(regular: RegularRow): string {
   const rule = readRule(regular.rule_json);
-  return `${formatAmount(regular.amount_minor)} · ${rule ? ruleText(rule) : "no rule"}`;
+  return `${formatAmount(regular.amount_minor, regular.currency ?? "ETB")} · ${rule ? ruleText(rule) : "no rule"}`;
 }

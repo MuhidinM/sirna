@@ -266,8 +266,11 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   );
 }
 
-/** The week card (plan §3.10; R-CHK-04). */
-export function WeekCard() {
+/**
+ * The week card (plan §3.10; R-CHK-04), Plan → This week. `onOpenDay` opens
+ * Plan → Day on a date (a Next 7 days column).
+ */
+export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } = {}) {
   const nowMs = useMinute();
   const today = logicalDate(nowMs);
   const monday = weekStart(today);
@@ -403,7 +406,7 @@ export function WeekCard() {
               </p>
             )}
 
-            <WeekPreview today={today} />
+            <WeekPreview today={today} onOpenDay={onOpenDay} />
             <WeekAhead today={today} />
           </section>
 

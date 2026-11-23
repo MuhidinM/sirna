@@ -23,6 +23,7 @@ import { IconArrowRight, IconBolt, IconExpand, IconPencil, IconSettings, IconSun
 import { PanelHead } from "./kit";
 import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
+import { pageOf } from "./paging";
 import { AI_CHANGED_EVENT, BACKUP_LAST_SQL, statusLines } from "../features/settings/status";
 import { SYNC_SQL } from "../features/calendar/sync";
 import { logicalDate } from "../kernel/dates";
@@ -460,29 +461,44 @@ function AiSetup() {
 /** Every request sent to the AI in the last 30 days, exactly as sent (R-AI-02). */
 function WhatWasSent() {
   const calls = useLiveQuery<AiCall & Record<string, string | number | null>>(AI_LOG_SQL);
+  const [page, setPage] = useState(0);
   if (calls.loading) return null;
   if (calls.rows.length === 0)
     return <p className="empty">Nothing sent yet. Each AI request shows here for 30 days.</p>;
   const now = systemClock.now();
+  const shown = pageOf(calls.rows.length, page);
   return (
-    <ul className="ai-log set-log">
-      {calls.rows.map((call) => (
-        <li key={call.id}>
-          <details>
-            <summary>{callSummary(call, now)}</summary>
-            {call.error && <p className="error">{call.error}</p>}
-            <p className="meta">Sent</p>
-            <pre>{pretty(call.request_redacted)}</pre>
-            {call.response_text && (
-              <>
-                <p className="meta">Reply</p>
-                <pre>{pretty(call.response_text)}</pre>
-              </>
-            )}
-          </details>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="ai-log set-log">
+        {calls.rows.slice(shown.start, shown.end).map((call) => (
+          <li key={call.id}>
+            <details>
+              <summary>{callSummary(call, now)}</summary>
+              {call.error && <p className="error">{call.error}</p>}
+              <p className="meta">Sent</p>
+              <pre>{pretty(call.request_redacted)}</pre>
+              {call.response_text && (
+                <>
+                  <p className="meta">Reply</p>
+                  <pre>{pretty(call.response_text)}</pre>
+                </>
+              )}
+            </details>
+          </li>
+        ))}
+      </ul>
+      {(shown.hasNewer || shown.hasOlder) && (
+        <nav className="set-log-pages" aria-label="What was sent pages">
+          <Button disabled={!shown.hasNewer} onClick={() => setPage(shown.page - 1)}>
+            Newer
+          </Button>
+          <span className="meta">{shown.label}</span>
+          <Button disabled={!shown.hasOlder} onClick={() => setPage(shown.page + 1)}>
+            Older
+          </Button>
+        </nav>
+      )}
+    </>
   );
 }
 

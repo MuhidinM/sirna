@@ -72,6 +72,7 @@ describe("the month review (T-066)", () => {
       capsOver: [{ name: "Food", spent: 520_000, cap: 400_000 }],
       // 20,000 + 600 owed to you − 1,500 you owe.
       netWorth: 1_910_000,
+      notes: { approx: false, rate: null, missing: null },
     });
   });
 

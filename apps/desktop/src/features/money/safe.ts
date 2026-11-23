@@ -7,7 +7,14 @@
  */
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { type GoalRow, goalPace } from "../savings/savings";
-import { type AccountRow, balanceOf, totalBalance } from "./accounts";
+import { type AccountRow, balanceOf, inEtb, spending, totalBalance } from "./accounts";
+import {
+  convert,
+  conversionNotes,
+  type ConversionNotes,
+  newConversion,
+  type Rates,
+} from "./currency";
 import { type DueItem } from "./regulars";
 
 /** Saved into goals in total, and this month per goal (?1 first day, ?2 last day). */
@@ -32,12 +39,16 @@ export interface SafeToSpend {
   lines: SafeLine[];
   /** Accounts still without a balance: their money isn't counted. */
   unknownAccounts: number;
+  /** Foreign money converted ("≈ at 132.50 (23 Nov)") or left out for want of a rate. */
+  notes?: ConversionNotes;
 }
 
 /**
- * (money in accounts − money put aside in goals + pay still to come this month
- *  − bills still to pay this month − what goals with a date still need this
- *  month) ÷ days left, rounded down.
+ * (money in spending accounts − money put aside in goals but still in them
+ *  + pay still to come this month − bills still to pay this month − what
+ *  goals with a date still need this month) ÷ days left, rounded down.
+ * Savings accounts never count: what sits there is already put aside.
+ * Foreign money counts at its rate, or not at all without one.
  */
 export function safeToSpend(input: {
   accounts: AccountRow[];
@@ -49,29 +60,39 @@ export function safeToSpend(input: {
   daysInMonth: number;
   /** Saved before any goal existed: put aside all the same. */
   unassigned?: Santim;
+  /** The part of `unassigned` already in a savings account. */
+  unassignedHeld?: Santim;
+  rates?: Rates;
 }): SafeToSpend {
-  const { total, unknown } = totalBalance(input.accounts);
+  const rates = input.rates ?? {};
+  const conversion = newConversion();
+  const accounts = inEtb(spending(input.accounts), rates, conversion);
+  const { total, unknown } = totalBalance(accounts);
   const daysLeft = input.daysInMonth - Number(input.today.slice(8, 10)) + 1;
-  const known = input.accounts.length > unknown;
+  const known = accounts.length > unknown;
   const active = input.goals.filter((goal) => goal.status === "active");
-  // Money put aside stays put aside while a goal is paused, and before it has a goal.
+  // Money put aside stays put aside while a goal is paused, and before it has
+  // a goal; what already sits in a savings account is out of the sum anyway.
   const earmarked =
     input.goals
       .filter((goal) => goal.status !== "done")
-      .reduce((sum, goal) => sum + Math.max(0, goal.saved_minor), 0) +
-    Math.max(0, input.unassigned ?? 0);
+      .reduce((sum, goal) => sum + Math.max(0, goal.saved_minor - (goal.held_minor ?? 0)), 0) +
+    Math.max(0, (input.unassigned ?? 0) - (input.unassignedHeld ?? 0));
   // Pay and bills count only through accounts whose balance is known: pay
   // landing in an uncounted account would vanish from the sum once it came.
   const counted = new Set(
-    input.accounts.filter((account) => balanceOf(account) !== null).map((account) => account.id),
+    accounts.filter((account) => balanceOf(account) !== null).map((account) => account.id),
   );
   const inCounted = input.due.filter((item) => counted.has(item.regular.account));
-  const payLeft = inCounted
-    .filter((item) => item.regular.kind === "pay")
-    .reduce((sum, item) => sum + item.left, 0);
-  const billsLeft = inCounted
-    .filter((item) => item.regular.kind === "bill")
-    .reduce((sum, item) => sum + item.left, 0);
+  const leftOf = (kind: "pay" | "bill") =>
+    inCounted
+      .filter((item) => item.regular.kind === kind)
+      .reduce(
+        (sum, item) => sum + (convert(conversion, rates, item.left, item.regular.currency) ?? 0),
+        0,
+      );
+  const payLeft = leftOf("pay");
+  const billsLeft = leftOf("bill");
   const goalsLeft = active.reduce((sum, goal) => {
     const need = goalPace(goal, input.today).needPerMonth;
     if (need === null) return sum;
@@ -93,6 +114,7 @@ export function safeToSpend(input: {
     daysLeft,
     lines,
     unknownAccounts: unknown,
+    notes: conversionNotes(conversion, rates),
   };
 }
 

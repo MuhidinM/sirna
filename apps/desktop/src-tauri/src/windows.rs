@@ -41,6 +41,10 @@ pub fn spawn_open_setup(app: AppHandle, block_id: Option<String>) {
     });
 }
 
+/// The set-up sheet's size (src/setup/setup.css says the same).
+pub const SETUP_WIDTH: f64 = 480.0;
+pub const SETUP_HEIGHT: f64 = 360.0;
+
 fn open_setup(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(SETUP_LABEL) {
         // Already open: reload so it shows the newer block.
@@ -50,7 +54,7 @@ fn open_setup(app: &AppHandle) -> tauri::Result<()> {
     }
     let window = WebviewWindowBuilder::new(app, SETUP_LABEL, WebviewUrl::App("setup.html".into()))
         .title("Sirna focus")
-        .inner_size(480.0, 300.0)
+        .inner_size(SETUP_WIDTH, SETUP_HEIGHT)
         .resizable(false)
         .decorations(false)
         .always_on_top(true)

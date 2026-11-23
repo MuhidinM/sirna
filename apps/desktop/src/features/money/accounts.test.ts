@@ -62,7 +62,7 @@ function spend(db: Db, acc: string, date: string, minor: number) {
 }
 
 describe("your accounts (T-058)", () => {
-  it("starts with CBO, CBE, E-birr, telebirr and cash; pay goes to CBO", () => {
+  it("starts with your accounts; pay goes to CBO", () => {
     const db = openTestDb();
     expect(accounts(db).map((row) => row.name)).toEqual([
       "Cash",
@@ -70,10 +70,12 @@ describe("your accounts (T-058)", () => {
       "CBE",
       "E-birr",
       "telebirr",
+      "CBO savings",
+      "Wise",
     ]);
     expect(payAccount(accounts(db))).toBe("cbo");
     expect(spendAccount(accounts(db))).toBe("cash");
-    expect(totalBalance(accounts(db))).toEqual({ total: 0, unknown: 5 });
+    expect(totalBalance(accounts(db))).toEqual({ total: 0, unknown: 7 });
   });
 
   it("sets a first balance at the start of today, counting today's entries", () => {
@@ -142,7 +144,7 @@ describe("your accounts (T-058)", () => {
     expect(accountId("Awash Bank", ["cash"])).toBe("awashbank");
     expect(accountId("Cash", ["cash"])).toBe("cash2");
     apply(db, addAccountOps("Awash", "bank", accounts(db)));
-    expect(account(db, "awash").sort_order).toBe(6);
+    expect(account(db, "awash").sort_order).toBe(8);
     apply(db, setPayAccountOps("awash", accounts(db)));
     expect(payAccount(accounts(db))).toBe("awash");
     expect(accounts(db).filter((row) => row.pays_in === 1)).toHaveLength(1);
@@ -212,5 +214,29 @@ describe("accounts in the capture box (T-058)", () => {
     });
     // Not both accounts: not a transfer.
     expect(parseCapture("moved 2000 boxes to the store", options).kind).not.toBe("transfer");
+  });
+});
+
+describe("the savings and Wise seeds (migration 0028)", () => {
+  it("reuse an account you already made instead of adding a copy", async () => {
+    const { migrations } = await import("../../test/sqlite");
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(":memory:");
+    const all = migrations();
+    const at = all.findIndex((m) => m.name.startsWith("0028"));
+    for (const m of all.slice(0, at)) db.exec(m.sql);
+    db.exec(
+      "INSERT INTO money_accounts (id, name, kind, created_at, updated_at) VALUES ('cbosaving', 'CBO saving', 'bank', 0, 0)",
+    );
+    for (const m of all.slice(at)) db.exec(m.sql);
+    const rows = db
+      .prepare(
+        "SELECT id, is_savings, currency FROM money_accounts WHERE name LIKE 'CBO sav%' OR name = 'Wise'",
+      )
+      .all() as { id: string; is_savings: number; currency: string }[];
+    expect(rows).toEqual([
+      { id: "cbosaving", is_savings: 1, currency: "ETB" },
+      { id: "wise", is_savings: 0, currency: "USD" },
+    ]);
   });
 });

@@ -8,6 +8,7 @@ const ALL: Page[] = [
   "projects",
   "money",
   "weekcard",
+  "day",
   "dashboard",
   "notes",
   "kits",
@@ -35,6 +36,7 @@ describe("the sidebar (T-071)", () => {
     }
     expect(PLAN_TABS.map((t) => t.label)).toEqual([
       "This week",
+      "Day",
       "Tasks",
       "Routine",
       "Night review",
@@ -46,6 +48,7 @@ describe("the sidebar (T-071)", () => {
   it("lights up Plan for any planning page", () => {
     expect(navPageOf("review")).toBe("weekcard");
     expect(navPageOf("tasks")).toBe("weekcard");
+    expect(navPageOf("day")).toBe("weekcard");
     expect(navPageOf("money")).toBe("money");
   });
 });

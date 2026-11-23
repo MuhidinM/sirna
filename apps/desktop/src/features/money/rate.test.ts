@@ -15,7 +15,7 @@ describe("birr per hour for each job (T-073)", () => {
           { area_id: "jobc", name: "Job C", minutes: 10 * 60 },
         ],
         [
-          { area_id: "joba", minor: 1_800_000 },
+          { area_id: "joba", minor: 1_800_000, currency: "ETB" },
           { area_id: "jobb", minor: 2_100_000 },
         ],
       ),
@@ -72,7 +72,7 @@ describe("birr per hour for each job (T-073)", () => {
       "INSERT INTO money_txns (id, occurred_at, local_date, amount_minor, description, area_id, created_at, updated_at) VALUES ('p', 0, '2026-11-10', 1800000, 'salary', 'joba', 0, 0)",
     ).run();
     expect(db.prepare(JOB_PAY_SQL).all("2026-11-01", "2026-11-30")).toEqual([
-      { area_id: "joba", minor: 1_800_000 },
+      { area_id: "joba", minor: 1_800_000, currency: "ETB" },
     ]);
   });
 });

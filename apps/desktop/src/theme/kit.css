@@ -54,7 +54,7 @@ button.month-day:hover {
 
 .month-day.marked {
   background: var(--pink);
-  color: var(--canvas);
+  color: var(--white);
 }
 
 /* Side-by-side pink days join into one shape. */
@@ -502,7 +502,7 @@ button.month-day:hover {
 
 .tone-orange {
   --tone: var(--orange);
-  --tone-ink: var(--canvas);
+  --tone-ink: var(--white);
   --art-1: #ff9a3d;
   --art-2: #ffd0a1;
   --art-3: #ff6a00;
@@ -510,7 +510,7 @@ button.month-day:hover {
 
 .tone-pink {
   --tone: var(--pink);
-  --tone-ink: var(--canvas);
+  --tone-ink: var(--white);
   --art-1: #ffb3d1;
   --art-2: #ff7fb0;
   --art-3: #fde1ee;
@@ -588,8 +588,8 @@ button.month-day:hover {
 }
 
 .event input[type="checkbox"]:checked {
-  background: var(--canvas);
-  border-color: var(--canvas);
+  background: var(--white);
+  border-color: var(--white);
 }
 
 .event input[type="checkbox"]:checked::after {
@@ -607,7 +607,7 @@ button.month-day:hover {
 .event-progress > span {
   display: block;
   height: 100%;
-  background: var(--canvas);
+  background: var(--white);
 }
 
 .ghost-card {

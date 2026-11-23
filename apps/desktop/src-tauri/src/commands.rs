@@ -120,10 +120,7 @@ pub fn capture_replace(
     let new_id = {
         let mut conn = db.write.lock();
         let txn = conn.transaction().map_err(|error| error.to_string())?;
-        tx::undo_context(&txn, "user", &format!("capture:{raw_id}"), now)
-            .map_err(|error| error.to_string())?;
-        db::mark_ignored(&txn, raw_id).map_err(|error| error.to_string())?;
-        let new_id = store_capture(&txn, &raw_text, &ops, parser.as_deref(), now)?;
+        let new_id = replace_in(&txn, raw_id, &raw_text, &ops, parser.as_deref(), now)?;
         txn.commit().map_err(|error| error.to_string())?;
         new_id
     };
@@ -137,6 +134,191 @@ pub fn capture_replace(
         ],
     );
     Ok(new_id)
+}
+
+/// The fix itself, inside an open transaction: undo the old capture, save the
+/// new one, and carry the old task's project, parent and steps over to the
+/// new task (time-first §2: "read chapter 5" → "read chapter 6" keeps its
+/// project). The links are read before the undo, since undoing an earlier fix
+/// takes back the links it carried. They are logged under the new capture
+/// with only the carried columns as "before", so undoing it puts back the
+/// links and nothing else: later edits to the steps stay.
+fn replace_in(
+    txn: &rusqlite::Transaction<'_>,
+    raw_id: i64,
+    raw_text: &str,
+    ops: &[Op],
+    parser: Option<&str>,
+    now: i64,
+) -> Result<i64, String> {
+    let old_context = format!("capture:{raw_id}");
+    let links = match captured_task(txn, &old_context)? {
+        Some(old) => Some(task_links(txn, &old)?),
+        None => None,
+    };
+    tx::undo_context(txn, "user", &old_context, now).map_err(|error| error.to_string())?;
+    db::mark_ignored(txn, raw_id).map_err(|error| error.to_string())?;
+    let new_id = store_capture(txn, raw_text, ops, parser, now)?;
+    let carried = links.map_or_else(Vec::new, |links| carry_task_links(&links, ops));
+    if !carried.is_empty() {
+        let context = format!("capture:{new_id}");
+        let logged_before: i64 = txn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) FROM core_activity",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        tx::apply_ops(txn, "user", Some(&context), &carried, now)
+            .map_err(|error| error.to_string())?;
+        keep_only_carried_columns(txn, &context, logged_before, &carried)?;
+    }
+    Ok(new_id)
+}
+
+/// Trims the "before" of each carried update to the columns it set, so undo
+/// restores those columns only (undo restores whatever a snapshot holds).
+fn keep_only_carried_columns(
+    conn: &rusqlite::Connection,
+    context: &str,
+    after_id: i64,
+    carried: &[Op],
+) -> Result<(), String> {
+    let rows: Vec<(i64, String, Option<String>)> = {
+        let mut statement = conn
+            .prepare(
+                "SELECT id, entity_id, before_json FROM core_activity
+                 WHERE context = ?1 AND id > ?2 AND action = 'update' AND entity_type = 'task_items'",
+            )
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map(rusqlite::params![context, after_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .and_then(Iterator::collect)
+            .map_err(|error| error.to_string())?
+    };
+    for (row_id, entity_id, before) in rows {
+        let Some(Op::Update { values, .. }) = carried
+            .iter()
+            .find(|op| matches!(op, Op::Update { id, .. } if *id == entity_id))
+        else {
+            continue;
+        };
+        let Some(Value::Object(before)) = before.and_then(|text| serde_json::from_str(&text).ok())
+        else {
+            continue;
+        };
+        let trimmed: Map<String, Value> = values
+            .keys()
+            .map(|name| {
+                (
+                    name.clone(),
+                    before.get(name).cloned().unwrap_or(Value::Null),
+                )
+            })
+            .collect();
+        conn.execute(
+            "UPDATE core_activity SET before_json = ?1 WHERE id = ?2",
+            rusqlite::params![Value::Object(trimmed).to_string(), row_id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// The one task a capture made, when it made exactly one.
+fn captured_task(conn: &rusqlite::Connection, context: &str) -> Result<Option<String>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT entity_id FROM core_activity
+             WHERE context = ?1 AND entity_type = 'task_items' AND action = 'insert'",
+        )
+        .map_err(|error| error.to_string())?;
+    let ids: Vec<String> = statement
+        .query_map([context], |row| row.get(0))
+        .and_then(Iterator::collect)
+        .map_err(|error| error.to_string())?;
+    Ok(if ids.len() == 1 {
+        ids.into_iter().next()
+    } else {
+        None
+    })
+}
+
+/// A task's project, parent, step number and steps, as they are now.
+struct TaskLinks {
+    project: Option<String>,
+    parent: Option<String>,
+    step: Option<i64>,
+    steps: Vec<String>,
+}
+
+fn task_links(conn: &rusqlite::Connection, id: &str) -> Result<TaskLinks, String> {
+    let (project, parent, step) = conn
+        .query_row(
+            "SELECT project_id, parent_id, step_no FROM task_items WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut statement = conn
+        .prepare("SELECT id FROM task_items WHERE parent_id = ?1 AND deleted_at IS NULL")
+        .map_err(|error| error.to_string())?;
+    let steps = statement
+        .query_map([id], |row| row.get(0))
+        .and_then(Iterator::collect)
+        .map_err(|error| error.to_string())?;
+    Ok(TaskLinks {
+        project,
+        parent,
+        step,
+        steps,
+    })
+}
+
+/// Updates that give the new task the old one's project, parent and step
+/// number (unless the fix set them) and move the old task's steps under it.
+fn carry_task_links(links: &TaskLinks, ops: &[Op]) -> Vec<Op> {
+    let inserted: Vec<(&String, &Map<String, Value>)> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Insert { table, id, values } if table == "task_items" => Some((id, values)),
+            _ => None,
+        })
+        .collect();
+    let [(new_id, new_values)] = inserted.as_slice() else {
+        return Vec::new();
+    };
+    let unset = |name: &str| new_values.get(name).is_none_or(Value::is_null);
+    let mut carried = Map::new();
+    if let Some(project) = links.project.clone().filter(|_| unset("project_id")) {
+        carried.insert("project_id".into(), Value::from(project));
+    }
+    if let Some(parent) = links.parent.clone().filter(|_| unset("parent_id")) {
+        carried.insert("parent_id".into(), Value::from(parent));
+    }
+    if let Some(step) = links.step.filter(|_| unset("step_no")) {
+        carried.insert("step_no".into(), Value::from(step));
+    }
+    let mut out = Vec::new();
+    if !carried.is_empty() {
+        out.push(Op::Update {
+            table: "task_items".into(),
+            id: (*new_id).clone(),
+            values: carried,
+        });
+    }
+    for step_id in &links.steps {
+        let mut values = Map::new();
+        values.insert("parent_id".into(), Value::from((*new_id).clone()));
+        out.push(Op::Update {
+            table: "task_items".into(),
+            id: step_id.clone(),
+            values,
+        });
+    }
+    out
 }
 
 /// Undoes everything a capture created or changed, and marks it ignored.
@@ -235,6 +417,179 @@ mod tests {
     }
 
     #[test]
+    fn fixing_a_task_capture_keeps_its_project_parent_and_steps() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure(&conn).unwrap();
+        crate::migrate::run(&mut conn, crate::migrate::MIGRATIONS, 0).unwrap();
+        let task = |id: &str, title: &str| {
+            let mut values = Map::new();
+            values.insert("title".into(), title.into());
+            vec![Op::Insert {
+                table: "task_items".into(),
+                id: id.into(),
+                values,
+            }]
+        };
+        let txn = conn.transaction().unwrap();
+        let raw = super::store_capture(
+            &txn,
+            "read chapter 5",
+            &task("t5", "read chapter 5"),
+            None,
+            1,
+        )
+        .unwrap();
+        // Later, on the Projects page: the task joins a project as step 2 of
+        // another task, and gets a step of its own.
+        txn.execute_batch(
+            "UPDATE task_items SET project_id = 'p1', parent_id = 'big', step_no = 2 WHERE id = 't5';
+             INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+               VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
+        )
+        .unwrap();
+        let fixed = super::replace_in(
+            &txn,
+            raw,
+            "read chapter 6",
+            &task("t6", "read chapter 6"),
+            None,
+            2,
+        )
+        .unwrap();
+        let row: (String, Option<String>, Option<String>, Option<i64>) = txn
+            .query_row(
+                "SELECT title, project_id, parent_id, step_no FROM task_items WHERE id = 't6'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "read chapter 6".into(),
+                Some("p1".into()),
+                Some("big".into()),
+                Some(2)
+            )
+        );
+        let step_parent: String = txn
+            .query_row(
+                "SELECT parent_id FROM task_items WHERE id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(step_parent, "t6");
+        // Undoing the fix puts the step back under the old task.
+        crate::tx::undo_context(&txn, "user", &format!("capture:{fixed}"), 3).unwrap();
+        let step_parent: String = txn
+            .query_row(
+                "SELECT parent_id FROM task_items WHERE id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(step_parent, "t5");
+    }
+
+    fn capture_db() -> rusqlite::Connection {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::configure(&conn).unwrap();
+        crate::migrate::run(&mut conn, crate::migrate::MIGRATIONS, 0).unwrap();
+        conn
+    }
+
+    fn task_op(id: &str, title: &str) -> Vec<Op> {
+        let mut values = Map::new();
+        values.insert("title".into(), title.into());
+        vec![Op::Insert {
+            table: "task_items".into(),
+            id: id.into(),
+            values,
+        }]
+    }
+
+    #[test]
+    fn fixing_a_fixed_capture_still_keeps_its_project_parent_and_steps() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw =
+            super::store_capture(&txn, "read ch 5", &task_op("t5", "read ch 5"), None, 1).unwrap();
+        txn.execute_batch(
+            "UPDATE task_items SET project_id = 'p1', parent_id = 'big', step_no = 2 WHERE id = 't5';
+             INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+               VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
+        )
+        .unwrap();
+        let once = super::replace_in(&txn, raw, "read ch 6", &task_op("t6", "read ch 6"), None, 2)
+            .unwrap();
+        super::replace_in(
+            &txn,
+            once,
+            "read ch 7",
+            &task_op("t7", "read ch 7"),
+            None,
+            3,
+        )
+        .unwrap();
+        let row: (Option<String>, Option<String>, Option<i64>) = txn
+            .query_row(
+                "SELECT project_id, parent_id, step_no FROM task_items WHERE id = 't7'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (Some("p1".into()), Some("big".into()), Some(2)));
+        let step_parent: String = txn
+            .query_row(
+                "SELECT parent_id FROM task_items WHERE id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(step_parent, "t7");
+    }
+
+    #[test]
+    fn undoing_a_fix_keeps_later_edits_to_its_steps() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw =
+            super::store_capture(&txn, "read ch 5", &task_op("t5", "read ch 5"), None, 1).unwrap();
+        txn.execute_batch(
+            "INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+               VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
+        )
+        .unwrap();
+        let fixed = super::replace_in(&txn, raw, "read ch 6", &task_op("t6", "read ch 6"), None, 2)
+            .unwrap();
+        let mut values = Map::new();
+        values.insert("title".into(), "take good notes".into());
+        values.insert("status".into(), "done".into());
+        crate::tx::apply_ops(
+            &txn,
+            "user",
+            None,
+            &[Op::Update {
+                table: "task_items".into(),
+                id: "s1".into(),
+                values,
+            }],
+            3,
+        )
+        .unwrap();
+        crate::tx::undo_context(&txn, "user", &format!("capture:{fixed}"), 4).unwrap();
+        let row: (String, String, String) = txn
+            .query_row(
+                "SELECT title, status, parent_id FROM task_items WHERE id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("take good notes".into(), "done".into(), "t5".into()));
+    }
+
+    #[test]
     fn the_sheet_shows_the_areas_cheat_lines_in_card_order() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::db::configure(&conn).unwrap();
@@ -254,6 +609,39 @@ mod tests {
             vec!["first by hand", "pinned first", "pinned later"]
         );
         assert!(super::cheat_lines(&conn, None).is_empty());
+    }
+
+    #[test]
+    fn the_sheet_target_picks_the_block_area_or_nothing() {
+        use super::SetupTarget;
+        let opened = || Some("b1".to_string());
+        // No choice made: the block the sheet was opened for.
+        assert_eq!(
+            SetupTarget::resolve(None, opened()),
+            (Some("b1".into()), None)
+        );
+        // "Just focus": nothing, even when opened for a block.
+        assert_eq!(
+            SetupTarget::resolve(Some(&SetupTarget::default()), opened()),
+            (None, None)
+        );
+        let area = SetupTarget {
+            area_id: Some("coding".into()),
+            ..SetupTarget::default()
+        };
+        assert_eq!(
+            SetupTarget::resolve(Some(&area), opened()),
+            (None, Some("coding".into()))
+        );
+        let other = SetupTarget {
+            other: Some("  ".into()),
+            ..SetupTarget::default()
+        };
+        assert_eq!(other.other_name(), None);
+        let parsed: SetupTarget =
+            serde_json::from_str(r#"{"blockId":"b2","other":" Read "}"#).unwrap();
+        assert_eq!(parsed.block_id.as_deref(), Some("b2"));
+        assert_eq!(parsed.other_name().as_deref(), Some("Read"));
     }
 }
 
@@ -394,6 +782,44 @@ pub struct SetupInfo {
     pub dnd: bool,
     /// The area's cheat sheet, shown next to the timer (plan §3.15).
     pub notes: Vec<String>,
+    /// The block the sheet was opened for, if any (the default "for what").
+    pub block_id: Option<String>,
+    /// What else the session can be for (spec §1 rule 7).
+    pub blocks: Vec<crate::focus::DayBlock>,
+    pub areas: Vec<crate::focus::AreaChoice>,
+}
+
+/// What the sheet's session is for: a block, an area with no block, or
+/// "Other…" (a typed name that becomes a block now). All empty: a plain
+/// session. No target at all: the block the sheet was opened for.
+#[derive(serde::Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SetupTarget {
+    pub block_id: Option<String>,
+    pub area_id: Option<String>,
+    pub other: Option<String>,
+}
+
+impl SetupTarget {
+    /// The block and area a session is for (before "Other…" adds its block).
+    fn resolve(
+        target: Option<&SetupTarget>,
+        opened_for: Option<String>,
+    ) -> (Option<String>, Option<String>) {
+        match target {
+            None => (opened_for, None),
+            Some(target) => (target.block_id.clone(), target.area_id.clone()),
+        }
+    }
+
+    /// The typed "Other…" name, trimmed; None when it is not an Other target.
+    fn other_name(&self) -> Option<String> {
+        self.other
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+    }
 }
 
 /// Most cheat lines a sheet shows; the card itself stays short on purpose.
@@ -428,17 +854,26 @@ pub fn cheat_lines(conn: &rusqlite::Connection, area_id: Option<&str>) -> Vec<St
 /// the main thread.
 #[tauri::command(async)]
 pub fn setup_info(
+    target: Option<SetupTarget>,
     db: State<'_, Db>,
     pending: State<'_, crate::kit::PendingSetup>,
 ) -> Result<SetupInfo, String> {
-    let block = pending.0.lock().clone().flatten();
-    let (context, kit, notes) = {
+    let opened_for = pending.0.lock().clone().flatten();
+    let (block, area) = SetupTarget::resolve(target.as_ref(), opened_for.clone());
+    let (context, kit, notes, blocks, areas) = {
         let conn = db.write.lock();
-        let context = crate::focus::context_for(&conn, block.as_deref())
-            .map_err(|error| error.to_string())?;
+        let mut context =
+            crate::focus::context_for_target(&conn, block.as_deref(), area.as_deref())
+                .map_err(|error| error.to_string())?;
+        if let Some(name) = target.as_ref().and_then(SetupTarget::other_name) {
+            context.title = name;
+        }
         let kit = crate::kit::load(&conn, context.area_id.as_deref());
         let notes = cheat_lines(&conn, context.area_id.as_deref());
-        (context, kit, notes)
+        let blocks = crate::focus::today_blocks(&conn, clock::now_ms())
+            .map_err(|error| error.to_string())?;
+        let areas = crate::focus::area_choices(&conn).map_err(|error| error.to_string())?;
+        (context, kit, notes, blocks, areas)
     };
     Ok(SetupInfo {
         kit,
@@ -446,6 +881,9 @@ pub fn setup_info(
         minutes: context.focus_min,
         dnd: crate::dnd::available(),
         notes,
+        block_id: opened_for,
+        blocks,
+        areas,
     })
 }
 
@@ -455,19 +893,56 @@ pub fn setup_info(
 pub fn setup_start(
     intent: Option<String>,
     force: Option<bool>,
+    target: Option<SetupTarget>,
     app: AppHandle,
     window: WebviewWindow,
-) -> String {
-    let block = app
-        .state::<crate::kit::PendingSetup>()
-        .0
-        .lock()
-        .clone()
-        .flatten();
-    let effects = crate::focus::start_with_block(&app, block.clone(), force.unwrap_or(false));
+) -> Result<String, String> {
+    let other = target.as_ref().and_then(|target| target.other.as_ref());
+    let name = target.as_ref().and_then(SetupTarget::other_name);
+    if other.is_some() && name.is_none() {
+        return Err("Type what this session is for.".into());
+    }
+    // "Other…": the block goes in first, so the session can point at it.
+    let added = match name {
+        Some(name) => {
+            let db = app.state::<Db>();
+            let conn = db.write.lock();
+            let minutes = crate::focus::context_for(&conn, None)
+                .map(|context| context.focus_min)
+                .unwrap_or(25);
+            let id = crate::focus::add_other_block(&conn, &name, minutes, clock::now_ms())
+                .map_err(|error| error.to_string())?;
+            Some(id)
+        }
+        None => None,
+    };
+    let (block, area) = if let Some(id) = &added {
+        (Some(id.clone()), None)
+    } else {
+        let opened_for = app
+            .state::<crate::kit::PendingSetup>()
+            .0
+            .lock()
+            .clone()
+            .flatten();
+        SetupTarget::resolve(target.as_ref(), opened_for)
+    };
+    let effects = crate::focus::start_for(
+        &app,
+        block.as_deref(),
+        area.as_deref(),
+        force.unwrap_or(false),
+    );
     let result = start_result(&effects);
     if result != "started" {
-        return result;
+        if let Some(id) = &added {
+            let db = app.state::<Db>();
+            crate::focus::remove_other_block(&db.write.lock(), id, clock::now_ms());
+        }
+        return Ok(result);
+    }
+    if added.is_some() {
+        emit_changed(&app, vec!["day_blocks".into()]);
     }
     app.state::<crate::kit::PendingSetup>().0.lock().take();
     let _ = window.close();
@@ -481,7 +956,7 @@ pub fn setup_start(
         let kit = {
             let db = app.state::<Db>();
             let conn = db.write.lock();
-            crate::focus::context_for(&conn, block.as_deref())
+            crate::focus::context_for_target(&conn, block.as_deref(), area.as_deref())
                 .map(|context| crate::kit::load(&conn, context.area_id.as_deref()))
                 .unwrap_or_default()
         };
@@ -491,7 +966,7 @@ pub fn setup_start(
             kit.open.len()
         );
     });
-    result
+    Ok(result)
 }
 
 /// Undoes one Notes save (plan §3.15: an overwrite can be undone). Only

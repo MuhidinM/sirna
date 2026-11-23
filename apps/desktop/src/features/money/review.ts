@@ -3,8 +3,9 @@
  * month that just ended. Pure and tested, integer santim.
  */
 import { type Santim } from "../../kernel/money";
-import { type AccountRow, totalBalance } from "./accounts";
-import { type PersonBalance } from "./loans";
+import { type AccountRow, inEtb, totalBalance } from "./accounts";
+import { conversionNotes, type ConversionNotes, newConversion, type Rates } from "./currency";
+import { owedInEtb, type PersonBalance } from "./loans";
 import { type MonthSummary } from "./money";
 
 export interface MonthReview {
@@ -15,8 +16,13 @@ export interface MonthReview {
   /** The 3 biggest changes against your usual month, biggest first. */
   changes: { name: string; spent: Santim; usual: Santim; diff: Santim }[];
   capsOver: { name: string; spent: Santim; cap: Santim }[];
-  /** Accounts with a balance + owed to you − what you owe. Null with no balance yet. */
+  /**
+   * Every account with a balance (savings accounts too) + owed to you − what
+   * you owe, in ETB. Null with no balance yet.
+   */
   netWorth: Santim | null;
+  /** Net worth's foreign money: converted, or left out. */
+  notes: ConversionNotes;
 }
 
 /** The first Sunday of a month is a Sunday (ISO 7) on day 1 to 7. */
@@ -36,7 +42,10 @@ export function monthReview(input: {
   names?: Map<string, string>;
   /** The month's last day: a cap that started later doesn't judge it. */
   monthEnd?: string;
+  rates?: Rates;
 }): MonthReview {
+  const rates = input.rates ?? {};
+  const conversion = newConversion();
   const { summary, caps, accounts, people } = input;
   const lines = new Map(
     summary.categories.map((line) => [
@@ -65,9 +74,10 @@ export function monthReview(input: {
     .filter((cap) => !input.monthEnd || !cap.cap_since || cap.cap_since <= input.monthEnd)
     .map((cap) => ({ name: cap.name, spent: spent.get(cap.id) ?? 0, cap: cap.cap_minor }))
     .filter((cap) => cap.spent > cap.cap);
-  const { total, unknown } = totalBalance(accounts);
-  const known = accounts.length > unknown;
-  const owed = people.reduce((sum, person) => sum + person.owedToMe - person.iOwe, 0);
+  const inHome = inEtb(accounts, rates, conversion);
+  const { total, unknown } = totalBalance(inHome);
+  const known = inHome.length > unknown;
+  const owed = owedInEtb(people, rates, conversion);
   return {
     in: summary.in,
     out: summary.out,
@@ -75,5 +85,6 @@ export function monthReview(input: {
     changes,
     capsOver,
     netWorth: known ? total + owed : null,
+    notes: conversionNotes(conversion, rates),
   };
 }

@@ -1,11 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "../theme/pages/savings.css";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
-import { query, transact } from "../kernel/db";
+import { type Op, query, transact } from "../kernel/db";
 import { formatAmount, parseAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
+import {
+  type AccountRow,
+  ACCOUNTS_SQL,
+  currencyOf,
+  isSavings,
+  payAccount,
+  readSavingsSince,
+  SAVINGS_SINCE_SQL,
+  spending,
+} from "../features/money/accounts";
+import { RATES_SQL, readRates, toEtb } from "../features/money/currency";
 import {
   addGoalOps,
   assignOps,
@@ -15,14 +26,21 @@ import {
   type GoalEdit,
   goalEditOps,
   goalPace,
+  checkMove,
   entryOps,
   type GoalDraft,
   type GoalRow,
   GOALS_SQL,
   goalStatusOps,
+  moveOps,
+  ORPHAN_SAVINGS_SQL,
+  SAVINGS_TRANSFERS_SQL,
+  type SavingsTransfer,
+  savingsSyncOps,
   shareSaved,
   STAGE_NAMES,
   stageOf,
+  takeOutOps,
   UNASSIGNED_SQL,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
@@ -32,6 +50,60 @@ import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+type Rows<T> = T & Record<string, string | number | null>;
+
+/**
+ * A repair, not the main path (time-first §4): the capture box, Put aside and
+ * Move money write a transfer's saving in the transfer's own transaction.
+ * This only catches what slipped through (a dollar transfer saved before its
+ * rate was set, data from an older version):
+ * transfers without their saving get one, and savings whose transfer was
+ * deleted go. Written as a rule, so it is logged like any change.
+ */
+/** What the sync last wrote, shared: two mounted pages must not write it twice. */
+let lastSync = "";
+
+export function useSavingsSync() {
+  const transfers = useLiveQuery<Rows<SavingsTransfer>>(SAVINGS_TRANSFERS_SQL);
+  const orphans = useLiveQuery<{ id: string }>(ORPHAN_SAVINGS_SQL);
+  const goals = useLiveQuery<Rows<GoalRow>>(GOALS_SQL);
+  const since = useLiveQuery<{ value_json: string }>(SAVINGS_SINCE_SQL);
+  const rates = useLiveQuery<{ value_json: string }>(RATES_SQL);
+  const loading =
+    transfers.loading || orphans.loading || goals.loading || since.loading || rates.loading;
+  const ops: Op[] = loading
+    ? []
+    : savingsSyncOps({
+        transfers: transfers.rows,
+        orphans: orphans.rows,
+        goals: goals.rows,
+        since: readSavingsSince(since.rows[0]?.value_json),
+        rates: readRates(rates.rows[0]?.value_json),
+        newId: () => ulid(),
+      });
+  // The same rows twice (before the change comes back) must not write twice.
+  const key = [...transfers.rows.map((row) => row.id), ...orphans.rows.map((row) => row.id)].join();
+  useEffect(() => {
+    if (ops.length === 0 || lastSync === key) return;
+    lastSync = key;
+    void transact("rule:savings", ops, "savings").catch(() => {
+      lastSync = "";
+    });
+  });
+}
+
+/** Spending accounts to take from, and savings accounts to put into. */
+function useMoneyAccounts() {
+  const accounts = useLiveQuery<Rows<AccountRow>>(ACCOUNTS_SQL);
+  const rates = useLiveQuery<{ value_json: string }>(RATES_SQL);
+  return {
+    spend: spending(accounts.rows),
+    savings: accounts.rows.filter(isSavings),
+    pay: payAccount(spending(accounts.rows)),
+    rates: readRates(rates.rows[0]?.value_json),
+  };
+}
 
 /** "1,250 a month to make June · you save about 900" (proposal 1.4). */
 function paceText(goal: GoalRow, today: string): string {
@@ -117,33 +189,88 @@ const monthYear = new Intl.DateTimeFormat("en-GB", {
 });
 
 /** A goal as a night scene with its plant (docs/design.md → Savings tree). */
-function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
+function GoalCard({
+  goal,
+  seed,
+  accounts,
+}: {
+  goal: GoalRow;
+  seed: number;
+  accounts: ReturnType<typeof useMoneyAccounts>;
+}) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [editing, setEditing] = useState(false);
+  const [fromId, setFromId] = useState("");
+  const [savingsId, setSavingsId] = useState("");
   const today = logicalDate(systemClock.now());
   const share = shareSaved(goal);
   const stage = stageOf(share);
+  const savings = accounts.savings.find((row) => row.id === savingsId) ?? accounts.savings[0];
+  // The account the money comes from (or goes back to): in the savings account's currency.
+  const choices = accounts.spend.filter((row) => currencyOf(row) === currencyOf(savings));
+  const spend =
+    choices.find((row) => row.id === fromId) ??
+    choices.find((row) => row.id === accounts.pay) ??
+    choices[0];
   const move = (sign: 1 | -1) => {
     const minor = parseAmount(amount);
     if (minor === null || minor <= 0) {
       setNote("An amount like 500 or 2k.");
       return;
     }
-    const tooMuch = sign < 0 ? checkTakeOut(goal, minor) : null;
+    // With no savings account yet, a saving is only marked (money stays where it is).
+    const backed = savings !== undefined;
+    const problem = backed ? checkMove(spend, savings) : null;
+    if (problem) {
+      setNote(problem);
+      return;
+    }
+    const worth = backed ? toEtb(minor, currencyOf(savings), accounts.rates) : minor;
+    if (worth === null) {
+      setNote(`Set a ${currencyOf(savings)} rate first (Money → Accounts).`);
+      return;
+    }
+    const tooMuch = sign < 0 ? checkTakeOut(goal, worth) : null;
     if (tooMuch) {
       setNote(tooMuch);
       return;
     }
     const now = systemClock.now();
-    transact(
-      "user",
-      entryOps(goal.id, sign * minor, now, logicalDate(now), ulid(), "dashboard"),
-      `savings:${goal.id}`,
-    )
+    const date = logicalDate(now);
+    const ids = { entry: ulid(), halves: [ulid(), ulid()] as [string, string], transfer: ulid() };
+    const moveInput = backed && spend ? { amount: minor, spend, savings, nowMs: now, date } : null;
+    // Take out moves through the savings account only what the goal holds there.
+    const out =
+      moveInput && sign < 0
+        ? takeOutOps({ ...moveInput, goal, ids: { ...ids, plain: ulid() }, entryMinor: worth })
+        : null;
+    const ops = out
+      ? out.ops
+      : moveInput
+        ? moveOps({ ...moveInput, goal, sign, ids, entryMinor: worth })
+        : entryOps(goal.id, sign * minor, now, date, ulid(), "dashboard");
+    transact("user", ops, `savings:${goal.id}`)
       .then(() => {
         setAmount("");
-        setNote(`${sign > 0 ? "Saved" : "Took out"} ${formatAmount(minor)}`);
+        const shown = formatAmount(minor, currencyOf(savings));
+        if (out && moveInput) {
+          const moved = `Moved ${formatAmount(out.moved)} from ${moveInput.savings.name} to ${moveInput.spend.name}`;
+          const plain = `${formatAmount(out.plain)} that was never in ${moveInput.savings.name}`;
+          setNote(
+            out.plain === 0
+              ? `Moved ${shown} from ${moveInput.savings.name} to ${moveInput.spend.name}`
+              : out.moved === 0
+                ? `Took out ${plain}`
+                : `${moved}; took out ${plain}`,
+          );
+          return;
+        }
+        setNote(
+          moveInput
+            ? `Moved ${shown} from ${moveInput.spend.name} to ${moveInput.savings.name}`
+            : `${sign > 0 ? "Saved" : "Took out"} ${shown}`,
+        );
       })
       .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
   };
@@ -199,6 +326,35 @@ function GoalCard({ goal, seed }: { goal: GoalRow; seed: number }) {
               setAmount(event.target.value);
             }}
           />
+          {savings && (
+            <>
+              <select
+                aria-label={`Account the money comes from, ${goal.title}`}
+                title="From (or back to)"
+                value={spend?.id ?? ""}
+                onChange={(event) => setFromId(event.target.value)}
+              >
+                {choices.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.name}
+                  </option>
+                ))}
+              </select>
+              {accounts.savings.length > 1 && (
+                <select
+                  aria-label={`Savings account, ${goal.title}`}
+                  value={savings.id}
+                  onChange={(event) => setSavingsId(event.target.value)}
+                >
+                  {accounts.savings.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          )}
           <Button onClick={() => move(1)}>Put aside</Button>
           <Button className="btn-ghost" onClick={() => move(-1)}>
             Take out
@@ -326,6 +482,9 @@ function GiveTo({ minor, goals }: { minor: number; goals: GoalRow[] }) {
 export function Savings() {
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
   const waiting = useLiveQuery<{ minor: number; n: number }>(UNASSIGNED_SQL);
+  const accounts = useMoneyAccounts();
+  useSavingsSync();
+  const backing = accounts.savings.map((row) => row.name).join(", ");
   const [adding, setAdding] = useState(false);
   const growing = goals.rows.filter((goal) => goal.status !== "done");
   const garden = goals.rows.filter((goal) => goal.status === "done");
@@ -337,8 +496,17 @@ export function Savings() {
         title="Savings"
         sub={
           <>
-            Capture <code>saved 500 laptop</code> or <code>took 2000 from laptop</code>. Plants only
-            grow; taking money out just lowers the number.
+            {backing ? (
+              <>
+                Put aside moves money into {backing}; a move into it from anywhere (
+                <code>moved 2000 from cbo to cbo savings</code>) counts as saving.
+              </>
+            ) : (
+              <>
+                Capture <code>saved 500 laptop</code> or <code>took 2000 from laptop</code>.
+              </>
+            )}{" "}
+            Plants only grow; taking money out just lowers the number.
           </>
         }
         action={
@@ -356,7 +524,7 @@ export function Savings() {
       )}
       <ul className="goals">
         {growing.map((goal, index) => (
-          <GoalCard key={goal.id} goal={goal} seed={index + 3} />
+          <GoalCard key={goal.id} goal={goal} seed={index + 3} accounts={accounts} />
         ))}
       </ul>
       {garden.length > 0 && (

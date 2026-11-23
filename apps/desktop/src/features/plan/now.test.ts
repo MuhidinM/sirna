@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type BlockRow, firstStep, formatMinutes, nowAndNext } from "./now";
+import { type BlockRow, firstStep, focusOffer, formatMinutes, nowAndNext } from "./now";
 
 const at = (hhmm: string) => Date.parse(`2026-11-11T${hhmm}:00+03:00`);
 const block = (
@@ -73,5 +73,15 @@ describe("helpers", () => {
       "Finish login form",
     );
     expect(firstStep(block("Gym", "17:30", "18:15", "routine"))).toBe("Gym");
+  });
+});
+
+describe("Start focus on the Now card (rule 7)", () => {
+  it("is always offered while no session runs: on the block now, or on nothing", () => {
+    const now = block("Gym", "09:00", "10:00", "routine");
+    expect(focusOffer(now, null)).toEqual({ blockId: "Gym" });
+    expect(focusOffer(undefined, null)).toEqual({ blockId: null });
+    expect(focusOffer(undefined, undefined)).toEqual({ blockId: null });
+    expect(focusOffer(now, "focus")).toBeNull();
   });
 });

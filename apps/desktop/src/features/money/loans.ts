@@ -6,6 +6,7 @@
 import { type Op } from "../../kernel/db";
 import { showDate } from "../../kernel/dates";
 import { formatAmount, type Santim } from "../../kernel/money";
+import { type Conversion, convert, type Rates, rowCurrencySql } from "./currency";
 
 export type LoanKind = "lent" | "borrowed" | "paid_me" | "i_paid";
 
@@ -18,10 +19,14 @@ export interface LoanEvent {
   account: string;
   note: string | null;
   follow_up_date: string | null;
+  /** The account's currency (ETB when not given): a loan is kept per currency. */
+  currency?: string | null;
 }
 
-export const LOANS_SQL = `SELECT id, person, kind, amount_minor, local_date, account, note, follow_up_date
-  FROM money_loans WHERE deleted_at IS NULL ORDER BY local_date, created_at`;
+export const LOANS_SQL = `SELECT l.id, l.person, l.kind, l.amount_minor, l.local_date, l.account,
+    l.note, l.follow_up_date, ${rowCurrencySql("l")} AS currency
+  FROM money_loans l LEFT JOIN money_accounts acc ON acc.id = l.account
+  WHERE l.deleted_at IS NULL ORDER BY l.local_date, l.created_at`;
 
 export interface PersonBalance {
   /** As first typed. */
@@ -35,6 +40,8 @@ export interface PersonBalance {
   /** The latest follow-up date set, if any. */
   followUp: string | null;
   events: LoanEvent[];
+  /** Amounts are in this currency: the same person in two currencies is two lines. */
+  currency?: string;
 }
 
 export const personKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
@@ -43,6 +50,7 @@ export const personKey = (name: string) => name.trim().toLowerCase().replace(/\s
  * Open amounts per person. Repayments clear the oldest first, so "since" is
  * the date of the oldest amount still open. Paying back more than was lent
  * turns the rest the other way (they now owe you less, or you owe them).
+ * Dollars and birr never settle each other: each currency is its own line.
  */
 export function balances(events: LoanEvent[]): PersonBalance[] {
   const people = new Map<
@@ -50,7 +58,8 @@ export function balances(events: LoanEvent[]): PersonBalance[] {
     PersonBalance & { lots: { date: string; left: number; mine: boolean }[] }
   >();
   for (const event of [...events].sort((a, b) => a.local_date.localeCompare(b.local_date))) {
-    const key = personKey(event.person);
+    const currency = event.currency ?? "ETB";
+    const key = `${personKey(event.person)}|${currency}`;
     let person = people.get(key);
     if (!person) {
       person = {
@@ -60,6 +69,7 @@ export function balances(events: LoanEvent[]): PersonBalance[] {
         since: null,
         followUp: null,
         events: [],
+        currency,
         lots: [],
       };
       people.set(key, person);
@@ -114,8 +124,11 @@ export function loanOps(input: {
   txnId: string;
   note?: string | null;
   followUp?: string | null;
+  /** The account's currency. */
+  currency?: string;
 }): Op[] {
   const out = input.kind === "lent" || input.kind === "i_paid";
+  const currency = input.currency ? { currency: input.currency } : {};
   return [
     {
       op: "insert",
@@ -129,6 +142,7 @@ export function loanOps(input: {
         account: input.account,
         note: input.note ?? null,
         follow_up_date: input.followUp ?? null,
+        ...currency,
       },
     },
     {
@@ -144,6 +158,7 @@ export function loanOps(input: {
         category_id: null,
         origin: "loan",
         transfer_id: `loan:${input.id}`,
+        ...currency,
       },
     },
   ];
@@ -179,7 +194,8 @@ export function personFollowUpOps(person: PersonBalance, date: string | null): O
 export const loanIdOf = (transferId: string | null | undefined) =>
   transferId?.startsWith("loan:") ? transferId.slice(5) : null;
 
-export const LOAN_SQL = `SELECT id, person, kind, amount_minor, local_date, account, note, follow_up_date
+export const LOAN_SQL = `SELECT id, person, kind, amount_minor, local_date, account, note,
+    follow_up_date, currency
   FROM money_loans WHERE id = ?`;
 
 /** Puts a deleted loan event back as it was. */
@@ -197,6 +213,7 @@ export function loanRestoreOps(event: LoanEvent): Op[] {
         account: event.account,
         note: event.note,
         follow_up_date: event.follow_up_date,
+        ...(event.currency ? { currency: event.currency } : {}),
       },
     },
   ];
@@ -209,8 +226,8 @@ export function followUpLines(people: PersonBalance[], today: string): string[] 
     .filter((person) => person.owedToMe > 0 || person.iOwe > 0)
     .map((person) =>
       person.owedToMe > 0
-        ? `${person.person} owes you ${formatAmount(person.owedToMe)} since ${person.since ? showDate(person.since, today) : "?"}`
-        : `You owe ${person.person} ${formatAmount(person.iOwe)} since ${person.since ? showDate(person.since, today) : "?"}`,
+        ? `${person.person} owes you ${formatAmount(person.owedToMe, person.currency ?? "ETB")} since ${person.since ? showDate(person.since, today) : "?"}`
+        : `You owe ${person.person} ${formatAmount(person.iOwe, person.currency ?? "ETB")} since ${person.since ? showDate(person.since, today) : "?"}`,
     );
 }
 
@@ -219,12 +236,44 @@ export function loanEchoText(
   person: string,
   amount: Santim,
   open: Santim | null,
+  currency = "ETB",
 ): string {
-  const base = `${VERB[kind](person)} · ${formatAmount(amount)}`;
+  const base = `${VERB[kind](person)} · ${formatAmount(amount, currency)}`;
   if (open === null) return base;
   if (kind === "paid_me")
-    return open > 0 ? `${base} · ${formatAmount(open)} still open` : `${base} · settled`;
+    return open > 0 ? `${base} · ${formatAmount(open, currency)} still open` : `${base} · settled`;
   if (kind === "i_paid")
-    return open > 0 ? `${base} · you still owe ${formatAmount(open)}` : `${base} · settled`;
+    return open > 0
+      ? `${base} · you still owe ${formatAmount(open, currency)}`
+      : `${base} · settled`;
   return base;
+}
+
+/** Owed to you less what you owe, in ETB: other currencies at their rate, or left out. */
+export function owedInEtb(people: PersonBalance[], rates: Rates, conversion: Conversion): Santim {
+  return people.reduce(
+    (sum, person) =>
+      sum + (convert(conversion, rates, person.owedToMe - person.iOwe, person.currency) ?? 0),
+    0,
+  );
+}
+
+/**
+ * People with an open loan for the capture parser, each name once: someone
+ * owing in birr and in dollars is one person (owing either way in any
+ * currency is enough to read "abel paid back 400").
+ */
+export function loanPeople(
+  people: Pick<PersonBalance, "person" | "owedToMe" | "iOwe">[],
+): { name: string; owedToMe: number; iOwe: number }[] {
+  const byKey = new Map<string, { name: string; owedToMe: number; iOwe: number }>();
+  for (const person of people) {
+    const key = personKey(person.person);
+    const seen = byKey.get(key);
+    if (seen) {
+      seen.owedToMe = Math.max(seen.owedToMe, person.owedToMe);
+      seen.iOwe = Math.max(seen.iOwe, person.iOwe);
+    } else byKey.set(key, { name: person.person, owedToMe: person.owedToMe, iOwe: person.iOwe });
+  }
+  return [...byKey.values()];
 }

@@ -23,7 +23,13 @@ export interface TaskListRow {
   notes: string | null;
   due_date: string | null;
   planned_date: string | null;
+  /** "morning" / "afternoon" / "evening" (time first §1 rule 2); kept by Split. */
+  planned_window: string | null;
   deadline_stale: number;
+  /** Its time, if it has one (time first §1 rule 1); kept by Split on the first step. */
+  due_at: number | null;
+  /** The task it was split from, when it is a step; Split keeps its place. */
+  parent_id: string | null;
   step_no: number | null;
   step_total: number | null;
   repeat_json: string | null;
@@ -49,7 +55,8 @@ export function stepLabel(
 
 /** ?1 status list as JSON; done and dropped show the last 60 days. */
 export const TASKS_SQL = `
-SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.deadline_stale,
+SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.planned_window,
+       t.deadline_stale, t.due_at, t.parent_id,
        t.step_no, t.repeat_json, (SELECT count(*) FROM task_items AS step
                    WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total,
        t.estimate_min, t.area_id,
@@ -63,6 +70,11 @@ WHERE t.deleted_at IS NULL
   AND (t.status NOT IN ('done', 'dropped', 'archived') OR t.updated_at >= ?2)
 ORDER BY t.due_date IS NULL, t.due_date, t.follow_up_date, t.created_at DESC
 LIMIT 500`;
+
+/** A step's later siblings (?1 parent, ?2 its number), for splitting a step. */
+export const LATER_STEPS_SQL = `
+SELECT id, step_no FROM task_items
+WHERE parent_id = ?1 AND step_no > ?2 AND deleted_at IS NULL ORDER BY step_no`;
 
 export const COUNTS_SQL = `
 SELECT status, count(*) AS n FROM task_items

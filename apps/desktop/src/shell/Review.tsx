@@ -3,6 +3,7 @@ import "../theme/pages/plan-review.css";
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
+import { logicalDate } from "../kernel/dates";
 import { commitCapture, query, transact } from "../kernel/db";
 import { formatAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
@@ -25,6 +26,14 @@ import {
   sortInboxOps,
   SPENT_LIST_SQL,
 } from "../features/review/review";
+import {
+  type CommandBlock,
+  type CommandResult,
+  COMMAND_TASKS_SQL,
+  type CommandTask,
+  planCommand,
+  readLines,
+} from "../features/review/commands";
 import { logicalDayStart, todayParams, todayTopSql } from "../features/tasks/today";
 import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
@@ -555,10 +564,95 @@ function SpendingStep({
   );
 }
 
+/**
+ * Plain commands in the free text (time-first §1 rule 9), each against the
+ * plan as it is after the one before. Lines that aren't commands, or name
+ * nothing on the plan, come back to go to the AI as they were.
+ */
+async function runCommands(
+  text: string,
+  today: string,
+  tomorrow: string,
+): Promise<{ done: CommandResult[]; rest: string[] }> {
+  const { commands, rest } = readLines(text);
+  const done: CommandResult[] = [];
+  for (const { line, command } of commands) {
+    const [todayBlocks, tomorrowBlocks, tasks] = await Promise.all([
+      query<CommandBlock & Row>(TODAY_BLOCKS_SQL, [today]),
+      query<CommandBlock & Row>(TODAY_BLOCKS_SQL, [tomorrow]),
+      query<CommandTask & Row>(COMMAND_TASKS_SQL),
+    ]);
+    const result = planCommand(command, {
+      today,
+      tomorrow,
+      blocks: { today: todayBlocks, tomorrow: tomorrowBlocks },
+      tasks,
+      newId: () => ulid(),
+    });
+    if (!result) {
+      rest.push(line);
+      continue;
+    }
+    if (result.ops.length > 0) await transact("user", result.ops, "review:command");
+    done.push(result);
+  }
+  return { done, rest };
+}
+
 function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: string) => void }) {
   const start = logicalDayStart(tomorrow);
   const [ready, setReady] = useState(false);
   const [mind, setMind] = useState("");
+  const [results, setResults] = useState<{ id: string; result: CommandResult; undone: boolean }[]>(
+    [],
+  );
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  // The text left after the last run: pressing again sends it on unchanged,
+  // so a line that reads like a command but names nothing never traps you.
+  const [leftover, setLeftover] = useState<string | null>(null);
+
+  // "Looks good": commands first; whatever is left goes on as your note.
+  const submit = () => {
+    if (busy) return;
+    const text = mind.trim();
+    if (!text || text === leftover || readLines(text).commands.length === 0) {
+      done(text);
+      return;
+    }
+    setBusy(true);
+    setFailed(null);
+    const today = logicalDate(start - 60 * 60 * 1000);
+    void runCommands(text, today, tomorrow)
+      .then(({ done: ran, rest }) => {
+        // Nothing on the plan matched: the text goes on as it was.
+        if (ran.length === 0) {
+          done(text);
+          return;
+        }
+        setLeftover(rest.join("\n"));
+        setResults((old) => [
+          ...old,
+          ...ran.map((result) => ({ id: ulid(), result, undone: false })),
+        ]);
+        setMind(rest.join("\n"));
+      })
+      .catch((error: unknown) =>
+        setFailed(
+          `Couldn't change the plan: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      )
+      .finally(() => setBusy(false));
+  };
+  const undo = (id: string) => {
+    const entry = results.find((r) => r.id === id);
+    if (!entry || entry.undone) return;
+    void transact("user", entry.result.undo, "review:command:undo")
+      .then(() => setResults((old) => old.map((r) => (r.id === id ? { ...r, undone: true } : r))))
+      .catch((error: unknown) =>
+        setFailed(`Couldn't undo: ${error instanceof Error ? error.message : String(error)}`),
+      );
+  };
 
   // Tomorrow's plan from the routine, the same way Today makes it.
   useEffect(() => {
@@ -616,10 +710,36 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
             <span>Anything on your mind? (optional)</span>
             <textarea value={mind} rows={3} onChange={(event) => setMind(event.target.value)} />
           </label>
+          <p className="meta rv-command-hint">
+            Plain commands change the plan first: “move gym to 6pm”, “move tomorrow&apos;s check
+            email to 9am”, “skip quran tomorrow”.
+          </p>
+          {results.length > 0 && (
+            <ul className="rv-commands" aria-label="What changed" role="status">
+              {results.map(({ id, result, undone }) => (
+                <li key={id}>
+                  <span className={undone ? "done" : undefined}>{result.said}</span>
+                  {result.undo.length > 0 &&
+                    (undone ? (
+                      <span className="meta"> Undone.</span>
+                    ) : (
+                      <button type="button" className="link-btn" onClick={() => undo(id)}>
+                        Undo
+                      </button>
+                    ))}
+                </li>
+              ))}
+            </ul>
+          )}
+          {failed && (
+            <p role="alert" className="error">
+              {failed}
+            </p>
+          )}
         </section>
       </div>
       <div className="rv-foot">
-        <Button primary onClick={() => done(mind.trim())}>
+        <Button primary disabled={busy} onClick={submit}>
           Looks good
         </Button>
       </div>
