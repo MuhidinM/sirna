@@ -472,7 +472,17 @@ button.month-day:hover {
    canvas ink so it stays readable (4.5:1) in both themes. */
 .event.faded {
   --tone-ink: var(--canvas-ink);
+  /* A pale fill (cream in Forest) nearly vanishes on the canvas: a faint ink
+     hairline keeps the card's edge (F116). */
+  --faded-edge: inset 0 0 0 1px color-mix(in srgb, var(--canvas-ink) 16%, transparent);
   background: color-mix(in srgb, var(--tone) 35%, var(--canvas));
+  box-shadow: var(--faded-edge);
+}
+
+.event.faded:hover {
+  box-shadow:
+    var(--faded-edge),
+    0 8px 22px rgb(0 0 0 / 10%);
 }
 
 .event.faded .event-art {
