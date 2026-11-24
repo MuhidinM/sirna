@@ -777,7 +777,10 @@ mod tests {
             r#"{"every":"month","day":24,"skip":["2026-11-24"]}"#,
         );
         assert_eq!(read_skips(&iddir.rule_json), ["2026-11-24"]);
-        assert_eq!(due_tomorrow(&[iddir.clone()], &[], "2026-11-24"), []);
+        assert_eq!(
+            due_tomorrow(std::slice::from_ref(&iddir), &[], "2026-11-24"),
+            []
+        );
         assert_eq!(
             due_tomorrow(&[iddir], &[], "2026-12-24"),
             [("Iddir".to_string(), 20_000)]
