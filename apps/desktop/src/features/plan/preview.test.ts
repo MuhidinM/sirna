@@ -196,4 +196,51 @@ describe("a project's first week (#174)", () => {
     // Every day left gets some of it.
     expect(perDay.every((min) => min > 0)).toBe(true);
   });
+
+  const projectOf = (id: string, weeklyMin: number): AreaInput => ({
+    id: projectKey(id),
+    name: id,
+    weeklyTargetMin: weeklyMin,
+    capped: true,
+    protected: false,
+    priorityRank: 0.5,
+    active: true,
+    kind: "growth",
+    projectId: id,
+    areaId: "coding",
+  });
+  const minutesBy = (preview: ReturnType<typeof previewWeek>, key: string) =>
+    preview.days.map((d) =>
+      d.blocks
+        .filter((b) => (b.projectId ?? b.areaId) === key)
+        .reduce((sum, b) => sum + b.durationMin, 0),
+    );
+
+  it("takes only its day's share of one long slot, not the whole slot", () => {
+    // One 4-hour slot a day (180 minutes planned): 600 / 7 is 90 a day on
+    // the quarter hour, and the last two days split what is left.
+    const days = [0, 1, 2, 3, 4, 5, 6].map((i) => ({
+      ...day(i, []),
+      template: [
+        { startMin: 18 * 60, durationMin: 240, kind: "area" as const, areaId: null, title: "F" },
+      ],
+      areas: [coding, projectOf("p1", 600)],
+    }));
+    const preview = previewWeek(days);
+    expect(minutesBy(preview, "p1")).toEqual([90, 90, 90, 90, 90, 75, 75]);
+    // The area keeps the rest of the slot every day.
+    expect(minutesBy(preview, "coding").every((min) => min > 0)).toBe(true);
+  });
+
+  it("lets two projects take turns when free time is short", () => {
+    const days = [2, 3, 4, 5, 6].map((i) => ({
+      ...day(i, []),
+      areas: [coding, projectOf("p1", 600), projectOf("p2", 300)],
+    }));
+    const preview = previewWeek(days);
+    const p1 = minutesBy(preview, "p1").reduce((sum, min) => sum + min, 0);
+    const p2 = minutesBy(preview, "p2").reduce((sum, min) => sum + min, 0);
+    expect(p1).toBeGreaterThan(0);
+    expect(p2).toBeGreaterThan(0);
+  });
 });

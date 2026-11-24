@@ -491,13 +491,19 @@ export function generateDay(input: PlanInput): DayPlan {
       // A running project's weekly hours are promised time (#174): it gets
       // its share of what is left this week every day, spread over the days
       // left, before areas compete for the rest.
+      const share = (area: AreaInput) => (remaining(area) + (planned[area.id] ?? 0)) / daysLeft;
+      /** How much of today's share it has (0 = none yet). */
+      const paceOf = (area: AreaInput) => (planned[area.id] ?? 0) / share(area);
       const paced = eligible
-        .filter((area) => area.projectId && remaining(area) > 0)
-        .filter((area) => {
-          const today = planned[area.id] ?? 0;
-          return today < (remaining(area) + today) / daysLeft;
-        })
-        .sort((a, b) => a.priorityRank - b.priorityRank)[0];
+        .filter((area) => area.projectId && remaining(area) > 0 && paceOf(area) < 1)
+        // Furthest behind today first, then furthest behind on the week, so
+        // two projects take turns instead of one taking every slot.
+        .sort(
+          (a, b) =>
+            paceOf(a) - paceOf(b) ||
+            remaining(b) / b.weeklyTargetMin - remaining(a) / a.weeklyTargetMin ||
+            a.priorityRank - b.priorityRank,
+        )[0];
       const pick =
         tied ??
         eligible.find((area) => area.id === urgentPick) ??
@@ -510,7 +516,20 @@ export function generateDay(input: PlanInput): DayPlan {
       // A deadline beats the weekly target: an urgent area gets its block even
       // when its target is met (a capped area still stops at its cap).
       const isUrgent = pick !== undefined && pick.id === urgentPick;
-      const minutes = pick?.capped ? Math.min(duration, remaining(pick)) : duration;
+      // A paced project takes only today's share (on the quarter hour) and
+      // hands the rest of the slot back, so it is spread over the week, not
+      // front-loaded into whole slots.
+      const pacedOnly = pick !== undefined && pick === paced && !tied && !isUrgent;
+      const todayShare = pacedOnly
+        ? Math.max(
+            MIN_BLOCK_MIN,
+            Math.ceil((share(pick) - (planned[pick.id] ?? 0)) / QUARTER) * QUARTER,
+          )
+        : Infinity;
+      const minutes = Math.min(
+        pick?.capped ? Math.min(duration, remaining(pick)) : duration,
+        todayShare,
+      );
       if (
         !pick ||
         (!tied && !isUrgent && remaining(pick) <= 0) ||
@@ -533,7 +552,14 @@ export function generateDay(input: PlanInput): DayPlan {
         title: task ? `${pick.name}: ${task.title}` : pick.name,
         ...(pick.projectId ? { projectId: pick.projectId } : {}),
       });
-      if (slot.durationMin - minutes >= MIN_BLOCK_MIN)
+      if (pacedOnly && minutes < duration && slot.durationMin - minutes >= MIN_BLOCK_MIN)
+        // Back in the queue: the next pick fills it.
+        areaSlots.push({
+          ...slot,
+          startMin: slot.startMin + minutes,
+          durationMin: slot.durationMin - minutes,
+        });
+      else if (slot.durationMin - minutes >= MIN_BLOCK_MIN)
         leftover.push({
           startMin: slot.startMin + minutes,
           durationMin: slot.durationMin - minutes,
