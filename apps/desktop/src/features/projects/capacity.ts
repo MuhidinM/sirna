@@ -109,15 +109,22 @@ export interface PlannedProject {
   weekly_min: number | null;
   start_date: string | null;
   forecast_finish: string | null;
+  /** The end when there is no forecast yet (a project saved without an estimate). */
+  deadline?: string | null;
 }
 
-/** Whether a project takes time in the week starting `monday`. */
+/**
+ * Whether a project takes time in the week starting `monday`. It ends at its
+ * forecast finish, or at its deadline when it has no forecast; with neither it
+ * runs on.
+ */
 export function runsIn(project: PlannedProject, monday: string): boolean {
   if (project.status !== "active" && project.status !== "next_up") return false;
   if (project.status === "next_up" && !project.start_date) return false;
   const sunday = shiftDate(monday, 6);
   if (project.start_date && project.start_date > sunday) return false;
-  if (project.forecast_finish && project.forecast_finish < monday) return false;
+  const end = project.forecast_finish ?? project.deadline ?? null;
+  if (end && end < monday) return false;
   return true;
 }
 
@@ -205,6 +212,30 @@ export function findSlot(
   };
 }
 
+export interface NoRoom {
+  /** "limit": the 2-project limit is full every week; "load": 85% is. */
+  kind: "limit" | "load";
+  /** Projects running in the first week the finder looks at. */
+  running: number;
+}
+
+/** Why findSlot found nothing, so the message names the real cause. */
+export function noRoom(today: string, week: WeekModel, projects: PlannedProject[]): NoRoom {
+  let monday = firstMonday(today);
+  const running = weekLoad(week, projects, monday).activeProjects;
+  for (let i = 0; i < HORIZON_WEEKS; i++, monday = shiftDate(monday, 7))
+    if (weekLoad(week, projects, monday).activeProjects < MAX_ACTIVE)
+      return { kind: "load", running };
+  return { kind: "limit", running };
+}
+
+/** The sentence for a project or idea the finder can't place. */
+export function noRoomText(reason: NoRoom): string {
+  return reason.kind === "limit"
+    ? `${reason.running} projects run every week for the next year, and the limit is ${MAX_ACTIVE} at once. Finish, pause or give one a deadline to make room.`
+    : "No room in the next year at 85% load. Pause a project or lower a target.";
+}
+
 export type Verdict = "good" | "tight" | "too_much";
 
 export interface DateCheck {
@@ -282,7 +313,9 @@ export function checkWithDate(
       : `Your load would go ${percent(now.ratio)} → ${percent(after)} in the week of ${showDate(worst.monday, today)}.`,
   ];
   if (crowded)
-    reasons.push(`${MAX_ACTIVE} active projects already; this would be number ${mostActive + 1}.`);
+    reasons.push(
+      `${mostActive} active projects already (limit ${MAX_ACTIVE}); this would be number ${mostActive + 1}.`,
+    );
   return {
     verdict: verdictOf(after, crowded),
     weeksLeft,
@@ -337,8 +370,8 @@ export const WINDOW_SQL = `SELECT key, value_json FROM core_settings
   WHERE key IN ('day.wake', 'day.review', 'day.hard_stop')`;
 export const AREA_TARGETS_SQL = `SELECT id, weekly_target_min, active FROM area_items
   WHERE deleted_at IS NULL`;
-export const PLANNED_PROJECTS_SQL = `SELECT id, status, weekly_min, start_date, forecast_finish
-  FROM project_items WHERE deleted_at IS NULL`;
+export const PLANNED_PROJECTS_SQL = `SELECT id, status, weekly_min, start_date, forecast_finish,
+  deadline FROM project_items WHERE deleted_at IS NULL`;
 
 /** Defaults match the setup's (routine.ts DEFAULT_ANSWERS). */
 export function windowOf(rows: { key: string; value_json: string | null }[]): Window {

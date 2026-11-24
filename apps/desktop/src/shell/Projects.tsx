@@ -31,13 +31,14 @@ import {
   hoursLabel,
   LOAD_LIMIT,
   loadWeek,
+  noRoomText,
   type PlannedProject,
   type Query,
   type WeekModel,
   weekLoad,
 } from "../features/projects/capacity";
 import { savePlan, type Timing, timingOf } from "../features/projects/timing";
-import { type IdeaAction, ideaActionValues } from "../features/projects/idea";
+import { type IdeaAction, ideaAction } from "../features/projects/idea";
 import { AT_RISK_SQL, type Risk, type RiskRow, risks } from "../features/projects/risk";
 import { ask, useAsk } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
@@ -128,7 +129,9 @@ function TimingCard({ timing, reasons }: { timing: Timing; reasons?: string[] | 
   if (!timing.slot)
     return (
       <div className="timing timing-too_much" role="status">
-        No room in the next year at 85% load. Pause a project or lower a target.
+        {timing.noRoom
+          ? noRoomText(timing.noRoom)
+          : "No room in the next year at 85% load. Pause a project or lower a target."}
       </div>
     );
   return (
@@ -460,16 +463,28 @@ function IdeaCard({
       : null,
   );
   if (!plan) return null;
+  // Worked out up front, so a button that can't apply is off and says why.
+  const keep = ideaAction(project, { kind: "keep" }, plan);
+  const suggested = ideaAction(project, { kind: "suggested" }, plan);
+  const place = ideaAction(project, { kind: "place" }, plan);
+  // An undated idea's timing card already says why it has no slot.
+  const why = project.deadline
+    ? [
+        ...new Set(
+          [keep, suggested].flatMap((outcome) => ("reason" in outcome ? [outcome.reason] : [])),
+        ),
+      ]
+    : [];
   const act = (action: IdeaAction) => {
-    const values = ideaActionValues(project, action, plan);
-    if (!values) {
-      setError("That doesn't fit right now.");
+    const outcome = ideaAction(project, action, plan);
+    if ("reason" in outcome) {
+      setError(outcome.reason);
       return;
     }
     setError(null);
     transact(
       "user",
-      [{ op: "update", table: "project_items", id: project.id, values }],
+      [{ op: "update", table: "project_items", id: project.id, values: outcome.values }],
       `project:${project.id}`,
     ).catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
   };
@@ -521,20 +536,31 @@ function IdeaCard({
           </Button>
         )}
         {project.estimate_min && !project.deadline && (
-          <Button onClick={() => act({ kind: "place" })}>Place it in my weeks</Button>
+          <Button disabled={"reason" in place} onClick={() => act({ kind: "place" })}>
+            Place it in my weeks
+          </Button>
         )}
         {project.estimate_min && project.deadline && (
           <>
-            <Button onClick={() => act({ kind: "keep" })}>
+            <Button disabled={"reason" in keep} onClick={() => act({ kind: "keep" })}>
               Keep {shortDate(project.deadline)}
             </Button>
-            <Button onClick={() => act({ kind: "suggested" })}>Use suggested dates</Button>
+            <Button disabled={"reason" in suggested} onClick={() => act({ kind: "suggested" })}>
+              Use suggested dates
+            </Button>
           </>
         )}
         <Button className="btn-ghost btn-danger" onClick={() => act({ kind: "drop" })}>
           Drop
         </Button>
       </div>
+      {project.estimate_min && why.length > 0 && (
+        <ul className="meta idea-why">
+          {why.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
