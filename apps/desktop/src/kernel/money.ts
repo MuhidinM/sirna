@@ -64,6 +64,15 @@ export function formatAmount(santim: Santim, currency = "ETB"): string {
   return symbol ? `${sign}${symbol}${number}` : `${sign}${number} ${currency}`;
 }
 
+/**
+ * An estimate in whole units (F108): an average or a total converted at a
+ * rate is never exact to the santim, so "5,962.50 ETB" reads as "5,963 ETB".
+ */
+export function formatWhole(santim: Santim, currency = "ETB"): string {
+  const whole = Math.round(santim / SANTIM_PER_BIRR) * SANTIM_PER_BIRR;
+  return formatAmount(whole === 0 ? 0 : whole, currency);
+}
+
 /** The amount without its unit, for placeholders and short lines ("12,000", "1,200.50"). */
 export function formatNumber(santim: Santim): string {
   return formatAmount(santim, "").trimEnd();

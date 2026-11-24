@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
 import { type Op, query, transact } from "../kernel/db";
-import { CURRENCIES, formatAmount, formatNumber, parseAmount } from "../kernel/money";
+import { CURRENCIES, formatAmount, formatNumber, formatWhole, parseAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import {
   byDay,
@@ -218,7 +218,8 @@ function Amount({
   currency?: string;
   approx?: boolean | undefined;
 }) {
-  const text = formatAmount(minor, currency);
+  // A total with converted money is an estimate: whole birr (F108).
+  const text = approx ? formatWhole(minor, currency) : formatAmount(minor, currency);
   const cut = text.lastIndexOf(" ");
   const mark = approx ? "≈ " : "";
   if (cut < 0) return <>{`${mark}${text}`}</>;
@@ -739,7 +740,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
                     <span className="money-spend-name">{line.name}</span>
                     <span className="meta money-num">
                       {formatAmount(line.spent)}
-                      {line.usual !== null ? ` · usually ${formatAmount(line.usual)}` : ""}
+                      {line.usual !== null ? ` · usually ${formatWhole(line.usual)}` : ""}
                     </span>
                   </span>
                   <span className="money-track">
@@ -747,7 +748,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
                       <span
                         className="money-usual"
                         style={{ width: `${(line.usual / biggest) * 100}%` }}
-                        aria-label={`${line.name} usually ${formatAmount(line.usual)}`}
+                        aria-label={`${line.name} usually ${formatWhole(line.usual)}`}
                       />
                     )}
                     <span
