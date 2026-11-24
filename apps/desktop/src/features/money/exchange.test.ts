@@ -107,12 +107,25 @@ describe("loanPeople", () => {
     expect(
       loanPeople([
         { person: "Abel", owedToMe: 150_000, iOwe: 0 },
-        { person: "abel", owedToMe: 0, iOwe: 5_000 },
+        { person: "abel", owedToMe: 0, iOwe: 5_000, currency: "USD" },
         { person: "Sara", owedToMe: 0, iOwe: 2_000 },
       ]),
     ).toEqual([
-      { name: "Abel", owedToMe: 150_000, iOwe: 5_000 },
-      { name: "Sara", owedToMe: 0, iOwe: 2_000 },
+      {
+        name: "Abel",
+        owedToMe: 150_000,
+        iOwe: 5_000,
+        open: [
+          { currency: "ETB", owedToMe: 150_000, iOwe: 0 },
+          { currency: "USD", owedToMe: 0, iOwe: 5_000 },
+        ],
+      },
+      {
+        name: "Sara",
+        owedToMe: 0,
+        iOwe: 2_000,
+        open: [{ currency: "ETB", owedToMe: 0, iOwe: 2_000 }],
+      },
     ]);
   });
 });

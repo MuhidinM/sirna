@@ -103,6 +103,7 @@ import {
 import {
   balances,
   checkLoan,
+  checkRepayment,
   LOAN_SQL,
   loanIdOf,
   loanRestoreOps,
@@ -1991,7 +1992,7 @@ function PersonRow({
     (currency === "ETB" ? spendAccount(accounts) : (choices[0]?.id ?? spendAccount(accounts)));
   const settle = () => {
     const minor = amount.trim() ? (parseAmount(amount) ?? 0) : open;
-    const problem = checkLoan(person.person, minor);
+    const problem = checkLoan(person.person, minor) ?? checkRepayment(person, minor);
     if (problem) {
       setNote(problem);
       return;
@@ -2039,7 +2040,7 @@ function PersonRow({
           className="money-input"
           inputMode="decimal"
           aria-label={`Amount paid back, ${person.person}`}
-          placeholder={`all ${birr(open)}`}
+          placeholder={`all ${formatAmount(open, currency)}`}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
