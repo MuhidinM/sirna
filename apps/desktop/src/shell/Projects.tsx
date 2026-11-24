@@ -50,6 +50,7 @@ import { ESTIMATE, type EstimateReply, TIMING } from "../features/ai/touchpoints
 import { weekStart } from "../features/plan/dayplan";
 import { statusOps } from "../features/tasks/list";
 import { IconClock, IconPlus, IconProjects } from "./icons";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { EventCard, GhostCard, PanelHead, toneOf } from "./kit";
 import { Segmented } from "./Nav";
 import { type AreaColor, Button, Chip } from "./ui";
@@ -166,9 +167,14 @@ function ProjectForm({
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
-  // A new project's form opens under the board: bring it into view.
+  const onEscape = useEscapeToCancel(onCancel);
+  // A new project's form opens under the board: bring it into view, and put
+  // the cursor in its first field.
   useEffect(() => {
     formRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    formRef.current?.querySelector<HTMLElement>("input, textarea, select")?.focus({
+      preventScroll: true,
+    });
   }, []);
   const set = (change: Partial<ProjectDraft>) => {
     setError(null);
@@ -211,10 +217,12 @@ function ProjectForm({
       .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
   };
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       ref={formRef}
       className="project-form proj-form"
       aria-labelledby={titleId}
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkDraft(draft);
@@ -652,7 +660,14 @@ function ProjectView({
             icon={<IconProjects size={18} />}
             title={project.title}
             sub={area ?? "No area"}
-            action={<Button onClick={() => setEditing(true)}>Edit</Button>}
+            action={
+              <Button
+                {...returnsFocus(`project-edit:${project.id}`)}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </Button>
+            }
           />
           <dl className="proj-facts">
             <div>

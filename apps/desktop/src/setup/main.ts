@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import "@fontsource-variable/bricolage-grotesque";
 import { systemClock } from "../kernel/clock";
+import { applyTheme, cachedTheme } from "../theme/theme";
 import "../theme/tokens.css";
 import "./setup.css";
 import {
@@ -25,6 +26,9 @@ import {
 // calls it (src/dev/tauriPreview.ts). Removed from production builds.
 if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window))
   await import("../dev/tauriPreview").then((preview) => preview.install());
+
+// The sheet follows the Night/Forest choice, like every other window.
+applyTheme(cachedTheme());
 
 const form = document.querySelector<HTMLFormElement>("#setup");
 const title = document.querySelector<HTMLElement>("#setup-title");

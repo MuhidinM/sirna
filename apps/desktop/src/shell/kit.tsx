@@ -3,9 +3,18 @@
  * month grid, the yellow Now card, the two-tone bar chart, event cards and
  * the day board. Presentational only; pages pass the data in.
  */
-import { type CSSProperties, type HTMLAttributes, type ReactNode, useState } from "react";
+import {
+  type CSSProperties,
+  type HTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { IconArrowLeft, IconArrowRight, IconPlus } from "./icons";
+import { nextDay } from "./keys";
 
 // --- Panel head ---------------------------------------------------------------------------
 
@@ -89,9 +98,33 @@ export function MonthGrid({
 }) {
   const cells = monthCells(month);
   const [y = 1970, m = 1] = month.split("-").map(Number);
+  // One Tab stop for the whole month (a roving tabindex); arrow keys move between days.
+  const [active, setActive] = useState<string | null>(null);
+  const refocus = useRef(false);
+  const dayRefs = useRef(new Map<string, HTMLButtonElement>());
+  const inMonth = (date: string | null | undefined) =>
+    !!date && date.slice(0, 7) === month.slice(0, 7);
+  const stop = [active, selected, today].find(inMonth) ?? cells.find((date) => date !== null);
+  useEffect(() => {
+    if (!refocus.current || !stop) return;
+    refocus.current = false;
+    dayRefs.current.get(stop)?.focus();
+  });
+  const moveFocus = (from: string, event: KeyboardEvent<HTMLButtonElement>) => {
+    const to = nextDay(from, event.key);
+    if (!to) return;
+    event.preventDefault();
+    setActive(to);
+    refocus.current = true;
+    if (!inMonth(to)) onMonth(`${to.slice(0, 8)}01`);
+  };
   return (
     <div className="month">
-      <div className="month-grid" role="grid" aria-label={MONTH_NAME.format(Date.UTC(y, m - 1, 1))}>
+      <div
+        className="month-grid"
+        role={onPick ? "group" : "grid"}
+        aria-label={MONTH_NAME.format(Date.UTC(y, m - 1, 1))}
+      >
         {["M", "T", "W", "T", "F", "S", "S"].map((day, i) => (
           <span key={i} className="month-dow" aria-hidden="true">
             {day}
@@ -126,6 +159,13 @@ export function MonthGrid({
               className={classes}
               aria-label={label}
               aria-pressed={date === selected}
+              tabIndex={date === stop ? 0 : -1}
+              ref={(node) => {
+                if (node) dayRefs.current.set(date, node);
+                else dayRefs.current.delete(date);
+              }}
+              onKeyDown={(event) => moveFocus(date, event)}
+              onFocus={() => setActive(date)}
               onClick={() => onPick(date)}
             >
               {day}
@@ -240,7 +280,9 @@ export function BarChart({
   const step = niceStep(max / 4);
   const top = step * 4;
   const ticks = [4, 3, 2, 1].map((n) => n * step);
-  const shown = hover ?? bars.findIndex((bar) => bar.highlight);
+  // Hover only: an always-open tip covered today's bar and ran off the card
+  // late in the week. Today's bar is marked by its stripes and bold label.
+  const shown = hover;
   return (
     <div className="bars" role="img" aria-label={ariaLabel}>
       <div className="bars-axis" aria-hidden="true">
@@ -253,7 +295,12 @@ export function BarChart({
       </div>
       <div className="bars-plot">
         {ticks.map((tick) => (
-          <span key={tick} className="bars-line" style={{ bottom: `${(tick / top) * 100}%` }} />
+          // Measured above the 26px label row, on the same scale as the bars and the axis.
+          <span
+            key={tick}
+            className="bars-line"
+            style={{ bottom: `calc(26px + (100% - 26px) * ${tick / top})` }}
+          />
         ))}
         {bars.map((bar, i) => (
           <div

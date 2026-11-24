@@ -36,7 +36,7 @@ describe("what was sent", () => {
         }),
         NOW,
       ),
-    ).toBe("11-09 09:41 · timing · rate_limited 429 · 1.2 s");
+    ).toBe("9 Nov 09:41 · timing · rate_limited 429 · 1.2 s");
   });
 
   it("shows bodies readably", () => {

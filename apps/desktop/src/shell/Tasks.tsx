@@ -14,6 +14,7 @@ import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT } from "../features/ai/touchpoints";
+import { formatMinutes } from "../features/plan/now";
 import { AI_CHANGED_EVENT, type AiUsage } from "../features/settings/status";
 import {
   canSplit,
@@ -44,12 +45,14 @@ import {
   VIEWS,
 } from "../features/tasks/list";
 import { IconPlus, IconSearch } from "./icons";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { PanelHead } from "./kit";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const hours = (minutes: number) => `~${Math.round((minutes / 60) * 10) / 10} h`;
+/** "~2 h 20 min": an estimate, to 5 minutes, in the app's one hour format. */
+const hours = (minutes: number) => `~${formatMinutes(Math.max(5, Math.round(minutes / 5) * 5))}`;
 
 const AREAS_SQL =
   "SELECT id, name, active, color FROM area_items WHERE deleted_at IS NULL ORDER BY active DESC, priority_rank, name";
@@ -160,10 +163,13 @@ function TaskForm({
     setError(null);
     setDraft({ ...draft, ...change });
   };
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="task-form task-edit"
       aria-label={`Edit ${row.title}`}
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkTask(draft);
@@ -541,7 +547,11 @@ function TaskItem({
             </Button>
           ) : (
             <>
-              <Button className="btn-ghost" onClick={() => setEditing(true)}>
+              <Button
+                className="btn-ghost"
+                {...returnsFocus(`task-edit:${row.id}`)}
+                onClick={() => setEditing(true)}
+              >
                 Edit
               </Button>
               {splittable && !splitting && (

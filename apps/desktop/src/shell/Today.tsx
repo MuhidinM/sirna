@@ -291,18 +291,26 @@ export function Today({
   // count it: at 00:30 it is still the evening before. Never a year for "today".
   const weekday = longWeekday.format(Date.parse(`${today}T12:00:00+03:00`));
   const dayMonth = showDate(today);
+  const nowCards = (
+    <>
+      <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
+      {focus && focus.kind !== null && <FocusPanel status={focus} />}
+    </>
+  );
 
   return (
     <main className="page today">
       <div className="layout-split">
         <aside className="side" aria-label="Today at a glance">
           <MonthPanel today={today} onOpen={onOpenPlan} />
-          <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
-          {focus && focus.kind !== null && <FocusPanel status={focus} />}
+          <div className="today-now in-side">{nowCards}</div>
           <LooseEnds inbox={inbox.rows} total={inboxTotal} waiting={waiting.rows} today={today} />
         </aside>
 
         <div className="main">
+          {/* Below 1200px the side column drops under the board; the Now card
+              (Start focus) shows here instead, at the top. CSS shows one of the two. */}
+          <div className="today-now in-main">{nowCards}</div>
           <section className="canvas" aria-labelledby="today-title">
             <header className="canvas-head">
               <h1 id="today-title" className="page-title">

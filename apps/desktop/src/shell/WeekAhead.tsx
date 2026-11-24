@@ -21,6 +21,7 @@ import {
   skipStepOps,
   WEEK_PLAN_SQL,
 } from "../features/week/outcomes";
+import { cancelOnEscape, refocusSoon, returnsFocus } from "./keys";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -155,8 +156,19 @@ export function WeekAhead({ today }: { today: string }) {
             Up to {MAX_OUTCOMES} outcomes
           </h3>
           {showForm ? (
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
             <form
               className="pw-outcome-form"
+              onKeyDown={
+                // Escape cancels an edit, as Cancel does; the first fill has no Cancel.
+                editing
+                  ? cancelOnEscape(() => {
+                      setEditing(false);
+                      setDrafts(null);
+                      refocusSoon("week-outcomes");
+                    })
+                  : undefined
+              }
               onSubmit={(event) => {
                 event.preventDefault();
                 void write(outcomeOps(json, monday, lines)).then((saved) => {
@@ -215,7 +227,7 @@ export function WeekAhead({ today }: { today: string }) {
                 <p className="meta">Skipped for this week.</p>
               )}
               <div className="pw-actions">
-                <Button onClick={() => setEditing(true)}>
+                <Button {...returnsFocus("week-outcomes")} onClick={() => setEditing(true)}>
                   {plan.outcomes.length > 0 ? "Change" : "Add outcomes"}
                 </Button>
               </div>

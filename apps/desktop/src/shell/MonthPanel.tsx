@@ -152,7 +152,7 @@ export function MonthPanel({
       </p>
       {picked && (
         <div className="month-day-detail" role="status">
-          <strong>{showDate(picked, today, { weekday: true })}</strong>
+          <strong>{showDate(picked, today, { weekday: true })}</strong>{" "}
           {pickedItems.length > 0 ? (
             <ul>
               {pickedItems.map((line, i) => (

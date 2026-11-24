@@ -54,6 +54,7 @@ import {
   writeOffOps,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { PanelHead } from "./kit";
 import { SavingsTree } from "./SavingsTree";
 import { Button } from "./ui";
@@ -148,9 +149,12 @@ function GoalEditForm({
   });
   const [error, setError] = useState<string | null>(null);
   const set = (part: Partial<GoalEdit>) => setEdit((old) => ({ ...old, ...part }));
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="row new-goal"
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkGoalEdit(edit, logicalDate(systemClock.now()), others);
@@ -165,7 +169,8 @@ function GoalEditForm({
     >
       <label className="field">
         <span>Name</span>
-        <input value={edit.title} onChange={(e) => set({ title: e.target.value })} />
+        {/* eslint-disable-next-line jsx-a11y/no-autofocus -- opened on request */}
+        <input autoFocus value={edit.title} onChange={(e) => set({ title: e.target.value })} />
       </label>
       <label className="field">
         <span>Target (ETB)</span>
@@ -511,9 +516,12 @@ function GoalCard({
 function NewGoal({ goals, onDone }: { goals: GoalRow[]; onDone: () => void }) {
   const [draft, setDraft] = useState<GoalDraft>({ title: "", target: "" });
   const [error, setError] = useState<string | null>(null);
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="row new-goal"
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkGoal(draft, goals);
@@ -539,6 +547,8 @@ function NewGoal({ goals, onDone }: { goals: GoalRow[]; onDone: () => void }) {
       <label className="field">
         <span>Goal name</span>
         <input
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- opened on request
+          autoFocus
           placeholder="Laptop"
           value={draft.title}
           onChange={(event) => setDraft({ ...draft, title: event.target.value })}
@@ -794,7 +804,7 @@ export function Savings() {
         }
         action={
           !adding && (
-            <Button onClick={() => setAdding(true)}>
+            <Button {...returnsFocus("goal-new")} onClick={() => setAdding(true)}>
               <IconPlus size={16} /> New goal
             </Button>
           )

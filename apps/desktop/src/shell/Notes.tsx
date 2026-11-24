@@ -20,6 +20,7 @@ import {
   tokens,
 } from "../features/notes/cheat";
 import { IconSearch } from "./icons";
+import { cancelOnEscape, refocusSoon, returnsFocus } from "./keys";
 import { PanelHead, type Tone, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -82,7 +83,12 @@ function CardView({
         sub={`${card.lines.length} line${card.lines.length === 1 ? "" : "s"}`}
         action={
           editing === undefined && (
-            <Button onClick={() => setEditing({ text: cardText(card), base: card })}>Edit</Button>
+            <Button
+              {...returnsFocus(`note-edit:${card.title}`)}
+              onClick={() => setEditing({ text: cardText(card), base: card })}
+            >
+              Edit
+            </Button>
           )
         }
       />
@@ -95,7 +101,12 @@ function CardView({
           ))}
         </ul>
       ) : (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
         <form
+          onKeyDown={cancelOnEscape(() => {
+            setEditing(undefined);
+            refocusSoon(`note-edit:${card.title}`);
+          })}
           onSubmit={(event) => {
             event.preventDefault();
             void save(editing.text, editing.base);
