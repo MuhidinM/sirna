@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
 import { type Op, query, transact } from "../kernel/db";
-import { CURRENCIES, formatAmount, formatNumber, parseAmount } from "../kernel/money";
+import { CURRENCIES, formatAmount, formatNumber, formatWhole, parseAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import {
   byDay,
@@ -57,6 +57,7 @@ import {
   payAccount,
   reconcileOps,
   reconcileText,
+  shownBalance,
   renameAccountOps,
   SAVINGS_SINCE_SQL,
   savingsOps,
@@ -127,11 +128,13 @@ import {
 } from "../features/money/safe";
 import {
   addGoalOps,
+  GOAL_HELD_SQL,
+  type GoalHeld,
   type GoalRow,
   GOALS_SQL,
-  savingGoal,
+  transferGoal,
+  transferPartsOps,
   transferSaving,
-  transferSavingOps,
   UNASSIGNED_SQL,
 } from "../features/savings/savings";
 import {
@@ -215,7 +218,8 @@ function Amount({
   currency?: string;
   approx?: boolean | undefined;
 }) {
-  const text = formatAmount(minor, currency);
+  // A total with converted money is an estimate: whole birr (F108).
+  const text = approx ? formatWhole(minor, currency) : formatAmount(minor, currency);
   const cut = text.lastIndexOf(" ");
   const mark = approx ? "≈ " : "";
   if (cut < 0) return <>{`${mark}${text}`}</>;
@@ -487,6 +491,7 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
         <ul className="list-rows">
           {accounts.rows.map((account) => {
             const balance = balanceOf(account);
+            const shown = shownBalance(account);
             return (
               <li key={account.id}>
                 <span className={balance === null ? "dot-pink" : "dot-cream"} aria-hidden="true" />
@@ -495,8 +500,10 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
                   {account.pays_in === 1 && <span className="meta"> · pay lands here</span>}
                   {isSavings(account) && <span className="meta"> · savings</span>}
                 </span>
-                <span className={balance === null ? "meta" : "money-num"}>
-                  {balance === null ? "not set" : formatAmount(balance, currencyOf(account))}
+                <span className={shown === null ? "meta" : "money-num"}>
+                  {shown === null
+                    ? "not set"
+                    : `${formatAmount(shown.minor, currencyOf(account))}${shown.partial ? " moved in · not set" : ""}`}
                 </span>
               </li>
             );
@@ -736,7 +743,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
                     <span className="money-spend-name">{line.name}</span>
                     <span className="meta money-num">
                       {formatAmount(line.spent)}
-                      {line.usual !== null ? ` · usually ${formatAmount(line.usual)}` : ""}
+                      {line.usual !== null ? ` · usually ${formatWhole(line.usual)}` : ""}
                     </span>
                   </span>
                   <span className="money-track">
@@ -744,7 +751,7 @@ function MonthView({ month, today }: { month: string; today: string }) {
                       <span
                         className="money-usual"
                         style={{ width: `${(line.usual / biggest) * 100}%` }}
-                        aria-label={`${line.name} usually ${formatAmount(line.usual)}`}
+                        aria-label={`${line.name} usually ${formatWhole(line.usual)}`}
                       />
                     )}
                     <span
@@ -2869,6 +2876,7 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
   const [note, setNote] = useState<string | null>(null);
   const { rates } = useRates();
   const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
+  const goalHeld = useLiveQuery<GoalHeld & Record<string, string | number>>(GOAL_HELD_SQL);
   const source = accounts.find((account) => account.id === from);
   const target = accounts.find((account) => account.id === to);
   // Between two currencies, the other half is worked out at the saved rate (time-first §3).
@@ -2899,6 +2907,12 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
           received: halves.received,
           rates,
         });
+        // Out of savings, only a goal holding it there pays, a finished one first (F32, F33).
+        if (saving && saving.minor < 0 && (goals.loading || goalHeld.loading)) {
+          setNote("Still loading what your goals hold. Try again in a moment.");
+          return;
+        }
+        const parts = saving ? transferGoal(goals.rows, saving, goalHeld.rows) : [];
         void transact(
           "user",
           [
@@ -2912,14 +2926,13 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
               ids: [ulid(), ulid()],
               transferId,
             }),
-            ...transferSavingOps({
+            ...transferPartsOps({
               saving,
-              // Out of savings, from a finished goal holding it first (F32).
-              goalId: savingGoal(goals.rows, saving?.minor ?? 0),
+              parts,
               transferId,
               nowMs,
               date: today,
-              id: ulid(),
+              newId: ulid,
               origin: "transfer",
             }),
           ],

@@ -16,10 +16,12 @@ import { GOAL_MONTH_SQL } from "../money/safe";
 import { type Query } from "../projects/capacity";
 import {
   addGoalOps,
+  checkBringBack,
   checkGoal,
   checkTakeOutFrom,
   claimOps,
   entryOps,
+  giveOps,
   GOAL_HELD_SQL,
   goalPace,
   type GoalRow,
@@ -34,9 +36,12 @@ import {
   putAsideOps,
   savingGoal,
   savingsSyncOps,
+  SAVINGS_TRANSFERS_SQL,
   takeOutOps,
   takeOutRoom,
+  transferGoal,
   unclaimed,
+  unsetFree,
   WAITING_SQL,
   waitingForNewGoal,
   waitingSplit,
@@ -159,6 +164,8 @@ async function capture(db: DatabaseSync, text: string) {
     goalOf,
     unclaimed: context.unclaimed,
     unset: context.unset,
+    ...(context.transferGoal ? { transferGoal: context.transferGoal } : {}),
+    ...(context.waiting ? { waiting: context.waiting } : {}),
     ...(savingGoalNow !== undefined ? { savingGoal: savingGoalNow } : {}),
   });
   apply(db, ops);
@@ -212,6 +219,16 @@ describe("F8: took X from a goal in the capture box", () => {
     await capture(db, "took 1000 from test");
     expect(goal(db, "test").saved_minor).toBe(0);
     expect(goal(db, "laptop").saved_minor).toBe(50_000);
+  });
+
+  it("promises no route in the chip, before the goal's holdings are known", () => {
+    const db = fresh();
+    const parsed = parseCapture("took 300 from laptop", {
+      nowMs: NOW,
+      accounts: accounts(db),
+      goals: ["laptop"],
+    });
+    expect(echo(parsed, NOW)).toBe("Took out 300 ETB");
   });
 
   it("says which part of a take-out moved out of savings", async () => {
@@ -435,6 +452,20 @@ describe("F35: a removed goal", () => {
     apply(db, [{ op: "delete", table: "savings_goals", id: "test" }]);
     expect(unclaimed(accounts(db), heldBy(db), {})).toMatchObject([{ minor: 100_000 }]);
   });
+
+  it("shows it even when the account has no balance yet", () => {
+    const db = fresh();
+    db.exec("UPDATE money_accounts SET opening_date = NULL WHERE id = 'cbo-savings'");
+    putAside(db, "test", 100_000);
+    putAside(db, null, 30_000);
+    const waiting = db.prepare(WAITING_SQL).all() as unknown as {
+      amount_minor: number;
+      account: string | null;
+    }[];
+    expect(unsetFree(account(db, "cbo-savings"), heldBy(db), waiting)).toBe(0);
+    apply(db, [{ op: "delete", table: "savings_goals", id: "test" }]);
+    expect(unsetFree(account(db, "cbo-savings"), heldBy(db), waiting)).toBe(100_000);
+  });
 });
 
 describe("F36: dollars already in a dollar savings account", () => {
@@ -530,6 +561,14 @@ describe("F73: the week card's Put aside moves the money", () => {
 });
 
 describe("F110: two goals with one name", () => {
+  it("won't bring a planted goal back next to a growing one with its name", () => {
+    const planted = { id: "a", title: "Short", status: "done" as const };
+    const bike = { id: "c", title: "Bike", status: "done" as const };
+    const goals = [planted, { id: "b", title: "short ", status: "active" as const }, bike];
+    expect(checkBringBack(planted, goals)).toMatch(/already have a growing goal called short/);
+    expect(checkBringBack(bike, goals)).toBeNull();
+  });
+
   it("refuses a second goal or a rename to a name in use", () => {
     const others: Pick<GoalRow, "title" | "status">[] = [
       { title: "Laptop", status: "active" },
@@ -570,5 +609,232 @@ describe("F110: two goals with one name", () => {
         "laptop",
       ),
     ).toBeNull();
+  });
+});
+
+describe("round 2: a goal never holds below zero in an account", () => {
+  /** Takes `minor` out of a goal the way the goal card does it. */
+  const takeOut = (db: DatabaseSync, goalId: string, minor: number) => {
+    const row = goal(db, goalId);
+    const savings = account(db, "cbo-savings");
+    apply(
+      db,
+      takeOutOps({
+        goal: row,
+        amount: minor,
+        spend: account(db, "cbo"),
+        savings,
+        nowMs: NOW,
+        date: TODAY,
+        ids: { ...ids(), plain: `p${n}` },
+        available: takeOutRoom(goalId, savings, goalHeld(db), {}),
+      }).ops,
+    );
+  };
+
+  it("reg0-1: deleting a put-aside after a take-out keeps every figure in step", () => {
+    const db = fresh();
+    setBalance(db, "cbo-savings", 2_000_000);
+    apply(db, entryOps("laptop", 5_600_000, NOW, "2026-11-01", "old", "dashboard"));
+    putAside(db, "laptop", 300_000);
+    const putAsideTransfer = `t${n}`;
+    takeOut(db, "laptop", 100_000);
+    // Ledger deletes the put-aside (both halves); the sync drops its saving.
+    db.prepare("UPDATE money_txns SET deleted_at = 1 WHERE transfer_id = ?").run(putAsideTransfer);
+    db.prepare("UPDATE savings_entries SET deleted_at = 1 WHERE transfer_id = ?").run(
+      putAsideTransfer,
+    );
+    expect(balance(db, "cbo-savings")).toBe(1_900_000);
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 5_500_000, held_minor: 0 });
+    // No more unclaimed than the account holds.
+    expect(unclaimed(accounts(db), heldBy(db), {})).toMatchObject([{ minor: 1_900_000 }]);
+    expect(overclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+  });
+
+  it("F32: money no goal holds there leaves no goal poorer", async () => {
+    const db = fresh();
+    apply(db, goalStatusOps("test", "paused"));
+    await capture(db, "moved 500 from cbo savings to cbo");
+    expect(balance(db, "cbo-savings")).toBe(-50_000);
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 0, held_minor: 0 });
+    // Nothing waits for a goal, and goals count nothing more than it holds.
+    expect(db.prepare(WAITING_SQL).all()).toEqual([]);
+    expect(overclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+    // Not saving either way, and the repair sync never charges a goal for it later.
+    expect(db.prepare(SAVED_SQL).get("2026-11-01", "2026-11-30")).toEqual({ minor: 0 });
+    putAside(db, "laptop", 100_000);
+    expect(db.prepare(SAVINGS_TRANSFERS_SQL).all()).toEqual([]);
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 100_000, held_minor: 100_000 });
+  });
+
+  it("F33: a take-out bigger than a goal holds there charges only what it holds", () => {
+    const db = fresh();
+    db.exec("UPDATE money_accounts SET opening_date = NULL WHERE id = 'cbo-savings'");
+    apply(db, entryOps("laptop", 5_600_000, NOW, "2026-11-01", "old", "dashboard"));
+    putAside(db, "laptop", 200_000);
+    const goalsNow = goals(db);
+    expect(
+      transferGoal(goalsNow, { account: "cbo-savings", minor: -500_000 }, goalHeld(db)),
+    ).toEqual([
+      { goalId: "laptop", minor: -200_000, unheld: false },
+      { goalId: null, minor: -300_000, unheld: true },
+    ]);
+    expect(
+      transferGoal(goalsNow, { account: "cbo-savings", minor: -100_000 }, goalHeld(db)),
+    ).toEqual([{ goalId: "laptop", minor: -100_000, unheld: false }]);
+    // A waiting take-out offers only goals that hold that much in its account.
+    const split = waitingSplit(
+      [{ id: "w", amount_minor: -500_000, account: "cbo-savings" }],
+      goalsNow,
+      { held: goalHeld(db), savings: ["cbo-savings"] },
+    );
+    expect(split.taken.goals).toEqual([]);
+  });
+
+  it("reg0-2: savings with no goal in an account with a balance are one line", () => {
+    const db = fresh();
+    setBalance(db, "cbo-savings", 2_000_000);
+    apply(db, claimOps("test", "cbo-savings", 500_000, NOW, TODAY, "c-test"));
+    putAside(db, null, 200_000);
+    const waiting = db.prepare(WAITING_SQL).all() as unknown as {
+      id: string;
+      amount_minor: number;
+      account: string | null;
+    }[];
+    expect(unclaimed(accounts(db), heldBy(db), {})).toMatchObject([{ minor: 1_700_000 }]);
+    const split = waitingSplit(waiting, goals(db), { folded: ["cbo-savings"] });
+    expect(split.saved.ids).toEqual([]);
+    // Giving it all hands over the saving as it was, and claims the rest.
+    apply(
+      db,
+      giveOps("laptop", "cbo-savings", 1_700_000, waiting, NOW, TODAY, () => "g1"),
+    );
+    expect(unclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 1_700_000, flow_minor: 200_000 });
+    expect(db.prepare(WAITING_SQL).all()).toEqual([]);
+  });
+
+  it("moving out more than the goal holds there charges the goal what it holds", async () => {
+    const db = fresh();
+    setBalance(db, "cbo-savings", 300_000);
+    putAside(db, "laptop", 500_000);
+    expect(balance(db, "cbo-savings")).toBe(800_000);
+    await capture(db, "moved 8000 from cbo savings to cbo");
+    expect(balance(db, "cbo-savings")).toBe(0);
+    // Laptop gave its 5,000; the 3,000 no goal had is unheld. No false warning.
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 0, held_minor: 0 });
+    expect(overclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+    expect(unclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+    expect(db.prepare(WAITING_SQL).all()).toEqual([]);
+  });
+
+  it("a dollar take-out after the rate rose charges what the goal holds, not nothing", () => {
+    // $100 put aside at 130: Laptop holds 13,000 ETB worth in Wise. At 140 it is 14,000.
+    const parts = transferGoal(
+      [{ id: "laptop", status: "active", saved_minor: 1_300_000 }],
+      { account: "wise", minor: -1_400_000 },
+      [{ goal_id: "laptop", account: "wise", minor: 1_300_000 }],
+    );
+    expect(parts).toEqual([
+      { goalId: "laptop", minor: -1_300_000, unheld: false },
+      { goalId: null, minor: -100_000, unheld: true },
+    ]);
+  });
+
+  it("the repair sync splits a take-out the same way", () => {
+    const ops = savingsSyncOps({
+      transfers: [
+        {
+          id: "m1",
+          transfer_id: "t-out",
+          amount_minor: -800_000,
+          local_date: TODAY,
+          occurred_at: NOW,
+          account: "cbo-savings",
+          created_at: NOW,
+          currency: "ETB",
+          entry_id: null,
+        },
+      ],
+      orphans: [],
+      goals: [{ id: "laptop", status: "active", saved_minor: 500_000 }],
+      since: {},
+      rates: {},
+      newId: () => `s${++n}`,
+      held: [{ goal_id: "laptop", account: "cbo-savings", minor: 500_000 }],
+    });
+    expect(
+      ops.map((op) =>
+        op.op === "delete" ? null : [op.values.goal_id, op.values.amount_minor, op.values.origin],
+      ),
+    ).toEqual([
+      ["laptop", -500_000, "transfer"],
+      [null, -300_000, "unheld"],
+    ]);
+  });
+
+  it("reg0-2: Give in parts splits a waiting saving and never strands it", () => {
+    const db = fresh();
+    setBalance(db, "cbo-savings", 0);
+    putAside(db, null, 1_700_000);
+    const waitingNow = () =>
+      db.prepare(WAITING_SQL).all() as unknown as {
+        id: string;
+        amount_minor: number;
+        account: string | null;
+      }[];
+    expect(unclaimed(accounts(db), heldBy(db), {})).toMatchObject([{ minor: 1_700_000 }]);
+    apply(
+      db,
+      giveOps("laptop", "cbo-savings", 1_000_000, waitingNow(), NOW, TODAY, () => "g1"),
+    );
+    expect(waitingNow()).toMatchObject([{ amount_minor: 700_000, account: "cbo-savings" }]);
+    apply(
+      db,
+      giveOps("test", "cbo-savings", 700_000, waitingNow(), NOW, TODAY, () => "g2"),
+    );
+    // Nothing left waiting, both count as real saving, and no claim was written.
+    expect(waitingNow()).toEqual([]);
+    expect(unclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 1_000_000, flow_minor: 1_000_000 });
+    expect(goal(db, "test")).toMatchObject({ saved_minor: 700_000, flow_minor: 700_000 });
+    expect(
+      db.prepare("SELECT count(*) AS n FROM savings_entries WHERE origin = 'claim'").get(),
+    ).toEqual({ n: 0 });
+    // A goal added later takes nothing: the money is not given twice.
+    apply(db, goalStatusOps("laptop", "done"));
+    apply(db, goalStatusOps("test", "done"));
+    expect(waitingForNewGoal(goals(db), waitingNow())).toEqual([]);
+    expect(overclaimed(accounts(db), heldBy(db), {})).toEqual([]);
+  });
+
+  it("reg0-2: a capture saving money already there takes the waiting saving first", async () => {
+    const db = fresh();
+    db.exec("UPDATE money_accounts SET is_savings = 1 WHERE id = 'wise'");
+    setBalance(db, "wise", 0);
+    // $50 arrived in Wise as a saving with no goal (two goals growing).
+    apply(db, [
+      {
+        op: "insert",
+        table: "savings_entries",
+        id: "w-in",
+        values: {
+          goal_id: null,
+          occurred_at: NOW,
+          local_date: TODAY,
+          amount_minor: 650_000,
+          note: null,
+          origin: "transfer",
+          account: "wise",
+        },
+      },
+    ]);
+    db.prepare("UPDATE money_accounts SET opening_minor = 5_000 WHERE id = 'wise'").run();
+    await capture(db, "saved $50 laptop");
+    // The waiting saving is Laptop's, counted as this month's saving; nothing waits.
+    expect(db.prepare(WAITING_SQL).all()).toEqual([]);
+    expect(goal(db, "laptop")).toMatchObject({ saved_minor: 650_000, flow_minor: 650_000 });
+    expect(unclaimed(accounts(db), heldBy(db), rates)).toEqual([]);
+    expect(overclaimed(accounts(db), heldBy(db), rates)).toEqual([]);
   });
 });

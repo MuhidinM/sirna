@@ -248,7 +248,7 @@ describe("totals in ETB", () => {
     ]);
     expect(people.map((p) => [p.person, p.currency, p.owedToMe])).toEqual([
       ["Abel", "USD", 10_000],
-      ["abel", "ETB", 60_000],
+      ["Abel", "ETB", 60_000],
     ]);
     expect(owedInEtb(people, RATES, newConversion())).toBe(1_385_000);
     const review = monthReview({

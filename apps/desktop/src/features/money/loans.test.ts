@@ -213,6 +213,16 @@ describe("loans in the capture box (T-061)", () => {
       values: { account: "cbe", amount_minor: -100_000, transfer_id: "loan:o1" },
     });
   });
+
+  it("keeps a typed name as a name everywhere (reg0-3, F108)", () => {
+    const ops = toOps(read("lent 2000 to kebede"), { nowMs: options.nowMs, newId: () => "k" });
+    expect(ops[0]).toMatchObject({ table: "money_loans", values: { person: "Kebede" } });
+    // Rows saved lower case before still read as a name.
+    expect(balances([event({ person: "sara", kind: "borrowed" })])[0]?.person).toBe("Sara");
+    const usd = { ...options, rates: { USD: { rate: "130", set_on: "2026-11-14" } } };
+    const dollars = parseCapture("borrowed $50 from sara @wise", usd);
+    expect(echo(dollars, options.nowMs)).toBe("Borrowed $50 from Sara · Wise");
+  });
 });
 
 describe("paying back in the loan's currency, up to what is owed (F24, F27)", () => {

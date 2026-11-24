@@ -9,6 +9,7 @@ import {
   dueItems,
   dueLines,
   dueWindow,
+  LATE_KEEP_DAYS,
   occurrences,
   parseRule,
   pauseOps,
@@ -207,31 +208,56 @@ describe("what is due (T-059, T-060)", () => {
     expect(rows.map((row) => row.currency)).toEqual(["USD", "ETB"]);
   });
 
-  it("keeps an unpaid date the same number of days, whatever its day of month (F84)", () => {
+  it("keeps an unpaid date until it is paid or skipped, whatever its day of month (F84)", () => {
+    // Added on 14 Oct: earlier dates were never yours to pay.
+    const added = Date.parse("2026-10-14T12:00:00+03:00");
     const iddir = regular({
       id: "iddir",
       name: "Iddir",
       amount_minor: 20_000,
       rule_json: JSON.stringify({ every: "month", day: 24 }),
       category_id: "cat_family",
+      created_at: added,
     });
-    const at = (today: string) => {
+    const at = (today: string, txns: RegularTxn[] = []) => {
       const window = dueWindow(today);
-      return states(dueItems([iddir], [], window.from, window.to, today, window.shownFrom));
+      return states(dueItems([iddir], txns, window.from, window.to, today, window.shownFrom));
     };
-    // 31 days on it is still shown; the day after, it goes.
     expect(at("2026-11-24")[0]).toEqual(["iddir", "2026-10-24", "late", 20_000]);
-    expect(at("2026-11-25")[0]?.[1]).toBe("2026-11-24");
-    // An 18th bill lasts as long, across the month's end too (it used to go after 13 days).
-    const rent = regular({ rule_json: JSON.stringify({ every: "month", day: 18 }) });
-    const rentAt = (today: string) => {
-      const window = dueWindow(today);
-      return states(dueItems([rent], [], window.from, window.to, today, window.shownFrom));
+    // Past the month's change and a month on, it is still there (it used to drop silently).
+    expect(at("2026-12-01")[0]).toEqual(["iddir", "2026-10-24", "late", 20_000]);
+    expect(at("2026-12-26")[0]).toEqual(["iddir", "2026-10-24", "late", 20_000]);
+    expect(at("2027-03-01").filter((row) => row[2] === "late")).toHaveLength(5);
+    // Paid late, it goes.
+    const paid: RegularTxn = {
+      regular_id: "iddir",
+      due_date: "2026-10-24",
+      area_id: null,
+      amount_minor: -20_000,
+      local_date: "2026-12-20",
     };
-    expect(rentAt("2026-12-01")[0]).toEqual(["rent", "2026-11-18", "late", 600_000]);
-    expect(rentAt("2026-12-19")[0]).toEqual(["rent", "2026-11-18", "late", 600_000]);
-    expect(rentAt("2026-12-20")[0]?.[1]).toBe("2026-12-18");
-    expect(rentAt("2026-11-10")[0]).toEqual(["rent", "2026-10-18", "late", 600_000]);
+    expect(at("2026-12-26", [paid])[0]?.[1]).toBe("2026-11-24");
+    // The list keeps a year of unpaid dates.
+    expect(LATE_KEEP_DAYS).toBeGreaterThanOrEqual(365);
+  });
+
+  it("drops late pay after a month: pay that never came is not still to come", () => {
+    const added = Date.parse("2026-05-01T12:00:00+03:00");
+    const salary = regular({
+      id: "salary",
+      kind: "pay",
+      name: "Salary",
+      amount_minor: 1_800_000,
+      rule_json: JSON.stringify({ every: "month", day: 1 }),
+      created_at: added,
+    });
+    const today = "2026-11-24";
+    const window = dueWindow(today);
+    const late = dueItems([salary], [], window.from, window.to, today, window.shownFrom).filter(
+      (item) => item.state === "late",
+    );
+    // November's only: May to October's never-recorded pay doesn't count as coming.
+    expect(late.map((item) => item.date)).toEqual(["2026-11-01"]);
   });
 
   it("skips one date, keeps the skip when changed, and pauses (F29)", () => {

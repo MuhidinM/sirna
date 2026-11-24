@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
-import { formatAmount, parseAmount } from "../kernel/money";
+import { formatAmount, formatWhole, parseAmount } from "../kernel/money";
 import { ask } from "../features/ai/ask";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { WEEK } from "../features/ai/touchpoints";
@@ -492,7 +492,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 title="Money"
                 sub={
                   money.average !== null
-                    ? `Usually ${approx}${formatAmount(money.average)} a week`
+                    ? `Usually ${approx}${formatWhole(money.average)} a week`
                     : "Spent this week"
                 }
               />
@@ -512,7 +512,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                     <span className="pw-bar-name">{line.category}</span>
                     <span className="pw-bar-value">
                       {formatAmount(line.week)}
-                      {line.average !== null ? ` · usually ${formatAmount(line.average)}` : ""}
+                      {line.average !== null ? ` · usually ${formatWhole(line.average)}` : ""}
                     </span>
                     <span className="pw-spend-pair">
                       <span
@@ -524,7 +524,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                         <span
                           className="pw-spend-bar usual"
                           style={{ width: `${(line.average / maxSpend) * 100}%` }}
-                          aria-label={`${line.category} usually ${formatAmount(line.average)}`}
+                          aria-label={`${line.category} usually ${formatWhole(line.average)}`}
                         />
                       )}
                     </span>

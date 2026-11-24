@@ -20,11 +20,14 @@ import { RATES_SQL, readRates, toEtb } from "../features/money/currency";
 import {
   addGoalOps,
   assignOps,
-  claimOps,
+  checkBringBack,
   GOAL_HELD_SQL,
+  type GoalHeld,
+  giveOps,
   HELD_BY_ACCOUNT_SQL,
   overclaimed,
   unclaimed,
+  unsetFree,
   checkGoal,
   checkGoalEdit,
   checkTakeOut,
@@ -51,6 +54,7 @@ import {
   WAITING_SQL,
   waitingForNewGoal,
   waitingSplit,
+  type WaitingEntry,
   writeOffOps,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
@@ -79,16 +83,23 @@ export function useSavingsSync() {
   const transfers = useLiveQuery<Rows<SavingsTransfer>>(SAVINGS_TRANSFERS_SQL);
   const orphans = useLiveQuery<{ id: string }>(ORPHAN_SAVINGS_SQL);
   const goals = useLiveQuery<Rows<GoalRow>>(GOALS_SQL);
+  const held = useLiveQuery<Rows<GoalHeld>>(GOAL_HELD_SQL);
   const since = useLiveQuery<{ value_json: string }>(SAVINGS_SINCE_SQL);
   const rates = useLiveQuery<{ value_json: string }>(RATES_SQL);
   const loading =
-    transfers.loading || orphans.loading || goals.loading || since.loading || rates.loading;
+    transfers.loading ||
+    orphans.loading ||
+    goals.loading ||
+    held.loading ||
+    since.loading ||
+    rates.loading;
   const ops: Op[] = loading
     ? []
     : savingsSyncOps({
         transfers: transfers.rows,
         orphans: orphans.rows,
         goals: goals.rows,
+        held: held.rows,
         since: readSavingsSince(since.rows[0]?.value_json),
         rates: readRates(rates.rows[0]?.value_json),
         newId: () => ulid(),
@@ -258,6 +269,7 @@ function GoalCard({
   accounts,
   goalHeld,
   free,
+  waiting,
 }: {
   goal: GoalRow;
   /** The other goals, so an edit can't reuse a name. */
@@ -268,6 +280,8 @@ function GoalCard({
   goalHeld: { goal_id: string; account: string; minor: number }[];
   /** What each savings account holds that no goal has (ETB worth, by id). */
   free: Record<string, number>;
+  /** Savings waiting for a goal: part of `free`, given first (reg0-2). */
+  waiting: WaitingEntry[];
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -320,7 +334,7 @@ function GoalCard({
       const now = systemClock.now();
       transact(
         "user",
-        claimOps(goal.id, savings.id, worth, now, logicalDate(now), ulid()),
+        giveOps(goal.id, savings.id, worth, waiting, now, logicalDate(now), ulid),
         `savings:${goal.id}`,
       )
         .then(() => {
@@ -700,10 +714,13 @@ function Unclaimed({
   account,
   minor,
   goals,
+  waiting,
 }: {
   account: AccountRow;
   minor: number;
   goals: GoalRow[];
+  /** Savings made into this account with no goal: part of `minor`, given first. */
+  waiting: { id: string; amount_minor: number }[];
 }) {
   const [goalId, setGoalId] = useState("");
   const [amount, setAmount] = useState("");
@@ -717,7 +734,7 @@ function Unclaimed({
     setNote("");
     void transact(
       "user",
-      claimOps(goalId, account.id, chosen, now, logicalDate(now), ulid()),
+      giveOps(goalId, account.id, chosen, waiting, now, logicalDate(now), ulid),
       "savings",
     ).catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
   };
@@ -762,26 +779,42 @@ function Unclaimed({
 /** Savings goals with their plants, and a garden of finished ones (plan §3.13). */
 export function Savings() {
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
-  const waiting = useLiveQuery<{ id: string; amount_minor: number }>(WAITING_SQL);
+  const waiting = useLiveQuery<WaitingEntry & Record<string, string | number | null>>(WAITING_SQL);
   const heldBy = useLiveQuery<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL);
   const goalHeld = useLiveQuery<{ goal_id: string; account: string; minor: number }>(GOAL_HELD_SQL);
   const accounts = useMoneyAccounts();
   useSavingsSync();
   const backing = accounts.savings.map((row) => row.name).join(", ");
   const [adding, setAdding] = useState(false);
-  const [note, setNote] = useState("");
+  // A note about one goal ("Test is growing again.") goes once that goal is
+  // removed or planted again (F35).
+  const [note, setNote] = useState<{ goal: string | null; text: string } | null>(null);
   const growing = goals.rows.filter((goal) => goal.status !== "done");
+  const noteShown =
+    note && (note.goal === null || growing.some((goal) => goal.id === note.goal)) ? note.text : "";
   const garden = goals.rows.filter((goal) => goal.status === "done");
-  const split = waitingSplit(waiting.rows, goals.rows);
+  // Savings with no goal in an account whose balance is set show in its one
+  // line of money no goal has (reg0-2).
+  const folded = accounts.savings.filter((row) => row.opening_date !== null).map((row) => row.id);
+  const split = waitingSplit(waiting.rows, goals.rows, {
+    held: goalHeld.rows,
+    savings: accounts.savings.map((row) => row.id),
+    folded,
+  });
   const pick = (ids: string[]) => goals.rows.filter((goal) => ids.includes(goal.id));
   const free = heldBy.loading ? [] : unclaimed(accounts.all, heldBy.rows, accounts.rates);
   const over = heldBy.loading ? [] : overclaimed(accounts.all, heldBy.rows, accounts.rates);
   // A savings account with no balance yet: totals can't count it (F55).
   const unset = accounts.savings.filter((row) => row.opening_date === null);
-  const bringBack = (goal: GoalRow) =>
+  const bringBack = (goal: GoalRow) => {
+    const problem = checkBringBack(goal, goals.rows);
+    if (problem) return setNote({ goal: null, text: problem });
     void transact("user", goalStatusOps(goal.id, "active"), `savings:${goal.id}`)
-      .then(() => setNote(`${goal.title} is growing again.`))
-      .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+      .then(() => setNote({ goal: goal.id, text: `${goal.title} is growing again.` }))
+      .catch((failure: unknown) =>
+        setNote({ goal: null, text: `Couldn't save: ${message(failure)}` }),
+      );
+  };
   return (
     <section className="panel savings" aria-labelledby="savings">
       <PanelHead
@@ -811,11 +844,16 @@ export function Savings() {
         }
       />
       {adding && <NewGoal goals={goals.rows} onDone={() => setAdding(false)} />}
-      {unset.map((row) => (
-        <p key={row.id} className="meta">
-          {row.name} has no balance yet: set it in Accounts.
-        </p>
-      ))}
+      {unset.map((row) => {
+        // Money known to be there with no goal, a removed goal's too (F35).
+        const known = heldBy.loading ? 0 : unsetFree(row, heldBy.rows, waiting.rows);
+        return (
+          <p key={row.id} className="meta">
+            {row.name} has no balance yet: set it in Accounts.
+            {known > 0 && ` At least ${formatAmount(known)} in it has no goal.`}
+          </p>
+        );
+      })}
       {split.saved.ids.length > 0 && (
         <Waiting
           minor={split.saved.minor}
@@ -833,7 +871,13 @@ export function Savings() {
         />
       )}
       {free.map(({ account, minor }) => (
-        <Unclaimed key={account.id} account={account} minor={minor} goals={growing} />
+        <Unclaimed
+          key={account.id}
+          account={account}
+          minor={minor}
+          goals={growing}
+          waiting={waiting.rows.filter((row) => row.account === account.id && row.amount_minor > 0)}
+        />
       ))}
       {over.map(({ account, minor }) => (
         <Overclaimed
@@ -861,6 +905,7 @@ export function Savings() {
             accounts={accounts}
             goalHeld={goalHeld.rows}
             free={Object.fromEntries(free.map((row) => [row.account.id, row.minor]))}
+            waiting={waiting.rows}
           />
         ))}
       </ul>
@@ -886,9 +931,9 @@ export function Savings() {
           </div>
         </section>
       )}
-      {note && (
+      {noteShown && (
         <p className="meta" role="status">
-          {note}
+          {noteShown}
         </p>
       )}
     </section>

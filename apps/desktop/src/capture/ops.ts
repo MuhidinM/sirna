@@ -7,14 +7,16 @@ import { PROJECT_STATUSES } from "../features/projects/projects";
 import { transferOps } from "../features/money/accounts";
 import { fromEtb, type Rates } from "../features/money/currency";
 import { ruleText } from "../features/money/regulars";
-import { loanEchoText, loanOps } from "../features/money/loans";
+import { loanEchoText, loanOps, named } from "../features/money/loans";
 import {
   checkTakeOut,
   checkTakeOutFrom,
-  claimOps,
+  giveOps,
   moveOps,
   takeOutOps,
-  transferSavingOps,
+  type TransferPart,
+  transferPartsOps,
+  type WaitingEntry,
 } from "../features/savings/savings";
 import {
   type LoanItem,
@@ -56,6 +58,13 @@ export interface OpsContext {
   unclaimed?: Record<string, number>;
   /** Savings accounts with no balance set yet (by id). */
   unset?: string[];
+  /** Savings waiting for a goal: a saving of money already there takes them first. */
+  waiting?: WaitingEntry[];
+  /**
+   * Where a transfer into or out of a savings account goes: the goal (or
+   * goals) charged, and any part no goal had. See transferGoal.
+   */
+  transferGoal?: (saving: { account: string; minor: number }) => TransferPart[];
 }
 
 /**
@@ -202,15 +211,23 @@ function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
     origin: "capture",
   }).map((op) => withoutBirr(op));
   if (!parsed.saving) return ops;
+  // Out of savings, only a goal holding it there is charged (F32, F33).
+  const parts = context.transferGoal?.(parsed.saving) ?? [
+    {
+      goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
+      minor: parsed.saving.minor,
+      unheld: false,
+    },
+  ];
   return [
     ...ops,
-    ...transferSavingOps({
+    ...transferPartsOps({
       saving: parsed.saving,
-      goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
+      parts,
       transferId,
       nowMs,
       date: parsed.date,
-      id: newId(),
+      newId,
       origin: "capture",
     }),
   ];
@@ -274,7 +291,8 @@ function savingOps(
     if (worth > free)
       throw `${parsed.savings.name} holds ${formatAmount(free)} no goal has yet: save that much or less`;
     if (!goal) throw "Name the goal: saved $50 laptop";
-    return claimOps(goal.id, parsed.savings.id, worth, nowMs, date, newId());
+    // Savings waiting there for a goal go first, so none is counted twice (reg0-2).
+    return giveOps(goal.id, parsed.savings.id, worth, context.waiting ?? [], nowMs, date, newId);
   }
   if (parsed.spend && parsed.savings) {
     const currency = parsed.currency ?? "ETB";
@@ -508,13 +526,13 @@ export function pieceText(piece: MoneyPiece, nowMs?: number): string {
       const amount = listAmount(piece.amount, piece.currency);
       switch (piece.loanKind) {
         case "lent":
-          return `lent ${piece.person} ${amount}`;
+          return `lent ${named(piece.person)} ${amount}`;
         case "borrowed":
-          return `borrowed ${amount} from ${piece.person}`;
+          return `borrowed ${amount} from ${named(piece.person)}`;
         case "paid_me":
-          return `${piece.person} paid back ${amount}`;
+          return `${named(piece.person)} paid back ${amount}`;
         case "i_paid":
-          return `paid back ${piece.person} ${amount}`;
+          return `paid back ${named(piece.person)} ${amount}`;
       }
     }
   }
@@ -674,7 +692,10 @@ export function echo(
           : parsed.spend && parsed.savings
             ? parsed.amount > 0
               ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
-              : ` · ${parsed.savings.name} → ${parsed.spend.name}`
+              : // Before Enter the goal's holdings aren't known: no route is promised (F8).
+                savingGoal === undefined
+                ? ""
+                : ` · ${parsed.savings.name} → ${parsed.spend.name}`
             : parsed.savings
               ? ` · from what ${parsed.savings.name} already holds`
               : parsed.unbacked
