@@ -130,6 +130,8 @@ export interface NextWeek {
   capacity: number;
   ratio: number;
   activeProjects: number;
+  /** Projects running this week: the Projects page's count (weekLoad, #174). */
+  runningNow: number;
   over: boolean;
 }
 
@@ -139,7 +141,8 @@ export function nextWeek(
   thisMonday: string,
 ): NextWeek {
   const load = weekLoad(week, projects, shiftDate(thisMonday, 7));
-  return { ...load, over: load.ratio > LOAD_LIMIT };
+  const runningNow = weekLoad(week, projects, thisMonday).activeProjects;
+  return { ...load, runningNow, over: load.ratio > LOAD_LIMIT };
 }
 
 // --- 3. Projects -----------------------------------------------------------------
