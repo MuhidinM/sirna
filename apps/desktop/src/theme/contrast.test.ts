@@ -53,13 +53,35 @@ describe.each(Object.entries(themes))("%s theme", (_, t) => {
   });
 });
 
-describe.each(Object.entries(themes))("%s canvas", (_, t) => {
-  it("is dark, like the panels around it", () => {
-    expect(luminance(t["canvas"] ?? "")).toBeLessThan(0.06);
-    expect(luminance(t["canvas-cream"] ?? "")).toBeLessThan(0.1);
-    expect(luminance(t["canvas-mint"] ?? "")).toBeLessThan(0.1);
+describe("the canvas is dark in Night and white in Forest", () => {
+  it("Night", () => {
+    expect(luminance(themes.night["canvas"] ?? "")).toBeLessThan(0.06);
+    expect(luminance(themes.night["canvas-cream"] ?? "")).toBeLessThan(0.1);
+    expect(luminance(themes.night["canvas-mint"] ?? "")).toBeLessThan(0.1);
   });
 
+  it("Forest", () => {
+    expect(luminance(themes.forest["canvas"] ?? "")).toBeGreaterThan(0.9);
+  });
+});
+
+describe("the Forest canvas (white) stays readable", () => {
+  const t = themes.forest;
+  it.each(["canvas", "canvas-2", "canvas-cream", "canvas-mint"])(
+    "text is readable on %s",
+    (surface) => {
+      expect(ratio(t["canvas-ink"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it("secondary text, hints and lines are visible", () => {
+    expect(ratio(t["canvas-ink-2"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(t["canvas-ink-3"] ?? "", t["canvas"] ?? "")).toBeGreaterThanOrEqual(3);
+    expect(ratio(t["canvas-mint-ink"] ?? "", t["canvas-mint"] ?? "")).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe.each([["night", themes.night]] as const)("%s canvas (dark)", (_, t) => {
   it.each(["canvas", "canvas-2", "canvas-3"])("text is readable on %s", (surface) => {
     expect(ratio(t["canvas-ink"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);
     expect(ratio(t["canvas-ink-2"] ?? "", t[surface] ?? "")).toBeGreaterThanOrEqual(4.5);

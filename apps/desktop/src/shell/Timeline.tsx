@@ -521,7 +521,7 @@ export function Timeline({
                   tone={toneOf(color)}
                   label={
                     short
-                      ? `${range(block)}${block.task_title && block.kind === "area" ? ` · ${block.task_title}` : ""}${tail}`
+                      ? `${range(block)}${block.task_title && block.kind === "area" && block.task_title !== block.title ? ` · ${block.task_title}` : ""}${tail}`
                       : `${range(block)}${tail}`
                   }
                   title={block.title}
