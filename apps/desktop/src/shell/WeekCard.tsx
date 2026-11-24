@@ -38,7 +38,8 @@ import {
 } from "../features/week/card";
 
 import { ulid } from "../kernel/ulid";
-import { entryOps, type GoalRow, GOALS_SQL, WEEK_SAVED_SQL } from "../features/savings/savings";
+import { type GoalRow, GOALS_SQL, putAsideOps, WEEK_SAVED_SQL } from "../features/savings/savings";
+import { type AccountRow, ACCOUNTS_SQL } from "../features/money/accounts";
 import { shiftDate } from "../features/plan/dayplan";
 import { weekSummary } from "../features/dashboard/insights";
 import { InsightList } from "./Insights";
@@ -167,6 +168,7 @@ const ASKED_KEY = "week.saving_asked";
 function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   const saved = useLiveQuery<{ minor: number }>(WEEK_SAVED_SQL, [monday, shiftDate(monday, 7)]);
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const asked = useLiveQuery<{ value_json: string }>(
     `SELECT value_json FROM core_settings WHERE key = '${ASKED_KEY}'`,
   );
@@ -174,7 +176,7 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   const [amount, setAmount] = useState("");
   const [goalId, setGoalId] = useState("");
   const [note, setNote] = useState("");
-  if (saved.loading || goals.loading || asked.loading) return null;
+  if (saved.loading || goals.loading || asked.loading || accounts.loading) return null;
   const minor = saved.rows[0]?.minor ?? 0;
   if (minor > 0)
     return (
@@ -202,11 +204,17 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
             setNote("Pick the goal it's for.");
             return;
           }
-          transact(
-            "user",
-            entryOps(goal || null, value, nowMs, logicalDate(nowMs), ulid(), "week"),
-            `week:${monday}`,
-          ).catch((failure: unknown) =>
+          // Like Put aside on the goal card: the money moves into savings (F73).
+          const put = putAsideOps({
+            goalId: goal || null,
+            amount: value,
+            accounts: accounts.rows,
+            nowMs,
+            date: logicalDate(nowMs),
+            newId: () => ulid(),
+            origin: "week",
+          });
+          transact("user", put.ops, `week:${monday}`).catch((failure: unknown) =>
             setNote(
               `Couldn't save: ${failure instanceof Error ? failure.message : String(failure)}`,
             ),

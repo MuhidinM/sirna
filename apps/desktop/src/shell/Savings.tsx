@@ -21,11 +21,14 @@ import {
   addGoalOps,
   assignOps,
   claimOps,
+  GOAL_HELD_SQL,
   HELD_BY_ACCOUNT_SQL,
+  overclaimed,
   unclaimed,
   checkGoal,
   checkGoalEdit,
   checkTakeOut,
+  checkTakeOutFrom,
   type GoalEdit,
   goalEditOps,
   goalPace,
@@ -44,7 +47,11 @@ import {
   STAGE_NAMES,
   stageOf,
   takeOutOps,
-  UNASSIGNED_SQL,
+  takeOutRoom,
+  WAITING_SQL,
+  waitingForNewGoal,
+  waitingSplit,
+  writeOffOps,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
 import { PanelHead } from "./kit";
@@ -124,7 +131,16 @@ function paceText(goal: GoalRow, today: string): string {
   return `${formatAmount(pace.needPerMonth)} a month to make ${by} · ${saving}${behind ? ", behind" : ""}.`;
 }
 
-function GoalEditForm({ goal, onDone }: { goal: GoalRow; onDone: () => void }) {
+function GoalEditForm({
+  goal,
+  others,
+  onDone,
+}: {
+  goal: GoalRow;
+  /** The other goals, so two can't share a name. */
+  others: GoalRow[];
+  onDone: () => void;
+}) {
   const [edit, setEdit] = useState<GoalEdit>({
     title: goal.title,
     target: String(goal.target_minor / 100),
@@ -137,7 +153,7 @@ function GoalEditForm({ goal, onDone }: { goal: GoalRow; onDone: () => void }) {
       className="row new-goal"
       onSubmit={(event) => {
         event.preventDefault();
-        const problem = checkGoalEdit(edit, logicalDate(systemClock.now()));
+        const problem = checkGoalEdit(edit, logicalDate(systemClock.now()), others);
         if (problem) {
           setError(problem);
           return;
@@ -169,6 +185,43 @@ function GoalEditForm({ goal, onDone }: { goal: GoalRow; onDone: () => void }) {
       </label>
       <Button type="submit">Save</Button>
       <Button onClick={onDone}>Cancel</Button>
+      {/* Pause keeps the money put aside but stops the goal asking for more (F35). */}
+      <Button
+        className="btn-ghost"
+        onClick={() =>
+          void transact(
+            "user",
+            goalStatusOps(goal.id, goal.status === "paused" ? "active" : "paused"),
+            `savings:${goal.id}`,
+          )
+            .then(onDone)
+            .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`))
+        }
+      >
+        {goal.status === "paused" ? "Resume" : "Pause"}
+      </Button>
+      <Button
+        className="btn-ghost"
+        onClick={() => {
+          // Its money stays in the account and shows as "no goal has yet".
+          if (
+            goal.saved_minor > 0 &&
+            !window.confirm(
+              `Remove ${goal.title}? Its ${formatAmount(goal.saved_minor)} stays where it is, with no goal.`,
+            )
+          )
+            return;
+          void transact(
+            "user",
+            [{ op: "delete", table: "savings_goals", id: goal.id }],
+            `savings:${goal.id}`,
+          )
+            .then(onDone)
+            .catch((failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`));
+        }}
+      >
+        Remove goal
+      </Button>
       {error && (
         <p role="alert" className="error">
           {error}
@@ -195,12 +248,21 @@ const monthYear = new Intl.DateTimeFormat("en-GB", {
 /** A goal as a night scene with its plant (docs/design.md → Savings tree). */
 function GoalCard({
   goal,
+  others,
   seed,
   accounts,
+  goalHeld,
+  free,
 }: {
   goal: GoalRow;
+  /** The other goals, so an edit can't reuse a name. */
+  others: GoalRow[];
   seed: number;
   accounts: ReturnType<typeof useMoneyAccounts>;
+  /** What each goal holds in each savings account. */
+  goalHeld: { goal_id: string; account: string; minor: number }[];
+  /** What each savings account holds that no goal has (ETB worth, by id). */
+  free: Record<string, number>;
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -225,17 +287,52 @@ function GoalCard({
     }
     // With no savings account yet, a saving is only marked (money stays where it is).
     const backed = savings !== undefined;
-    const problem = backed ? checkMove(spend, savings) : null;
-    if (problem) {
-      setNote(problem);
-      return;
-    }
     const worth = backed ? toEtb(minor, currencyOf(savings), accounts.rates) : minor;
     if (worth === null) {
       setNote(`Set a ${currencyOf(savings)} rate first (Money → Accounts).`);
       return;
     }
-    const tooMuch = sign < 0 ? checkTakeOut(goal, worth) : null;
+    // Only a savings account in its currency (dollars in Wise, F36): Put aside
+    // gives the goal what the account already holds; there's nowhere to take out to.
+    if (backed && choices.length === 0) {
+      const code = currencyOf(savings);
+      if (sign < 0) {
+        setNote(`No ${code} account to move it to; the money stays in ${savings.name}.`);
+        return;
+      }
+      const room = free[savings.id] ?? 0;
+      if (worth > room) {
+        setNote(
+          `${savings.name} holds ${formatAmount(room)} no goal has yet: give that much or less.`,
+        );
+        return;
+      }
+      const now = systemClock.now();
+      transact(
+        "user",
+        claimOps(goal.id, savings.id, worth, now, logicalDate(now), ulid()),
+        `savings:${goal.id}`,
+      )
+        .then(() => {
+          setAmount("");
+          setNote(`Gave ${formatAmount(minor, code)} that ${savings.name} already holds`);
+        })
+        .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+      return;
+    }
+    const problem = backed ? checkMove(spend, savings) : null;
+    if (problem) {
+      setNote(problem);
+      return;
+    }
+    // Never more than the goal holds, nor more than the chosen account can give (F9).
+    const available = backed ? takeOutRoom(goal.id, savings, goalHeld, accounts.rates) : 0;
+    const tooMuch =
+      sign > 0
+        ? null
+        : backed
+          ? checkTakeOutFrom(goal, worth, available, savings.name)
+          : checkTakeOut(goal, worth);
     if (tooMuch) {
       setNote(tooMuch);
       return;
@@ -247,7 +344,13 @@ function GoalCard({
     // Take out moves through the savings account only what the goal holds there.
     const out =
       moveInput && sign < 0
-        ? takeOutOps({ ...moveInput, goal, ids: { ...ids, plain: ulid() }, entryMinor: worth })
+        ? takeOutOps({
+            ...moveInput,
+            goal,
+            ids: { ...ids, plain: ulid() },
+            entryMinor: worth,
+            available,
+          })
         : null;
     const ops = out
       ? out.ops
@@ -259,14 +362,15 @@ function GoalCard({
         setAmount("");
         const shown = formatAmount(minor, currencyOf(savings));
         if (out && moveInput) {
-          const moved = `Moved ${formatAmount(out.moved)} from ${moveInput.savings.name} to ${moveInput.spend.name}`;
-          const plain = `${formatAmount(out.plain)} that was never in ${moveInput.savings.name}`;
+          // The part never in the savings account was set aside in your
+          // spending accounts: only the goal's number goes down (F75).
+          const plain = `${formatAmount(out.plain)} was already in your spending accounts, so only the goal went down`;
           setNote(
             out.plain === 0
               ? `Moved ${shown} from ${moveInput.savings.name} to ${moveInput.spend.name}`
               : out.moved === 0
-                ? `Took out ${plain}`
-                : `${moved}; took out ${plain}`,
+                ? `Took out ${formatAmount(out.plain)}: it was already in your spending accounts, so only the goal went down`
+                : `Moved ${formatAmount(out.moved)} from ${moveInput.savings.name} back to ${moveInput.spend.name}; the other ${plain}`,
           );
           return;
         }
@@ -279,6 +383,14 @@ function GoalCard({
       .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
   };
   const target = goal.target_minor;
+  // Where the goal's money is (F75): in savings accounts, or set aside in spending ones.
+  const inSavings = Math.max(0, goal.held_minor ?? 0);
+  const inSpending = Math.max(0, goal.saved_minor - inSavings);
+  const where = accounts.savings.length === 1 ? accounts.savings[0]?.name : "savings accounts";
+  const split =
+    accounts.savings.length > 0 && inSavings !== Math.max(0, goal.saved_minor)
+      ? `${formatAmount(inSavings)} in ${where} · ${formatAmount(inSpending)} set aside in your spending accounts`
+      : null;
   const title = goal.target_date
     ? `${goal.title} by ${monthYear.format(Date.parse(`${goal.target_date}T00:00:00Z`))}`
     : goal.title;
@@ -298,7 +410,7 @@ function GoalCard({
           />
         </div>
         <div className="goal-top">
-          <h3>{title}</h3>
+          <h3 title={title}>{title}</h3>
           <button
             type="button"
             className="icon-btn goal-edit"
@@ -317,8 +429,13 @@ function GoalCard({
         </div>
       </div>
       <div className="goal-controls">
-        <p className="meta goal-pace">{paceText(goal, today)}</p>
-        {editing && <GoalEditForm goal={goal} onDone={() => setEditing(false)} />}
+        <p className="meta goal-pace">
+          {goal.status === "paused"
+            ? "Paused: kept aside, not asking for more."
+            : paceText(goal, today)}
+        </p>
+        {split && <p className="meta goal-split">{split}</p>}
+        {editing && <GoalEditForm goal={goal} others={others} onDone={() => setEditing(false)} />}
         <div className="row goal-move">
           <input
             inputMode="decimal"
@@ -332,18 +449,20 @@ function GoalCard({
           />
           {savings && (
             <>
-              <select
-                aria-label={`Account the money comes from, ${goal.title}`}
-                title="From (or back to)"
-                value={spend?.id ?? ""}
-                onChange={(event) => setFromId(event.target.value)}
-              >
-                {choices.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                  </option>
-                ))}
-              </select>
+              {choices.length > 0 && (
+                <select
+                  aria-label={`Account the money comes from, ${goal.title}`}
+                  title="From (or back to)"
+                  value={spend?.id ?? ""}
+                  onChange={(event) => setFromId(event.target.value)}
+                >
+                  {choices.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               {accounts.savings.length > 1 && (
                 <select
                   aria-label={`Savings account, ${goal.title}`}
@@ -384,7 +503,7 @@ function GoalCard({
   );
 }
 
-function NewGoal({ onDone }: { onDone: () => void }) {
+function NewGoal({ goals, onDone }: { goals: GoalRow[]; onDone: () => void }) {
   const [draft, setDraft] = useState<GoalDraft>({ title: "", target: "" });
   const [error, setError] = useState<string | null>(null);
   return (
@@ -392,17 +511,22 @@ function NewGoal({ onDone }: { onDone: () => void }) {
       className="row new-goal"
       onSubmit={(event) => {
         event.preventDefault();
-        const problem = checkGoal(draft);
+        const problem = checkGoal(draft, goals);
         if (problem) {
           setError(problem);
           return;
         }
         const today = logicalDate(systemClock.now());
-        // Savings made before any goal existed join the first one.
-        query<{ id: string }>(
-          "SELECT id FROM savings_entries WHERE goal_id IS NULL AND deleted_at IS NULL",
-        )
-          .then((waiting) => transact("user", addGoalOps(draft, today, ulid(), waiting), "savings"))
+        // Savings made while no goal was growing join the first one; with
+        // goals there they wait for "Give it to…" (F34).
+        query<{ id: string; amount_minor: number }>(WAITING_SQL)
+          .then((waiting) =>
+            transact(
+              "user",
+              addGoalOps(draft, today, ulid(), waitingForNewGoal(goals, waiting)),
+              "savings",
+            ),
+          )
           .then(onDone)
           .catch((failure: unknown) => setError(`Couldn't add it: ${message(failure)}`));
       }}
@@ -435,17 +559,39 @@ function NewGoal({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** Savings made without a goal: give them to one (or they join the next goal you add). */
-function GiveTo({ minor, goals }: { minor: number; goals: GoalRow[] }) {
+/**
+ * Entries waiting for a goal (F33). Savings made without a goal: give them
+ * to one (or they join the next goal you add). Money taken out of savings
+ * with several goals: say which goal it came from, among those holding that
+ * much, so no goal goes below zero.
+ */
+function Waiting({
+  minor,
+  ids,
+  goals,
+  taken,
+}: {
+  minor: number;
+  ids: string[];
+  goals: GoalRow[];
+  taken: boolean;
+}) {
   const [goalId, setGoalId] = useState("");
   const [note, setNote] = useState("");
+  const chosen = goals.some((goal) => goal.id === goalId) ? goalId : "";
   return (
     <p className="row meta">
-      {formatAmount(minor)} saved without a goal.
+      {taken
+        ? `${formatAmount(minor)} taken out of savings. Which goal did it come from?`
+        : `${formatAmount(minor)} saved without a goal.`}
       {goals.length > 0 ? (
         <>
-          <select aria-label="Give to" value={goalId} onChange={(e) => setGoalId(e.target.value)}>
-            <option value="">Give it to…</option>
+          <select
+            aria-label={taken ? "Taken from" : "Give to"}
+            value={chosen}
+            onChange={(e) => setGoalId(e.target.value)}
+          >
+            <option value="">{taken ? "It came from…" : "Give it to…"}</option>
             {goals.map((goal) => (
               <option key={goal.id} value={goal.id}>
                 {goal.title}
@@ -453,29 +599,78 @@ function GiveTo({ minor, goals }: { minor: number; goals: GoalRow[] }) {
             ))}
           </select>
           <Button
-            disabled={!goalId}
+            disabled={!chosen}
             onClick={() =>
-              void query<{ id: string }>(
-                "SELECT id FROM savings_entries WHERE goal_id IS NULL AND deleted_at IS NULL",
+              void transact("user", assignOps(ids, chosen), "savings").catch((failure: unknown) =>
+                setNote(`Couldn't save: ${message(failure)}`),
               )
-                .then((rows) =>
-                  transact(
-                    "user",
-                    assignOps(
-                      rows.map((row) => row.id),
-                      goalId,
-                    ),
-                    "savings",
-                  ),
-                )
-                .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`))
             }
           >
-            Give
+            {taken ? "Take it from there" : "Give"}
           </Button>
         </>
+      ) : taken ? (
+        " No goal holds that much."
       ) : (
         " It joins the first goal you add."
+      )}
+      {note}
+    </p>
+  );
+}
+
+/**
+ * A savings account holding less than its goals count on it (F37), after a
+ * Check found money gone: take the gap off a goal. No money moves.
+ */
+function Overclaimed({
+  account,
+  minor,
+  holders,
+}: {
+  account: AccountRow;
+  minor: number;
+  /** Goals with money counted in this account, and how much. */
+  holders: { goal: GoalRow; here: number }[];
+}) {
+  const [goalId, setGoalId] = useState("");
+  const [note, setNote] = useState("");
+  const goals = holders.map((holder) => holder.goal);
+  const picked = holders.find((holder) => holder.goal.id === goalId);
+  const chosen = picked?.goal;
+  const cut = picked ? Math.min(minor, picked.here, Math.max(0, picked.goal.saved_minor)) : 0;
+  return (
+    <p className="row meta">
+      Goals count {formatAmount(minor)} more in {account.name} than it holds.
+      {goals.length > 0 && (
+        <>
+          <select
+            aria-label={`Take the gap in ${account.name} off`}
+            value={goalId}
+            onChange={(e) => setGoalId(e.target.value)}
+          >
+            <option value="">Take it off…</option>
+            {goals.map((goal) => (
+              <option key={goal.id} value={goal.id}>
+                {goal.title}
+              </option>
+            ))}
+          </select>
+          <Button
+            disabled={!chosen || cut <= 0}
+            onClick={() => {
+              if (!chosen) return;
+              const now = systemClock.now();
+              void transact(
+                "user",
+                writeOffOps(chosen.id, account.id, cut, now, logicalDate(now), ulid()),
+                `savings:${chosen.id}`,
+              ).catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+            }}
+          >
+            {chosen ? `Take ${formatAmount(cut)} off ${chosen.title}` : "Take it off"}
+          </Button>
+        </>
       )}
       {note}
     </p>
@@ -552,15 +747,26 @@ function Unclaimed({
 /** Savings goals with their plants, and a garden of finished ones (plan §3.13). */
 export function Savings() {
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
-  const waiting = useLiveQuery<{ minor: number; n: number }>(UNASSIGNED_SQL);
+  const waiting = useLiveQuery<{ id: string; amount_minor: number }>(WAITING_SQL);
   const heldBy = useLiveQuery<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL);
+  const goalHeld = useLiveQuery<{ goal_id: string; account: string; minor: number }>(GOAL_HELD_SQL);
   const accounts = useMoneyAccounts();
   useSavingsSync();
   const backing = accounts.savings.map((row) => row.name).join(", ");
   const [adding, setAdding] = useState(false);
+  const [note, setNote] = useState("");
   const growing = goals.rows.filter((goal) => goal.status !== "done");
   const garden = goals.rows.filter((goal) => goal.status === "done");
-  const unassigned = waiting.rows[0];
+  const split = waitingSplit(waiting.rows, goals.rows);
+  const pick = (ids: string[]) => goals.rows.filter((goal) => ids.includes(goal.id));
+  const free = heldBy.loading ? [] : unclaimed(accounts.all, heldBy.rows, accounts.rates);
+  const over = heldBy.loading ? [] : overclaimed(accounts.all, heldBy.rows, accounts.rates);
+  // A savings account with no balance yet: totals can't count it (F55).
+  const unset = accounts.savings.filter((row) => row.opening_date === null);
+  const bringBack = (goal: GoalRow) =>
+    void transact("user", goalStatusOps(goal.id, "active"), `savings:${goal.id}`)
+      .then(() => setNote(`${goal.title} is growing again.`))
+      .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
   return (
     <section className="panel savings" aria-labelledby="savings">
       <PanelHead
@@ -578,7 +784,7 @@ export function Savings() {
                 Capture <code>saved 500 laptop</code> or <code>took 2000 from laptop</code>.
               </>
             )}{" "}
-            Plants only grow; taking money out just lowers the number.
+            Plants never wilt; taking money out moves the plant back a stage or two.
           </>
         }
         action={
@@ -589,33 +795,86 @@ export function Savings() {
           )
         }
       />
-      {adding && <NewGoal onDone={() => setAdding(false)} />}
-      {unassigned && unassigned.n > 0 && <GiveTo minor={unassigned.minor} goals={growing} />}
-      {!heldBy.loading &&
-        unclaimed(accounts.all, heldBy.rows, accounts.rates).map(({ account, minor }) => (
-          <Unclaimed key={account.id} account={account} minor={minor} goals={growing} />
-        ))}
+      {adding && <NewGoal goals={goals.rows} onDone={() => setAdding(false)} />}
+      {unset.map((row) => (
+        <p key={row.id} className="meta">
+          {row.name} has no balance yet: set it in Accounts so totals count what you put aside.
+        </p>
+      ))}
+      {split.saved.ids.length > 0 && (
+        <Waiting
+          minor={split.saved.minor}
+          ids={split.saved.ids}
+          goals={pick(split.saved.goals)}
+          taken={false}
+        />
+      )}
+      {split.taken.ids.length > 0 && (
+        <Waiting
+          minor={split.taken.minor}
+          ids={split.taken.ids}
+          goals={pick(split.taken.goals)}
+          taken
+        />
+      )}
+      {free.map(({ account, minor }) => (
+        <Unclaimed key={account.id} account={account} minor={minor} goals={growing} />
+      ))}
+      {over.map(({ account, minor }) => (
+        <Overclaimed
+          key={account.id}
+          account={account}
+          minor={minor}
+          holders={goalHeld.rows.flatMap((row) => {
+            const goal = goals.rows.find((one) => one.id === row.goal_id);
+            return row.account === account.id && goal && row.minor > 0
+              ? [{ goal, here: row.minor }]
+              : [];
+          })}
+        />
+      ))}
       {!goals.loading && growing.length === 0 && !adding && (
         <p className="empty">No goals yet. Add one with New goal and watch its plant grow.</p>
       )}
       <ul className="goals">
         {growing.map((goal, index) => (
-          <GoalCard key={goal.id} goal={goal} seed={index + 3} accounts={accounts} />
+          <GoalCard
+            key={goal.id}
+            goal={goal}
+            others={goals.rows.filter((other) => other.id !== goal.id)}
+            seed={index + 3}
+            accounts={accounts}
+            goalHeld={goalHeld.rows}
+            free={Object.fromEntries(free.map((row) => [row.account.id, row.minor]))}
+          />
         ))}
       </ul>
       {garden.length > 0 && (
-        <div className="garden" aria-label="Garden: goals reached">
-          {garden.map((goal) => (
-            <span
-              key={goal.id}
-              className="garden-tree"
-              title={`${goal.title} · ${formatAmount(goal.target_minor)}`}
-            >
-              <SavingsTree share={1} compact />
-              <span className="meta">{goal.title}</span>
-            </span>
-          ))}
-        </div>
+        <section className="garden-wrap" aria-labelledby="garden">
+          <h4 id="garden" className="meta">
+            Garden · goals reached
+          </h4>
+          <div className="garden">
+            {garden.map((goal) => (
+              <button
+                type="button"
+                key={goal.id}
+                className="garden-tree"
+                title={`Bring ${goal.title} back to growing`}
+                onClick={() => bringBack(goal)}
+              >
+                <SavingsTree share={1} compact />
+                <span className="meta">{goal.title}</span>
+                <span className="meta">{formatAmount(goal.target_minor)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      {note && (
+        <p className="meta" role="status">
+          {note}
+        </p>
       )}
     </section>
   );
