@@ -19,9 +19,55 @@ export function cancelOnEscape(cancel: () => void) {
 }
 
 /**
+ * Mark a button that opens an inline form and is replaced while the form is
+ * open (or unmounted with it): `<Button {...returnsFocus("task-edit:" + id)}>`.
+ * After Escape, focus goes to the new button with the same mark.
+ */
+export const returnsFocus = (key: string) => ({ "data-return-focus": key });
+
+/** What `returnFocus` needs from an element; an `HTMLElement` fits. */
+export type FocusTarget = {
+  isConnected: boolean;
+  focus: () => void;
+  getAttribute: (name: string) => string | null;
+};
+
+/**
+ * Give focus back to the button that opened a form: the same element while it
+ * is still on the page, else the one now carrying its `returnsFocus` mark.
+ * True when something took focus.
+ */
+export function returnFocus(
+  opener: FocusTarget | null,
+  find: (key: string) => FocusTarget | null,
+): boolean {
+  if (!opener) return false;
+  const target = opener.isConnected
+    ? opener
+    : (() => {
+        const key = opener.getAttribute("data-return-focus");
+        return key ? find(key) : null;
+      })();
+  if (!target) return false;
+  target.focus();
+  return true;
+}
+
+function findMarked(key: string): HTMLElement | null {
+  for (const element of document.querySelectorAll<HTMLElement>("[data-return-focus]"))
+    if (element.getAttribute("data-return-focus") === key) return element;
+  return null;
+}
+
+/** For a form closed without the hook: focus its `returnsFocus` button once it is back. */
+export function refocusSoon(key: string) {
+  setTimeout(() => findMarked(key)?.focus(), 0);
+}
+
+/**
  * `cancelOnEscape` for a form that opens from a button: after Escape, focus
- * goes back to the button that opened it (when it is still on the page),
- * not to the top of the page.
+ * goes back to the button that opened it, not to the top of the page. When
+ * that button is replaced while the form is open, give it `returnsFocus`.
  */
 export function useEscapeToCancel(cancel: () => void) {
   // Read once, on the form's first render: before any field in it takes focus.
@@ -32,9 +78,8 @@ export function useEscapeToCancel(cancel: () => void) {
   );
   return cancelOnEscape(() => {
     cancel();
-    setTimeout(() => {
-      if (opener?.isConnected) opener.focus();
-    }, 0);
+    // After React has put the opener (or its replacement) back on the page.
+    setTimeout(() => returnFocus(opener, findMarked), 0);
   });
 }
 

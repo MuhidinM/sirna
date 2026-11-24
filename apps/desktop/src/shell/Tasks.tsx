@@ -43,7 +43,7 @@ import {
   VIEWS,
 } from "../features/tasks/list";
 import { IconPlus, IconSearch } from "./icons";
-import { useEscapeToCancel } from "./keys";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { PanelHead } from "./kit";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -514,7 +514,11 @@ function TaskItem({
             </Button>
           ) : (
             <>
-              <Button className="btn-ghost" onClick={() => setEditing(true)}>
+              <Button
+                className="btn-ghost"
+                {...returnsFocus(`task-edit:${row.id}`)}
+                onClick={() => setEditing(true)}
+              >
                 Edit
               </Button>
               {splittable && !splitting && (

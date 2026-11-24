@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { type KeyboardEvent } from "react";
 
-import { cancelOnEscape, nextDay, nextTab } from "./keys";
+import {
+  type FocusTarget,
+  cancelOnEscape,
+  nextDay,
+  nextTab,
+  returnFocus,
+  returnsFocus,
+} from "./keys";
 
 const key = (k: string, isComposing = false) => {
   const event = {
@@ -27,6 +34,42 @@ describe("Escape cancels an inline form (F93)", () => {
     cancelOnEscape(cancel)(key("Enter"));
     cancelOnEscape(cancel)(key("Escape", true));
     expect(cancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("Escape gives focus back to the opener (F93)", () => {
+  const button = (isConnected: boolean, mark?: string) => {
+    const attrs: Record<string, string> = mark ? returnsFocus(mark) : {};
+    return {
+      isConnected,
+      focus: vi.fn(),
+      getAttribute: (name: string) => attrs[name] ?? null,
+    } satisfies FocusTarget;
+  };
+
+  it("focuses the opener while it is still on the page", () => {
+    const opener = button(true, "task-edit:1");
+    const find = vi.fn();
+    expect(returnFocus(opener, find)).toBe(true);
+    expect(opener.focus).toHaveBeenCalledOnce();
+    expect(find).not.toHaveBeenCalled();
+  });
+
+  it("focuses the button that replaced it, found by its mark", () => {
+    // Tasks: the row turns into the form, so the Edit button is a new element after.
+    const opener = button(false, "task-edit:1");
+    const again = button(true, "task-edit:1");
+    const find = vi.fn((key: string) => (key === "task-edit:1" ? again : null));
+    expect(returnFocus(opener, find)).toBe(true);
+    expect(again.focus).toHaveBeenCalledOnce();
+    expect(opener.focus).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a gone opener with no mark, or no opener", () => {
+    const opener = button(false);
+    expect(returnFocus(opener, () => button(true))).toBe(false);
+    expect(opener.focus).not.toHaveBeenCalled();
+    expect(returnFocus(null, () => button(true))).toBe(false);
   });
 });
 

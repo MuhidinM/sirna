@@ -1,6 +1,6 @@
 import "../theme/pages/money.css";
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
@@ -179,7 +179,7 @@ import {
   IconPlus,
   IconSearch,
 } from "./icons";
-import { cancelOnEscape } from "./keys";
+import { cancelOnEscape, returnsFocus, useEscapeToCancel } from "./keys";
 import { type Bar as ChartBar, BarChart, PanelHead } from "./kit";
 import { Segmented } from "./Nav";
 import { Savings, useSavingsSync } from "./Savings";
@@ -363,9 +363,11 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
     );
   const short = safe.total <= 0;
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape hides the sum; keydown bubbles from its buttons
     <section
       className={short ? "now-card money-safe short" : "now-card money-safe"}
       aria-labelledby="safe"
+      onKeyDown={open ? cancelOnEscape(() => setOpen(false)) : undefined}
     >
       <div className="now-card-top">
         <h2 id="safe" className="now-when">
@@ -1241,11 +1243,12 @@ function TxnForm({
     (draft.kind === "in" ? payAccount(spending(accounts)) : spendAccount(accounts));
   // An entry is in its account's currency.
   const currency = currencyOf(accounts.find((account) => account.id === accountId));
+  const onEscape = useEscapeToCancel(() => onCancel?.());
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="money-form"
-      onKeyDown={onCancel ? cancelOnEscape(onCancel) : undefined}
+      onKeyDown={onCancel ? onEscape : undefined}
       onSubmit={(event) => {
         event.preventDefault();
         const full = {
@@ -1399,7 +1402,11 @@ function LedgerRow({
       </span>
       <span className="ledger-actions">
         {!row.transfer_id && (
-          <Button className="btn-ghost" onClick={() => setEditing(true)}>
+          <Button
+            className="btn-ghost"
+            {...returnsFocus(`txn-edit:${row.id}`)}
+            onClick={() => setEditing(true)}
+          >
             Edit
           </Button>
         )}
@@ -1448,15 +1455,29 @@ function LedgerRow({
   );
 }
 
+/** The ledger's add form: Escape closes it and gives focus back to Add entry. */
+function AddEntry({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const onEscape = useEscapeToCancel(onClose);
+  return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape closes it; keydown bubbles from its fields
+    <section className="card money-add" aria-label="Add entry" onKeyDown={onEscape}>
+      {children}
+    </section>
+  );
+}
+
 function LedgerView({
   month,
   today,
   adding,
+  onCloseAdd,
 }: {
   month: string;
   today: string;
   /** The add form, opened by the page's Add entry button. */
   adding: boolean;
+  /** Closes the add form (Escape in it). */
+  onCloseAdd: () => void;
 }) {
   const { txns } = useMonth(month, today);
   const categories = useLiveQuery<Category>(CATEGORIES_SQL);
@@ -1524,7 +1545,7 @@ function LedgerView({
         </Button>
       </div>
       {adding && (
-        <section className="card money-add" aria-label="Add entry">
+        <AddEntry onClose={onCloseAdd}>
           <TxnForm
             initial={emptyDraft(month === monthOf(today).from ? today : monthOf(month).to)}
             categories={categories.rows}
@@ -1536,7 +1557,7 @@ function LedgerView({
               )
             }
           />
-        </section>
+        </AddEntry>
       )}
       {toast && (
         <div className="money-toast" role="status">
@@ -3120,7 +3141,14 @@ export function Money() {
               />
             </div>
             {tab === "month" && <MonthView month={month} today={today} />}
-            {tab === "ledger" && <LedgerView month={month} today={today} adding={adding} />}
+            {tab === "ledger" && (
+              <LedgerView
+                month={month}
+                today={today}
+                adding={adding}
+                onCloseAdd={() => setAdding(false)}
+              />
+            )}
             {tab === "regulars" && <RegularsView today={today} />}
             {tab === "loans" && <LoansView today={today} />}
             {tab === "accounts" && <AccountsView today={today} />}

@@ -479,6 +479,16 @@ button.month-day:hover {
   opacity: 0.5;
 }
 
+/* A faded card's fill is near-white in Forest: a white bar on it vanishes.
+   Draw its progress in the canvas ink instead, which it already uses for text. */
+.event.faded .event-progress {
+  background: color-mix(in srgb, var(--canvas-ink) 18%, transparent);
+}
+
+.event.faded .event-progress > span {
+  background: var(--canvas-ink);
+}
+
 .event.current {
   box-shadow:
     0 0 0 3px var(--canvas),

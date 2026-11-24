@@ -47,7 +47,7 @@ import { ESTIMATE, type EstimateReply, TIMING } from "../features/ai/touchpoints
 import { weekStart } from "../features/plan/dayplan";
 import { statusOps } from "../features/tasks/list";
 import { IconClock, IconPlus, IconProjects } from "./icons";
-import { useEscapeToCancel } from "./keys";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { EventCard, GhostCard, PanelHead, toneOf } from "./kit";
 import { Segmented } from "./Nav";
 import { type AreaColor, Button, Chip } from "./ui";
@@ -606,7 +606,14 @@ function ProjectView({
             icon={<IconProjects size={18} />}
             title={project.title}
             sub={area ?? "No area"}
-            action={<Button onClick={() => setEditing(true)}>Edit</Button>}
+            action={
+              <Button
+                {...returnsFocus(`project-edit:${project.id}`)}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </Button>
+            }
           />
           <dl className="proj-facts">
             <div>

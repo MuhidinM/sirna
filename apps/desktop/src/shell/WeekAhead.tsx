@@ -14,7 +14,7 @@ import {
   skipStepOps,
   WEEK_PLAN_SQL,
 } from "../features/week/outcomes";
-import { cancelOnEscape } from "./keys";
+import { cancelOnEscape, refocusSoon, returnsFocus } from "./keys";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -130,6 +130,7 @@ export function WeekAhead({ today }: { today: string }) {
                   ? cancelOnEscape(() => {
                       setEditing(false);
                       setDrafts(null);
+                      refocusSoon("week-outcomes");
                     })
                   : undefined
               }
@@ -191,7 +192,7 @@ export function WeekAhead({ today }: { today: string }) {
                 <p className="meta">Skipped for this week.</p>
               )}
               <div className="pw-actions">
-                <Button onClick={() => setEditing(true)}>
+                <Button {...returnsFocus("week-outcomes")} onClick={() => setEditing(true)}>
                   {plan.outcomes.length > 0 ? "Change" : "Add outcomes"}
                 </Button>
               </div>

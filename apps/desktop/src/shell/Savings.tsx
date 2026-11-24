@@ -47,7 +47,7 @@ import {
   UNASSIGNED_SQL,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
-import { useEscapeToCancel } from "./keys";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { PanelHead } from "./kit";
 import { SavingsTree } from "./SavingsTree";
 import { Button } from "./ui";
@@ -593,7 +593,7 @@ export function Savings() {
         }
         action={
           !adding && (
-            <Button onClick={() => setAdding(true)}>
+            <Button {...returnsFocus("goal-new")} onClick={() => setAdding(true)}>
               <IconPlus size={16} /> New goal
             </Button>
           )
