@@ -13,6 +13,7 @@ import {
   replanAround,
   replanDay,
   replanFromToday,
+  replanUndoOps,
   startingNow,
   taskOnDay,
   weekStart,
@@ -982,6 +983,24 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
     expect(liveOf(h, "cv", TOMORROW).map((b) => b.title)).toEqual(["Coding skills: Update my CV"]);
     expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
   });
+
+  it("keeps a slot when its area is renamed, and gives it the new name", async () => {
+    const h = planned();
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('page', 'Write About page copy', 'todo', 'coding', ?, 0, 0)",
+      )
+      .run(TOMORROW);
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    const [slot] = liveOf(h, "page", TOMORROW);
+    expect(slot?.title).toBe("Coding skills: Write About page copy");
+    h.db.prepare("UPDATE area_items SET name = 'Coding' WHERE id = 'coding'").run();
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(liveOf(h, "page", TOMORROW)).toEqual([
+      { ...slot, title: "Coding: Write About page copy" },
+    ]);
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+  });
 });
 
 describe("a later day is planned after the days before it (F18)", () => {
@@ -1054,11 +1073,18 @@ describe("a later day is planned after the days before it (F18)", () => {
 
 describe("a block moved by a command onto a planner block (F15)", () => {
   const TOMORROW = "2026-11-12";
-  type Live = { id: string; start_at: number; end_at: number; title: string; untouched: number };
+  type Live = {
+    id: string;
+    start_at: number;
+    end_at: number;
+    title: string;
+    kind: string;
+    untouched: number;
+  };
   const liveBlocks = (h: ReturnType<typeof harness>) =>
     h.db
       .prepare(
-        `SELECT id, start_at, end_at, title,
+        `SELECT id, start_at, end_at, title, kind,
            (source IN ('template', 'generator') AND user_edited_at IS NULL) AS untouched
          FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL ORDER BY start_at`,
       )
@@ -1106,5 +1132,37 @@ describe("a block moved by a command onto a planner block (F15)", () => {
       .run(quran.start_at, quran.end_at, quran.id);
     const shape = (rows: Live[]) => rows.map((b) => [b.start_at, b.end_at, b.title]);
     expect(shape(liveBlocks(h))).toEqual(shape(before));
+  });
+
+  it("undo keeps a replanned block you moved since", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "quran", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    const before = liveBlocks(h);
+    const quran = before.find((b) => b.title === "Quran");
+    const slot = before.find((b) => b.kind === "area" && b.untouched === 1);
+    if (!quran || !slot) throw new Error("expected Quran and a focus slot");
+    const start = slot.end_at - 15 * 60_000;
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
+      .run(start, start + (quran.end_at - quran.start_at), quran.id);
+    const undo = (await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, NOW)) ?? [];
+    const fresh = liveBlocks(h).find(
+      (b) => b.untouched === 1 && !before.some((old) => old.id === b.id),
+    );
+    if (!fresh) throw new Error("expected a replanned block");
+    // A later command moved one of the replanned blocks: it is yours now.
+    h.db.prepare("UPDATE day_blocks SET user_edited_at = 6 WHERE id = ?").run(fresh.id);
+    const now = await replanUndoOps(h.query, undo);
+    expect(now.some((op) => op.op === "delete" && op.id === fresh.id)).toBe(false);
+    expect(now).toHaveLength(undo.length - 1);
   });
 });

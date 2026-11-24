@@ -622,6 +622,28 @@ export async function replanAround(
   ];
 }
 
+/**
+ * The undo `replanAround` gave, as it stands now: a block from that replan
+ * you have since moved or focused in is yours and stays. Run the result as
+ * the system, not as you, so the blocks it brings back stay untouched planner
+ * blocks that heals and replans may still change.
+ */
+export async function replanUndoOps(query: Query, undo: Op[]): Promise<Op[]> {
+  const deletes = undo.filter((op) => op.op === "delete").map((op) => op.id);
+  if (deletes.length === 0) return undo;
+  const kept = new Set(
+    (
+      await query<{ id: string }>(
+        `SELECT id FROM day_blocks WHERE id IN (${deletes.map(() => "?").join(", ")})
+          AND (user_edited_at IS NOT NULL
+            OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`,
+        deletes,
+      )
+    ).map((row) => row.id),
+  );
+  return undo.filter((op) => op.op !== "delete" || !kept.has(op.id));
+}
+
 /** Days from today on that have a plan. */
 export const PLANNED_FROM_SQL = `
   SELECT DISTINCT logical_date FROM day_blocks
@@ -704,21 +726,19 @@ export async function healDay(
   const { input, stale } = await replanInput(query, date, nowMs);
   if (input.template.length === 0) return false;
   const orphans = orphanOps(input, stale);
-  if (orphans.refill) {
-    await replanDay(query, transact, date, newId, nowMs);
+  const plan = generateDay(input);
+  // Energy saved after the day was planned (the night review) made it light,
+  // or no longer light: the untouched blocks are planned again (F53), with
+  // the top three set afresh.
+  const flipped = stale.some((block) => (block.light_day ?? 0) !== (plan.light ? 1 : 0));
+  if (orphans.refill || flipped) {
+    await replanDay(query, transact, date, newId, nowMs, flipped);
     return true;
   }
   const existing = await query<{ task_id: string; start_at: number; title: string }>(
     DAY_TASK_BLOCKS_SQL,
     [date],
   );
-  const plan = generateDay(input);
-  // Energy saved after the day was planned (the night review) made it light,
-  // or no longer light: the untouched blocks are planned again (F53).
-  if (stale.some((block) => (block.light_day ?? 0) !== (plan.light ? 1 : 0))) {
-    await replanDay(query, transact, date, newId, nowMs, true);
-    return true;
-  }
   const missing = missingTaskBlocks(plan, input, existing);
   if (missing.length === 0) {
     if (orphans.ops.length === 0) return false;
@@ -768,17 +788,22 @@ export function orphanOps(
     const task = tasks.get(block.task_id);
     const area = block.area_id ? areas.get(block.area_id) : undefined;
     const timed = task !== undefined && ((task.atMin ?? null) !== null || !!task.window);
-    // A focus slot ("Coding skills: …") that holds a task, not the task's own block.
+    // A focus slot ("Coding skills: …") that holds a task, not the task's own
+    // block. Told apart by more than the area's name, which may have changed
+    // since: the planner gives a task with an area a block of its own only
+    // for a time or a part of the day, so an untimed one is in a slot.
     const slot =
       block.kind === "area" &&
-      area !== undefined &&
-      block.title.startsWith(`${area.name}: `) &&
-      block.title !== task?.title;
+      !!block.area_id &&
+      block.title !== task?.title &&
+      ((area !== undefined && block.title.startsWith(`${area.name}: `)) ||
+        (task !== undefined && !timed) ||
+        (task === undefined && block.title.includes(": ")));
     if (slot) {
       if (!task || timed || task.areaId !== block.area_id) {
         drop(block.id);
         refill = true;
-      } else if (block.title !== `${area.name}: ${task.title}`)
+      } else if (area && block.title !== `${area.name}: ${task.title}`)
         retitle(block.id, `${area.name}: ${task.title}`);
       continue;
     }

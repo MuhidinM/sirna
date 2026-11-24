@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
-import { commitCapture, query, transact } from "../kernel/db";
+import { commitCapture, type Op, query, transact } from "../kernel/db";
 import { formatAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import { toOps } from "../capture/ops";
-import { ensureDayPlan, replanAround } from "../features/plan/dayplan";
+import { ensureDayPlan, replanAround, replanUndoOps } from "../features/plan/dayplan";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import {
   asksToShrink,
@@ -565,6 +565,9 @@ function SpendingStep({
   );
 }
 
+/** A command that ran, with the undo of the replan it caused (F15), if any. */
+type Ran = CommandResult & { undoReplan?: Op[] };
+
 /**
  * Plain commands in the free text (time-first §1 rule 9), each against the
  * plan as it is after the one before. Lines that aren't commands, or name
@@ -574,9 +577,9 @@ async function runCommands(
   text: string,
   today: string,
   tomorrow: string,
-): Promise<{ done: CommandResult[]; rest: string[] }> {
+): Promise<{ done: Ran[]; rest: string[] }> {
   const { commands, rest } = readLines(text);
-  const done: CommandResult[] = [];
+  const done: Ran[] = [];
   for (const { line, command } of commands) {
     const [todayBlocks, tomorrowBlocks, tasks] = await Promise.all([
       query<CommandBlock & Row>(TODAY_BLOCKS_SQL, [today]),
@@ -608,8 +611,7 @@ async function runCommands(
         () => ulid(),
         systemClock.now(),
       );
-      if (undoReplan) done.push({ ...result, undo: [...undoReplan, ...result.undo] });
-      else done.push(result);
+      done.push(undoReplan ? { ...result, undoReplan } : result);
       continue;
     }
     done.push(result);
@@ -621,9 +623,7 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
   const start = logicalDayStart(tomorrow);
   const [ready, setReady] = useState(false);
   const [mind, setMind] = useState("");
-  const [results, setResults] = useState<{ id: string; result: CommandResult; undone: boolean }[]>(
-    [],
-  );
+  const [results, setResults] = useState<{ id: string; result: Ran; undone: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   // The text left after the last run: pressing again sends it on unchanged,
@@ -665,7 +665,12 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
   const undo = (id: string) => {
     const entry = results.find((r) => r.id === id);
     if (!entry || entry.undone) return;
-    void transact("user", entry.result.undo, "review:command:undo")
+    // The replan the command caused goes back as the system's, so its blocks
+    // aren't counted as yours (F15); then the command's own undo.
+    const undoReplan = entry.result.undoReplan;
+    void (undoReplan ? replanUndoOps(query, undoReplan) : Promise.resolve([]))
+      .then((ops) => (ops.length > 0 ? transact("system", ops, "day-plan") : undefined))
+      .then(() => transact("user", entry.result.undo, "review:command:undo"))
       .then(() => setResults((old) => old.map((r) => (r.id === id ? { ...r, undone: true } : r))))
       .catch((error: unknown) =>
         setFailed(`Couldn't undo: ${error instanceof Error ? error.message : String(error)}`),
