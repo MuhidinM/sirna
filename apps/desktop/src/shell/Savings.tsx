@@ -20,6 +20,9 @@ import { RATES_SQL, readRates, toEtb } from "../features/money/currency";
 import {
   addGoalOps,
   assignOps,
+  claimOps,
+  HELD_BY_ACCOUNT_SQL,
+  unclaimed,
   checkGoal,
   checkGoalEdit,
   checkTakeOut,
@@ -98,6 +101,7 @@ function useMoneyAccounts() {
   const accounts = useLiveQuery<Rows<AccountRow>>(ACCOUNTS_SQL);
   const rates = useLiveQuery<{ value_json: string }>(RATES_SQL);
   return {
+    all: accounts.rows,
     spend: spending(accounts.rows),
     savings: accounts.rows.filter(isSavings),
     pay: payAccount(spending(accounts.rows)),
@@ -478,10 +482,78 @@ function GiveTo({ minor, goals }: { minor: number; goals: GoalRow[] }) {
   );
 }
 
+/**
+ * Money already in a savings account that no goal holds (it was there before
+ * the account backed the goals): give some or all of it to a goal, no move.
+ */
+function Unclaimed({
+  account,
+  minor,
+  goals,
+}: {
+  account: AccountRow;
+  minor: number;
+  goals: GoalRow[];
+}) {
+  const [goalId, setGoalId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const give = () => {
+    const chosen = amount.trim() === "" ? minor : parseAmount(amount.trim());
+    if (chosen === null || chosen <= 0)
+      return setNote("An amount like 5,000, or leave it empty for all.");
+    if (chosen > minor) return setNote(`At most ${formatAmount(minor)}.`);
+    const now = systemClock.now();
+    setNote("");
+    void transact(
+      "user",
+      claimOps(goalId, account.id, chosen, now, logicalDate(now), ulid()),
+      "savings",
+    ).catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+  };
+  return (
+    <p className="row meta">
+      {account.name} holds {formatAmount(minor)} no goal has yet
+      {currencyOf(account) !== "ETB" ? " (in birr at your rate)" : ""}.
+      {goals.length > 0 ? (
+        <>
+          <select
+            aria-label={`Give from ${account.name} to`}
+            value={goalId}
+            onChange={(e) => setGoalId(e.target.value)}
+          >
+            <option value="">Give it to…</option>
+            {goals.map((goal) => (
+              <option key={goal.id} value={goal.id}>
+                {goal.title}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="How much (empty: all)"
+            placeholder="all"
+            inputMode="decimal"
+            size={9}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <Button disabled={!goalId} onClick={give}>
+            Give
+          </Button>
+        </>
+      ) : (
+        " Add a goal to give it one."
+      )}
+      {note && <span role="alert"> {note}</span>}
+    </p>
+  );
+}
+
 /** Savings goals with their plants, and a garden of finished ones (plan §3.13). */
 export function Savings() {
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
   const waiting = useLiveQuery<{ minor: number; n: number }>(UNASSIGNED_SQL);
+  const heldBy = useLiveQuery<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL);
   const accounts = useMoneyAccounts();
   useSavingsSync();
   const backing = accounts.savings.map((row) => row.name).join(", ");
@@ -519,6 +591,10 @@ export function Savings() {
       />
       {adding && <NewGoal onDone={() => setAdding(false)} />}
       {unassigned && unassigned.n > 0 && <GiveTo minor={unassigned.minor} goals={growing} />}
+      {!heldBy.loading &&
+        unclaimed(accounts.all, heldBy.rows, accounts.rates).map(({ account, minor }) => (
+          <Unclaimed key={account.id} account={account} minor={minor} goals={growing} />
+        ))}
       {!goals.loading && growing.length === 0 && !adding && (
         <p className="empty">No goals yet. Add one with New goal and watch its plant grow.</p>
       )}

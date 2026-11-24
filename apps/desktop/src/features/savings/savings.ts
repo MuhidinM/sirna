@@ -491,3 +491,58 @@ export function goalPace(goal: GoalRow, today: string): GoalPace {
   const needPerMonth = Math.ceil(left / monthsLeft / 100) * 100;
   return { left, needPerMonth, averagePerMonth, monthsLeft };
 }
+
+/** What each account's goal entries hold (?: none). Entries are in ETB worth. */
+export const HELD_BY_ACCOUNT_SQL = `SELECT account, COALESCE(sum(amount_minor), 0) AS minor
+  FROM savings_entries WHERE deleted_at IS NULL AND account IS NOT NULL GROUP BY account`;
+
+/**
+ * Money already in a savings account that no goal holds yet: the balance
+ * (in ETB at its rate) less what goal entries in that account hold. Money
+ * that was there before the account backed the goals shows up here, so it
+ * can be given to a goal without moving it (r2-18).
+ */
+export function unclaimed(
+  accounts: AccountRow[],
+  held: { account: string; minor: number }[],
+  rates: Rates,
+): { account: AccountRow; minor: Santim }[] {
+  return accounts.filter(isSavingsAccount).flatMap((account) => {
+    if (account.opening_date === null) return [];
+    const balance = account.opening_minor + account.moved_minor;
+    const currency = account.currency ?? "ETB";
+    const worth = currency === "ETB" ? balance : toEtb(balance, currency, rates);
+    if (worth === null) return [];
+    const minor = worth - (held.find((row) => row.account === account.id)?.minor ?? 0);
+    return minor > 0 ? [{ account, minor }] : [];
+  });
+}
+
+const isSavingsAccount = (account: AccountRow) => account.is_savings === 1;
+
+/** Gives money already in a savings account to a goal: an entry, no money moves. */
+export function claimOps(
+  goalId: string,
+  account: string,
+  minor: Santim,
+  nowMs: number,
+  localDate: string,
+  id: string,
+): Op[] {
+  return [
+    {
+      op: "insert",
+      table: "savings_entries",
+      id,
+      values: {
+        goal_id: goalId,
+        occurred_at: nowMs,
+        local_date: localDate,
+        amount_minor: minor,
+        note: "Already in the account",
+        origin: "claim",
+        account,
+      },
+    },
+  ];
+}

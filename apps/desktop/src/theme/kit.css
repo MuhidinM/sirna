@@ -758,6 +758,11 @@ button.month-day:hover {
   z-index: 1;
 }
 
+.event-at {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .event-due {
   opacity: 0.75;
   font-weight: 500;

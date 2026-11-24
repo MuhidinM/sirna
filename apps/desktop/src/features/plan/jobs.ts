@@ -14,7 +14,7 @@
 export const AREA_TASKS_SQL = `
   SELECT t.id, t.title, t.area_id, t.status,
          CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date,
-         t.planned_date, t.created_at
+         t.planned_date, t.created_at, t.due_at
   FROM task_items t
   JOIN area_items a ON a.id = t.area_id AND a.deleted_at IS NULL
   WHERE t.deleted_at IS NULL AND t.status = 'todo'
@@ -35,6 +35,8 @@ export interface JobTask {
   due_date: string | null;
   planned_date: string | null;
   created_at: number;
+  /** Its time, when it has one: it is listed in the block of its area at that time. */
+  due_at?: number | null;
 }
 
 export const JOB_TASKS_SHOWN = 5;
@@ -107,6 +109,7 @@ export function blockTaskLists(
     id: string;
     area_id: string | null;
     kind: string;
+    start_at?: number;
     end_at: number;
     task_id: string | null;
     title: string;
@@ -115,13 +118,37 @@ export function blockTaskLists(
   rows: JobTask[],
   nowMs: number,
 ): Map<string, JobTask[]> {
+  // A task with a time sits in its area's block at that time (Job A at 10:00),
+  // first, by time; it isn't listed again in the area's other list.
   const shown = new Set(blocks.flatMap((block) => (block.task_id ? [block.task_id] : [])));
-  const byArea = tasksByJob(rows, shown);
+  const timed = new Map<string, JobTask[]>();
+  const placed = new Set<string>();
+  for (const row of rows) {
+    if (row.due_at === null || row.due_at === undefined || shown.has(row.id)) continue;
+    const at = row.due_at;
+    const host = blocks.find(
+      (block) =>
+        block.area_id === row.area_id &&
+        block.kind !== "rest" &&
+        !(block.task_id && block.title === block.task_title) &&
+        block.start_at !== undefined &&
+        block.start_at <= at &&
+        at < block.end_at,
+    );
+    if (!host) continue;
+    timed.set(host.id, [...(timed.get(host.id) ?? []), row]);
+    placed.add(row.id);
+  }
+  const byArea = tasksByJob(rows, new Set([...shown, ...placed]));
   const lists = new Map<string, JobTask[]>();
   for (const id of listBlockIds(blocks, undefined, nowMs)) {
     const block = blocks.find((b) => b.id === id);
     const tasks = block?.area_id ? byArea.get(block.area_id) : undefined;
     if (tasks && tasks.length > 0) lists.set(id, tasks);
+  }
+  for (const [id, tasks] of timed) {
+    const sorted = [...tasks].sort((a, b) => (a.due_at ?? 0) - (b.due_at ?? 0));
+    lists.set(id, [...sorted, ...(lists.get(id) ?? [])]);
   }
   return lists;
 }
