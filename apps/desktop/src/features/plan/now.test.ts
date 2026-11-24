@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
 import {
+  lightDayTop,
   type BlockRow,
   blockProgress,
   doneToggle,
@@ -39,6 +40,22 @@ const day = [
   block("email", "10:00", "10:10", "routine"),
   block("gym", "17:30", "18:15", "routine"),
 ];
+
+describe("a light day's Top 3 (F53)", () => {
+  it("keeps one task on a light day and all three on another", () => {
+    const plain = { kind: "area" as const, start_at: 0, end_at: 60 * 60_000 };
+    expect(lightDayTop(["a", "b", "c"], [{ ...plain, light_day: 1 }])).toEqual({
+      light: "drained",
+      top: ["a"],
+    });
+    const rest = { kind: "rest" as const, start_at: 0, end_at: 8 * 60 * 60_000, light_day: 1 };
+    expect(lightDayTop(["a", "b"], [rest]).light).toBe("rest");
+    expect(lightDayTop(["a", "b", "c"], [{ ...plain, light_day: 0 }])).toEqual({
+      light: false,
+      top: ["a", "b", "c"],
+    });
+  });
+});
 
 describe("nowAndNext", () => {
   it("finds the current block and the next one", () => {

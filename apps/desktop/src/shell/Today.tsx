@@ -27,7 +27,7 @@ import {
   todayTopSql,
   WAITING_SQL,
 } from "../features/tasks/today";
-import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { type BlockRow, lightDayTop, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import { INBOX_COUNT_SQL, inboxBadge } from "../features/review/review";
 import { Brief } from "./Brief";
 import { Missed } from "./Missed";
@@ -282,7 +282,9 @@ export function Today({
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
 
-  const topIds = new Set(top.rows.map((task) => task.id));
+  // A light day keeps one task in Top 3 (F53); the rest stay under Also due.
+  const light = lightDayTop(top.rows, blocks.rows);
+  const topIds = new Set(light.top.map((task) => task.id));
   const moreDue = due.rows.filter((task) => !topIds.has(task.id));
   const error =
     top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error ?? blocks.error;
@@ -339,7 +341,7 @@ export function Today({
 
             {/* Away mode pauses the brief (plan §3.11), as the banner says. */}
             {!backOn && !top.loading && !blocks.loading && (
-              <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={top.rows} />
+              <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={light.top} />
             )}
 
             <div className="today-cols">
@@ -347,14 +349,21 @@ export function Today({
                 <WeekOutcomes monday={weekStart(today)} />
 
                 <section aria-labelledby="top3">
-                  <h2 id="top3">Top 3</h2>
+                  <h2 id="top3">{light.light ? "Top task" : "Top 3"}</h2>
+                  {light.light && (
+                    <p className="meta">
+                      {light.light === "rest"
+                        ? "Rest day: one task at most."
+                        : "Light day: two drained nights, so one task is enough."}
+                    </p>
+                  )}
                   {top.rows.length === 0 && !top.loading ? (
                     <p className="empty">
                       Tasks due or planned for today show up here; capture one with a date.
                     </p>
                   ) : (
                     <ul className="task-rows">
-                      {top.rows.map((task) => (
+                      {light.top.map((task) => (
                         <TaskLine key={task.id} task={task} today={today} />
                       ))}
                     </ul>

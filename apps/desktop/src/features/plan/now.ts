@@ -17,6 +17,24 @@ export interface BlockRow {
   task_completed_at?: number | null;
   /** Minutes of finished focus sessions on this block (paused time left out). */
   focused_min?: number | null;
+  /** 1 when the planner made the day light (two drained nights, plan §3.7). */
+  light_day?: number | null;
+}
+
+/**
+ * A light day (F53) keeps one task in Top 3; the others move to Also due.
+ * Light when the planner made any block of the day light: a rest day (a Rest
+ * block of 6 hours or more) or two drained nights.
+ */
+export function lightDayTop<T>(
+  top: T[],
+  blocks: Pick<BlockRow, "light_day" | "kind" | "start_at" | "end_at">[],
+): { light: false | "rest" | "drained"; top: T[] } {
+  if (!blocks.some((block) => block.light_day === 1)) return { light: false, top };
+  const rest = blocks.some(
+    (block) => block.kind === "rest" && block.end_at - block.start_at >= 6 * 60 * 60_000,
+  );
+  return { light: rest ? "rest" : "drained", top: top.slice(0, 1) };
 }
 
 /** A block counts as done when you mark it, or when focus covered this much of it. */
@@ -67,7 +85,7 @@ const settled = (block: BlockRow) => block.status === "done" || block.status ===
 
 export const TODAY_BLOCKS_SQL = `
   SELECT b.id, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title, b.status,
-         a.color, t.title AS task_title, t.due_at AS task_due_at, t.remind_at AS task_remind_at,
+         b.light_day, a.color, t.title AS task_title, t.due_at AS task_due_at, t.remind_at AS task_remind_at,
          t.status AS task_status, t.completed_at AS task_completed_at,
          (SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
             FROM focus_sessions AS f
