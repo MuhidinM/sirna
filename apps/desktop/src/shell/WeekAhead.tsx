@@ -10,6 +10,7 @@ import {
   inboxBadge,
   sortInbox,
   type SortChoice,
+  SORTED,
 } from "../features/review/review";
 import {
   MAX_OUTCOMES,
@@ -38,7 +39,7 @@ export function WeekAhead({ today }: { today: string }) {
   const saved = useLiveQuery<{ value_json: string | null }>(WEEK_PLAN_SQL, [planKey(monday)]);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_TWO_SQL);
   const inboxTotal = useLiveQuery<{ n: number }>(INBOX_COUNT_SQL).rows[0]?.n ?? 0;
-  const [lastSort, setLastSort] = useState<{ body: string; undo: Op[] }>();
+  const [lastSort, setLastSort] = useState<{ body: string; choice: SortChoice; undo: Op[] }>();
   const [editing, setEditing] = useState(false);
   const [drafts, setDrafts] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +66,7 @@ export function WeekAhead({ today }: { today: string }) {
   const sort = (note: { id: string; body: string }, choice: SortChoice) => {
     const sorted = sortInbox(note, choice, () => ulid());
     void write(sorted.ops).then((saved) => {
-      if (saved) setLastSort({ body: note.body, undo: sorted.undo });
+      if (saved) setLastSort({ body: note.body, choice, undo: sorted.undo });
     });
   };
   const showTriage =
@@ -105,7 +106,7 @@ export function WeekAhead({ today }: { today: string }) {
             </h3>
             {lastSort && (
               <p className="meta" role="status">
-                Sorted: {lastSort.body}{" "}
+                {SORTED[lastSort.choice]}: {lastSort.body}{" "}
                 <button
                   type="button"
                   className="link-btn"

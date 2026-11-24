@@ -166,6 +166,13 @@ export function inboxBadge(shown: number, total: number): string {
 
 export type SortChoice = "task" | "note" | "drop";
 
+/** What a sort did, for its undo line (Night review and the week ahead say it the same way). */
+export const SORTED: Record<SortChoice, string> = {
+  task: "Made a task",
+  note: "Kept as a note",
+  drop: "Dropped",
+};
+
 /**
  * [Task] [Note] [Drop] on a loose capture, with the writes that take it back
  * (Undo on the card): the note returns to the inbox, a new task is deleted.

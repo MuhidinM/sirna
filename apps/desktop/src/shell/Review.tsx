@@ -35,6 +35,7 @@ import {
   reviewOps,
   sortInbox,
   type SortChoice,
+  SORTED,
   SPENT_LIST_SQL,
 } from "../features/review/review";
 import {
@@ -191,12 +192,6 @@ export function Review({ onClose }: { onClose: () => void }) {
     </main>
   );
 }
-
-const SORTED: Record<SortChoice, string> = {
-  task: "Made a task",
-  note: "Kept as a note",
-  drop: "Dropped",
-};
 
 const ENERGY: [number, string, string, Tone][] = [
   [1, "1", "drained", "pink"],

@@ -90,16 +90,21 @@ export interface FoundRow extends CheatRow {
 
 /** What `?` searches: kept cheat lines and notes, and open tasks. */
 export const FIND_SQL = `
-  SELECT n.id, n.body, n.area_id, a.name AS area_name,
-         CASE WHEN n.kind = 'cheat' THEN 'cheat' ELSE 'note' END AS kind
-  FROM note_items AS n
-  LEFT JOIN area_items AS a ON a.id = n.area_id AND a.deleted_at IS NULL
-  WHERE n.kind IN ('cheat', 'note', 'feedback') AND n.status = 'kept' AND n.deleted_at IS NULL
-  UNION ALL
-  SELECT t.id, t.title, t.area_id, a.name, 'task'
-  FROM task_items AS t
-  LEFT JOIN area_items AS a ON a.id = t.area_id AND a.deleted_at IS NULL
-  WHERE t.deleted_at IS NULL AND t.status IN ('todo', 'waiting', 'someday')`;
+  SELECT id, body, area_id, area_name, kind FROM (
+    SELECT n.id, n.body, n.area_id, a.name AS area_name,
+           CASE WHEN n.kind = 'cheat' THEN 'cheat' ELSE 'note' END AS kind,
+           a.priority_rank AS rank, n.sort_order AS sort_order, n.created_at AS created_at
+    FROM note_items AS n
+    LEFT JOIN area_items AS a ON a.id = n.area_id AND a.deleted_at IS NULL
+    WHERE n.kind IN ('cheat', 'note', 'feedback') AND n.status = 'kept' AND n.deleted_at IS NULL
+    UNION ALL
+    SELECT t.id, t.title, t.area_id, a.name, 'task', a.priority_rank, NULL, t.created_at
+    FROM task_items AS t
+    LEFT JOIN area_items AS a ON a.id = t.area_id AND a.deleted_at IS NULL
+    WHERE t.deleted_at IS NULL AND t.status IN ('todo', 'waiting', 'someday'))
+  -- The cards' order (CHEAT_SQL): by area priority, General last, then as kept.
+  ORDER BY area_id IS NULL, rank IS NULL, rank, area_id,
+           sort_order IS NULL, sort_order, created_at, id`;
 
 export interface Found {
   id: string;
@@ -120,7 +125,8 @@ export function find(rows: FoundRow[], query: string): Found[] {
   const order: FoundKind[] = ["cheat", "note", "task"];
   return rows
     .map((row) => {
-      const area = row.area_id ? cardTitle(row) : "";
+      // An area-less cheat line is on the General card, so "general" finds it.
+      const area = row.area_id || row.kind === "cheat" ? cardTitle(row) : "";
       return { row, area };
     })
     .filter(({ row, area }) => {

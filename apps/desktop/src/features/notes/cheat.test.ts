@@ -148,6 +148,11 @@ describe("notes and `?` search", () => {
       ["t1", "Task · Job hunt"],
     ]);
     expect(find(found, "reset").map((hit) => hit.label)).toEqual(["Cheat · Coding skills"]);
+    pin(db, "pin: wifi password on the fridge", "c2");
+    const again = db.prepare(FIND_SQL).all() as unknown as FoundRow[];
+    expect(find(again, "general").map((hit) => [hit.id, hit.label])).toEqual([
+      ["c2", "Cheat · General"],
+    ]);
     const notes = db.prepare(NOTES_SQL).all() as unknown as FoundRow[];
     expect(notes.map((note) => note.id).sort()).toEqual(["n1", "n2"]);
   });
