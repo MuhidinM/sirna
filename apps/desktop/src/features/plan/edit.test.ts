@@ -87,8 +87,16 @@ describe("move and resize (15-minute steps)", () => {
   it("stays inside the logical day", () => {
     expect(moveSpan({ startMin: 200, endMin: 260 }, -120)).toEqual({ startMin: 180, endMin: 240 });
     expect(moveSpan({ startMin: 1560, endMin: 1600 }, 120)).toEqual({
-      startMin: 1580,
-      endMin: 1620,
+      startMin: 1575,
+      endMin: 1615,
+    });
+  });
+
+  it("keeps an odd-length block on a 15-minute line at the end of the day", () => {
+    // 18:30-19:27 dragged 12 hours down lands at 02:00, not 02:03.
+    expect(moveSpan({ startMin: 1110, endMin: 1167 }, 720)).toEqual({
+      startMin: 1560,
+      endMin: 1617,
     });
   });
 

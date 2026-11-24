@@ -74,10 +74,10 @@ export function spanOf(date: string, block: Pick<EditBlock, "start_at" | "end_at
 /** Moved by `deltaMin`, its start on a 15-minute line, kept inside the logical day. */
 export function moveSpan(span: Span, deltaMin: number): Span {
   const length = span.endMin - span.startMin;
-  const start = Math.max(
-    DAY_START_MIN,
-    Math.min(DAY_END_MIN - length, snap(span.startMin + deltaMin)),
-  );
+  // The latest start is rounded down to the grid, so a block of an odd length
+  // pushed against the day's end still starts on a 15-minute line.
+  const latest = Math.floor((DAY_END_MIN - length) / SNAP_MIN) * SNAP_MIN;
+  const start = Math.max(DAY_START_MIN, Math.min(latest, snap(span.startMin + deltaMin)));
   return { startMin: start, endMin: start + length };
 }
 
