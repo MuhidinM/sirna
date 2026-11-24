@@ -18,7 +18,10 @@ const CURRENCY_WORDS = /\b(etb|birr|br)\b\.?/gi;
 export function parseAmount(text: string): Santim | null {
   let cleaned = text.trim().toLowerCase();
   cleaned = cleaned.replace(/(\d)(etb|birr|br)\b/g, "$1 ").replace(CURRENCY_WORDS, "");
-  cleaned = cleaned.replace(/[\s,]/g, "");
+  cleaned = cleaned.replace(/\s/g, "");
+  // A comma only groups thousands: "45,50" or "1,2,3" is not an amount.
+  if (cleaned.includes(",") && !/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?k?$/.test(cleaned)) return null;
+  cleaned = cleaned.replace(/,/g, "");
 
   let multiplier = 1;
   if (cleaned.endsWith("k")) {
