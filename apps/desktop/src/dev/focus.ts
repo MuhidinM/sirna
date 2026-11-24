@@ -35,6 +35,8 @@ export interface Session {
   title: string;
   extended: boolean;
   break_min: number;
+  /** Distracted (+1) taps on this session; the card shows them. */
+  distractions: number;
 }
 
 export const endsAt = (session: Session) =>
@@ -110,12 +112,22 @@ export function handle(machine: Machine, event: Event, now: number): Effect[] {
       machine.current = null;
       if (!session) return [];
       if (session.kind === "focus") machine.last_focus_end = now;
-      return [{ type: "close", id: session.id, at: now, outcome: "stopped" }];
+      const effects: Effect[] = [];
+      // An open pause is pause time, not focus: fold it in before closing.
+      if (session.paused_at !== null) {
+        session.paused_ms += now - session.paused_at;
+        session.paused_at = null;
+        effects.push({ type: "save", session: { ...session } });
+      }
+      effects.push({ type: "close", id: session.id, at: now, outcome: "stopped" });
+      return effects;
     }
-    case "distracted":
-      return machine.current?.kind === "focus"
-        ? [{ type: "add_distraction", id: machine.current.id }]
-        : [];
+    case "distracted": {
+      const session = machine.current;
+      if (session?.kind !== "focus") return [];
+      session.distractions += 1;
+      return [{ type: "add_distraction", id: session.id }];
+    }
     case "extend":
       return extend(machine, event.id, now);
   }
@@ -145,6 +157,7 @@ function start(machine: Machine, context: Context, force: boolean, id: string, n
     title: context.title,
     extended: false,
     break_min: Math.max(context.break_min, 0),
+    distractions: 0,
   };
   effects.push({ type: "save", session: { ...session } });
   machine.current = session;
@@ -179,6 +192,7 @@ function tick(machine: Machine, now: number): Effect[] {
       planned_min: minutes,
       paused_at: null,
       paused_ms: 0,
+      distractions: 0,
     };
     effects.push({ type: "save", session: { ...rest } });
     effects.push({ type: "break_started", minutes, long, can_extend: !long && !session.extended });
@@ -204,6 +218,7 @@ function extend(machine: Machine, id: string, now: number): Effect[] {
     paused_at: null,
     paused_ms: 0,
     extended: true,
+    distractions: 0,
   };
   machine.in_row = Math.max(0, machine.in_row - 1);
   machine.current = focus;
@@ -225,6 +240,7 @@ export function status(machine: Machine, now: number) {
       paused: false,
       in_row: machine.in_row,
       block_id: null,
+      distractions: 0,
     };
   return {
     kind: session.kind,
@@ -234,6 +250,7 @@ export function status(machine: Machine, now: number) {
     paused: session.paused_at !== null,
     in_row: machine.in_row,
     block_id: session.block_id,
+    distractions: session.distractions,
   };
 }
 
@@ -411,7 +428,7 @@ export function restore(conn: Conn, now: number): Machine {
   const open = first(
     conn,
     `SELECT s.id, s.kind, s.started_at, s.planned_min, s.paused_at, s.paused_ms, s.block_id,
-            s.area_id, s.task_id, s.extended,
+            s.area_id, s.task_id, s.extended, s.distractions,
             COALESCE(f.intent_text, b.title, a.name, 'Focus') AS title, COALESCE(a.break_min, 5) AS break_min
      FROM focus_sessions AS s
      LEFT JOIN day_blocks AS b ON b.id = s.block_id
@@ -433,6 +450,7 @@ export function restore(conn: Conn, now: number): Machine {
         extended: Number(open.extended) === 1,
         title: String(open.title),
         break_min: Number(open.break_min),
+        distractions: Number(open.distractions),
       }
     : null;
   const recent = conn.all(

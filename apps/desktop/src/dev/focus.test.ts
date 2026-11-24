@@ -21,6 +21,7 @@ import {
   type Machine,
   removeOtherBlock,
   restore,
+  status,
   todayBlocks,
 } from "./focus";
 import { openIntent, setupStart, tickThrough, type Toast, type World } from "./runtime";
@@ -147,6 +148,35 @@ describe("the focus machine", () => {
     expect(m.current).toBeNull();
   });
 
+  it("stopping while paused keeps the pause out of focus time", () => {
+    const m = emptyMachine();
+    start(m, T0, 1);
+    handle(m, { type: "pause" }, T0 + minutes(5));
+    const effects = handle(m, { type: "stop" }, T0 + minutes(50));
+    const saved = effects.find((e) => e.type === "save");
+    expect(saved?.type === "save" && [saved.session.paused_ms, saved.session.paused_at]).toEqual([
+      minutes(45),
+      null,
+    ]);
+    expect(effects.at(-1)).toEqual({
+      type: "close",
+      id: "s1",
+      at: T0 + minutes(50),
+      outcome: "stopped",
+    });
+  });
+
+  it("counts distractions on the session", () => {
+    const m = emptyMachine();
+    start(m, T0, 1);
+    expect(status(m, T0).distractions).toBe(0);
+    handle(m, { type: "distracted" }, T0 + 1);
+    handle(m, { type: "distracted" }, T0 + 2);
+    expect(status(m, T0 + 3).distractions).toBe(2);
+    handle(m, { type: "stop" }, T0 + 4);
+    expect(status(m, T0 + 5).distractions).toBe(0);
+  });
+
   it("extends once from a short break", () => {
     const m = emptyMachine();
     start(m, T0, 1);
@@ -193,6 +223,39 @@ describe("focus in the database", () => {
       "completed",
     );
     expect(restore(c, T0 + minutes(26)).in_row).toBe(1);
+  });
+
+  const startPlain = (m: Machine, now: number) =>
+    handle(
+      m,
+      {
+        type: "start",
+        context: { ...context(), block_id: null, area_id: null, title: "Focus" },
+        force: false,
+        id: "s1",
+      },
+      now,
+    );
+
+  it("a session stopped while paused counts only the time before the pause", () => {
+    const c = conn();
+    const m = emptyMachine();
+    applyDb(c, startPlain(m, T0));
+    applyDb(c, handle(m, { type: "pause" }, T0 + minutes(5)));
+    applyDb(c, handle(m, { type: "stop" }, T0 + minutes(50)));
+    const row = c.all(
+      "SELECT (ended_at - started_at - paused_ms) / 60000 AS focus, paused_at FROM focus_sessions WHERE id = 's1'",
+    )[0];
+    expect([row?.focus, row?.paused_at]).toEqual([5, null]);
+  });
+
+  it("the distraction count survives a restart", () => {
+    const c = conn();
+    const m = emptyMachine();
+    applyDb(c, startPlain(m, T0));
+    applyDb(c, handle(m, { type: "distracted" }, T0 + 1));
+    applyDb(c, handle(m, { type: "distracted" }, T0 + 2));
+    expect(status(restore(c, T0 + minutes(1)), T0 + minutes(1)).distractions).toBe(2);
   });
 
   it("a session uses its area's lengths", () => {
