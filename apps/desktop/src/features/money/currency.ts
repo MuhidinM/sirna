@@ -135,6 +135,27 @@ export function exchangeAt(
   return out === null ? { missing: to } : { minor: out };
 }
 
+/**
+ * An entry moved to an account in another currency (F71): the same value in
+ * the new currency, and a line saying so. Without a rate the number stays
+ * and the line asks you to check it.
+ */
+export function switchCurrency(
+  minor: Santim | null,
+  from: string,
+  to: string,
+  rates: Rates,
+): { minor: Santim | null; note: string | null } {
+  if (minor === null || from === to) return { minor, note: null };
+  const out = exchangeAt(minor, from, to, rates);
+  if ("missing" in out) return { minor, note: `No ${out.missing} rate set: check the amount.` };
+  const foreign = from === HOME ? to : from;
+  return {
+    minor: out.minor,
+    note: `Converted ${formatAmount(minor, from)} to ${formatAmount(out.minor, to)} ${rateText(foreign, rates)}.`,
+  };
+}
+
 /** "at 132.50" for a currency with a rate, else "". */
 export const rateText = (currency: string, rates: Rates) =>
   rates[currency] ? `at ${rates[currency].rate}` : "";

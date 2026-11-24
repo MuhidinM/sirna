@@ -12,6 +12,7 @@ import {
   RATES_KEY,
   rateOps,
   readRates,
+  switchCurrency,
   toEtb,
 } from "./currency";
 import { balances, type LoanEvent, LOANS_SQL, loanOps, owedInEtb } from "./loans";
@@ -35,6 +36,23 @@ const account = (over: Partial<AccountRow>): AccountRow => ({
 });
 
 describe("rates (time-first §3)", () => {
+  it("keeps the value, not the number, when an entry moves to another currency (F71)", () => {
+    expect(switchCurrency(400, "USD", "ETB", RATES)).toEqual({
+      minor: 53_000,
+      note: "Converted $4 to 530 ETB at 132.50.",
+    });
+    expect(switchCurrency(53_000, "ETB", "USD", RATES)).toEqual({
+      minor: 400,
+      note: "Converted 530 ETB to $4 at 132.50.",
+    });
+    expect(switchCurrency(400, "USD", "ETB", {})).toEqual({
+      minor: 400,
+      note: "No USD rate set: check the amount.",
+    });
+    expect(switchCurrency(400, "ETB", "ETB", RATES)).toEqual({ minor: 400, note: null });
+    expect(switchCurrency(null, "USD", "ETB", RATES)).toEqual({ minor: null, note: null });
+  });
+
   it("converts with integers, rounding half up", () => {
     expect(toEtb(10_000, "USD", RATES)).toBe(1_325_000); // $100 → 13,250 ETB
     expect(toEtb(12_345, "USD", RATES)).toBe(1_635_713); // $123.45 × 132.50 = 16,357.125

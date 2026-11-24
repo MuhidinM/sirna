@@ -78,6 +78,7 @@ import {
   rateOps,
   readRates,
   sumInEtb,
+  switchCurrency,
   syncRateBox,
 } from "../features/money/currency";
 import {
@@ -1245,6 +1246,8 @@ function TxnForm({
     initial.amount > 0 ? String(initial.amount / 100) : "",
   );
   const [error, setError] = useState<string | null>(null);
+  const [converted, setConverted] = useState<string | null>(null);
+  const { rates } = useRates();
   const set = (part: Partial<TxnDraft>) => setDraft((old) => ({ ...old, ...part }));
   const shown = categories.filter(
     (category) => category.kind === (draft.kind === "in" ? "income" : "expense"),
@@ -1318,7 +1321,19 @@ function TxnForm({
         </label>
         <label className="money-field">
           <span>Account</span>
-          <select value={accountId} onChange={(e) => set({ account: e.target.value })}>
+          <select
+            value={accountId}
+            onChange={(e) => {
+              // $4 moved to birr Cash stays worth $4, not 4 birr (F71).
+              const next = currencyOf(accounts.find((account) => account.id === e.target.value));
+              const typed = parseAmount(amountText);
+              const switched = switchCurrency(typed, currency, next, rates);
+              if (switched.minor !== null && switched.minor !== typed)
+                setAmountText(String(switched.minor / 100));
+              if (next !== currency) setConverted(switched.note);
+              set({ account: e.target.value });
+            }}
+          >
             {accounts.map((account) => (
               <option key={account.id} value={account.id}>
                 {account.name}
@@ -1332,6 +1347,11 @@ function TxnForm({
           <input type="date" value={draft.date} onChange={(e) => set({ date: e.target.value })} />
         </label>
       </div>
+      {converted && (
+        <p className="meta" role="status">
+          {converted}
+        </p>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
