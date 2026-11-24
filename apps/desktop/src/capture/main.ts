@@ -12,9 +12,9 @@ import { readings } from "./alternatives";
 import { CAPTURE_MADE_SQL, fixBlocked, fixReading, madeKind, type MadeRow } from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
-import { matchGoal } from "../features/savings/savings";
+import { loadSavingsContext, matchGoal, type SavingsContext } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
-import { affordState, echo as echoLine, ideaInput, toOps } from "./ops";
+import { affordState, echo as echoLine, ideaInput, type SavingGoal, toOps } from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
 import { RATES_SQL, readRates } from "../features/money/currency";
 import { affordAnswer } from "../features/money/affordLoad";
@@ -266,35 +266,38 @@ form.addEventListener("submit", (event) => {
       : Promise.resolve(undefined);
   let idea: Placement | undefined;
   // A saving goes to the goal it names, or the only one (plan §3.13).
-  let savingGoal: { id: string; title: string } | null | undefined;
-  type Goal = { id: string; title: string; status: "active" | "done" | "paused" };
+  let savingGoal: SavingGoal | null | undefined;
   // A transfer into or out of a savings account is saving too (time-first §4).
   const savesSomething = (item: Parsed) =>
     item.kind === "saving" || (item.kind === "transfer" && item.saving !== undefined);
   const hasSaving =
     savesSomething(parsed) || (parsed.kind === "money" && parsed.items.some(savesSomething));
-  const goalRows: Promise<Goal[]> = hasSaving
-    ? query<Goal>("SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL").catch(
-        () => [],
-      )
-    : Promise.resolve([]);
-  const goalOf = (goals: Goal[]) => (words: string | undefined) => {
-    const id = matchGoal(goals, words);
-    const goal = goals.find((row) => row.id === id);
-    return goal ? { id: goal.id, title: goal.title } : null;
+  // What the goals and savings accounts hold, so a take-out keeps the goal
+  // card's limits (F8) and a saving knows what an account holds unclaimed.
+  const empty: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null };
+  const goalRows: Promise<SavingsContext> = hasSaving
+    ? loadSavingsContext(query as Query, moneyContext.rates ?? {}).catch(() => empty)
+    : Promise.resolve(empty);
+  const goalOf = (context: SavingsContext) => (words: string | undefined, minor?: number) => {
+    const id =
+      words === undefined && minor !== undefined
+        ? context.ripe(minor)
+        : matchGoal(context.goals, words);
+    return context.goals.find((row) => row.id === id) ?? null;
   };
-  const goalFor: Promise<{ id: string; title: string } | null | undefined> =
+  const goalFor: Promise<SavingGoal | null | undefined> =
     parsed.kind === "saving"
-      ? goalRows.then((goals) => goalOf(goals)(parsed.goal))
+      ? goalRows.then((context) => goalOf(context)(parsed.goal))
       : Promise.resolve(undefined);
   // A fix undoes the old capture and saves the new one in one transaction.
-  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, goals]) => {
+  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, context]) => {
     idea = placement;
     savingGoal = goal;
     const ops = toOps(parsed, {
       nowMs,
       newId: () => ulid(),
-      goalOf: goalOf(goals),
+      goalOf: goalOf(context),
+      unclaimed: context.unclaimed,
       ...(placement ? { idea: placement } : {}),
       ...(goal !== undefined ? { savingGoal: goal } : {}),
     });
