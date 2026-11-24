@@ -402,15 +402,22 @@ export function toCsv(rows: TxnRow[]): string {
   )) {
     const abs = Math.abs(row.amount_minor);
     const birr = `${Math.floor(abs / SANTIM_PER_BIRR)}.${String(abs % SANTIM_PER_BIRR).padStart(2, "0")}`;
+    // A move between your accounts or a loan is not spending or income (F66).
+    const way = row.amount_minor > 0 ? "in" : "out";
+    const kind = row.transfer_id?.startsWith("loan:")
+      ? `loan ${way}`
+      : row.transfer_id
+        ? `transfer ${way}`
+        : way;
     lines.push(
       [
         row.local_date,
-        row.amount_minor > 0 ? "in" : "out",
+        kind,
         birr,
         row.currency ?? "ETB",
         csvCell(row.category ?? ""),
         csvCell(row.description),
-        csvCell(row.account),
+        csvCell(row.account_name ?? row.account),
       ].join(","),
     );
   }
