@@ -9,6 +9,7 @@ import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db"
 import { ulid } from "../kernel/ulid";
 import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
 import { readings } from "./alternatives";
+import { CAPTURE_MADE_SQL, fixBlocked, fixReading, madeKind, type MadeRow } from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
 import { matchGoal } from "../features/savings/savings";
@@ -63,6 +64,8 @@ let options: Parsed[] = [];
 let picked = 0;
 /** Set while fixing the last capture with Up arrow: saving replaces it. */
 let editing: { id: number; body: string } | undefined;
+/** What the capture being fixed made: the box keeps to that reading. */
+let fixKind: Parsed["kind"] | undefined;
 /** True while a save, fix or undo is in flight. */
 let busy = false;
 
@@ -78,54 +81,80 @@ ready();
 // arrow work at once (time-first §2). The bar is hidden and shown, not rebuilt.
 const focusInput = () => {
   if (!input.disabled) input.focus();
+  loadContext();
 };
 window.addEventListener("focus", focusInput);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") focusInput();
 });
 
-// "at 3" follows a one-time setting (plan §3.5); western until it is set.
-void query<{ value_json: string }>("SELECT value_json FROM core_settings WHERE key = ?", [
-  "capture.clock_style",
-])
-  .then(([row]) => {
-    if (row && JSON.parse(row.value_json) === "ethiopian") clockStyle = "ethiopian";
-  })
-  .catch(() => undefined);
+/**
+ * What the parser needs from your data: clock style, goals, categories,
+ * accounts, loans, areas and rates. Read again each time the bar opens, so a
+ * goal or account added since is known (the bar is hidden, not rebuilt).
+ */
+function loadContext() {
+  // "at 3" follows a one-time setting (plan §3.5); western until it is set.
+  void query<{ value_json: string }>("SELECT value_json FROM core_settings WHERE key = ?", [
+    "capture.clock_style",
+  ])
+    .then(([row]) => {
+      if (row && JSON.parse(row.value_json) === "ethiopian") clockStyle = "ethiopian";
+    })
+    .catch(() => undefined);
 
-void query<{ title: string }>(
-  "SELECT title FROM savings_goals WHERE deleted_at IS NULL AND status = 'active'",
-)
-  .then((rows) => {
-    goalNames = rows.map((row) => row.title.toLowerCase());
-  })
-  .catch(() => undefined);
+  void query<{ title: string }>(
+    "SELECT title FROM savings_goals WHERE deleted_at IS NULL AND status = 'active'",
+  )
+    .then((rows) => {
+      goalNames = rows.map((row) => row.title.toLowerCase());
+    })
+    .catch(() => undefined);
 
-void Promise.all([
-  query<{ id: string; name: string; kind: "expense" | "income" }>(CATEGORIES_SQL),
-  query<{ id: string; category_id: string }>(LEARNED_SQL),
-  query<{ id: string; name: string }>(
-    "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
-  ),
-  query<{
-    id: string;
-    name: string;
-    kind: string;
-    pays_in: number;
-    currency: string;
-    is_savings: number;
-  }>(
-    "SELECT id, name, kind, pays_in, currency, is_savings FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
-  ),
-  query<LoanEvent & Record<string, string | number | null>>(LOANS_SQL),
-  // Areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3).
-  query<{ id: string; name: string }>(
-    "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL",
-  ),
-  // Rates, so transfers and savings across currencies are worked out here.
-  query<{ value_json: string }>(RATES_SQL),
-])
-  .then(([categories, learned, jobs, accounts, loans, areas, rates]) => {
+  void Promise.allSettled([
+    query<{ id: string; name: string; kind: "expense" | "income" }>(CATEGORIES_SQL),
+    query<{ id: string; category_id: string }>(LEARNED_SQL),
+    query<{ id: string; name: string }>(
+      "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
+    ),
+    query<{
+      id: string;
+      name: string;
+      kind: string;
+      pays_in: number;
+      currency: string;
+      is_savings: number;
+    }>(
+      "SELECT id, name, kind, pays_in, currency, is_savings FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
+    ),
+    query<LoanEvent & Record<string, string | number | null>>(LOANS_SQL),
+    // Areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3).
+    query<{ id: string; name: string }>(
+      "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL",
+    ),
+    // Rates, so transfers and savings across currencies are worked out here.
+    query<{ value_json: string }>(RATES_SQL),
+  ]).then((results) => {
+    // One failed read leaves that part empty; it never drops the accounts
+    // (r2-5: a line once saved with no accounts and moved no balance).
+    const [categories, learned, jobs, accounts, loans, areas, rates] = results.map((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    ) as [
+      { id: string; name: string; kind: "expense" | "income" }[],
+      { id: string; category_id: string }[],
+      { id: string; name: string }[],
+      {
+        id: string;
+        name: string;
+        kind: string;
+        pays_in: number;
+        currency: string;
+        is_savings: number;
+      }[],
+      (LoanEvent & Record<string, string | number | null>)[],
+      { id: string; name: string }[],
+      { value_json: string }[],
+    ];
     moneyContext = {
       areas,
       categories,
@@ -136,8 +165,10 @@ void Promise.all([
       loanPeople: loanPeople(balances(loans)),
       rates: readRates(rates[0]?.value_json),
     };
-  })
-  .catch(() => undefined);
+  });
+}
+
+loadContext();
 
 function refresh() {
   const text = input.value.trim();
@@ -149,7 +180,8 @@ function refresh() {
         nowMs,
       )
     : [];
-  picked = 0;
+  // While fixing, keep to the kind the capture made as you change the text.
+  picked = editing ? fixReading(options, fixKind) : 0;
   showChip();
 }
 
@@ -340,10 +372,23 @@ document.addEventListener("keydown", (event) => {
         output.textContent = "Nothing to fix yet";
         return;
       }
-      editing = last;
-      input.value = last.body;
-      refresh();
-      input.setSelectionRange(input.value.length, input.value.length);
+      // Start on what the capture made (an idea stays an idea), and leave a
+      // project you have changed since alone (r2-7).
+      void query<MadeRow>(CAPTURE_MADE_SQL, [`capture:${last.id}`])
+        .catch(() => [] as MadeRow[])
+        .then((made) => {
+          if (input.value !== "") return;
+          const blocked = fixBlocked(made);
+          if (blocked) {
+            output.textContent = blocked;
+            return;
+          }
+          editing = last;
+          fixKind = madeKind(made);
+          input.value = last.body;
+          refresh();
+          input.setSelectionRange(input.value.length, input.value.length);
+        });
     });
     return;
   }
