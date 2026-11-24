@@ -374,7 +374,9 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
         <h2 id="safe" className="now-when">
           Safe to spend
         </h2>
-        <span className="time-pill">{safe.daysLeft} days left</span>
+        <span className="time-pill">
+          {safe.daysLeft} {safe.daysLeft === 1 ? "day" : "days"} left
+        </span>
       </div>
       {short ? (
         <p className="money-safe-total">Nothing safe</p>
@@ -669,7 +671,8 @@ function OutByMonth({
 
 function MonthView({ month, today }: { month: string; today: string }) {
   const { summary, history, current, loading } = useMonth(month, today);
-  if (loading) return null;
+  const { safe, loading: safeLoading } = useSafe(today);
+  if (loading || safeLoading) return null;
   const biggest = Math.max(
     1,
     ...summary.categories.map((line) => Math.max(line.spent, line.usual ?? 0)),
@@ -689,7 +692,9 @@ function MonthView({ month, today }: { month: string; today: string }) {
           value={Math.abs(summary.left)}
           approx={approx}
           sub={
-            current && summary.perDay !== null
+            // One "a day" answer per page: once an account has a balance, Safe to
+            // spend gives it, and this month's flow is only the fallback (R-MON-07, F56).
+            current && !safe.known && summary.perDay !== null
               ? `about ${formatAmount(summary.perDay)} a day`
               : undefined
           }
