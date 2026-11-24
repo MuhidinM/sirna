@@ -667,7 +667,10 @@ export function echo(
           : parsed.spend && parsed.savings
             ? parsed.amount > 0
               ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
-              : ` · ${parsed.savings.name} → ${parsed.spend.name}`
+              : // Before Enter the goal's holdings aren't known: no route is promised (F8).
+                savingGoal === undefined
+                ? ""
+                : ` · ${parsed.savings.name} → ${parsed.spend.name}`
             : parsed.savings
               ? ` · from what ${parsed.savings.name} already holds`
               : parsed.unbacked

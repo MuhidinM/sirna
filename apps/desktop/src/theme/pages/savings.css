@@ -102,14 +102,15 @@
 }
 
 /* The shared .icon-btn, made see-through so it sits on the night scene. */
+/* The scene is always night: the pencil is light like the name, not a theme colour (F110). */
 .icon-btn.goal-edit {
-  border: 1px solid rgb(255 255 255 / 12%);
-  background: rgb(255 255 255 / 8%);
-  color: var(--cream);
+  border: 1px solid rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 14%);
+  color: #f3f5f6;
 }
 
 .icon-btn.goal-edit:hover {
-  background: rgb(255 255 255 / 16%);
+  background: rgb(255 255 255 / 24%);
 }
 
 .goal-amount {

@@ -20,6 +20,7 @@ import { RATES_SQL, readRates, toEtb } from "../features/money/currency";
 import {
   addGoalOps,
   assignOps,
+  checkBringBack,
   claimOps,
   GOAL_HELD_SQL,
   type GoalHeld,
@@ -27,6 +28,7 @@ import {
   HELD_BY_ACCOUNT_SQL,
   overclaimed,
   unclaimed,
+  unsetFree,
   checkGoal,
   checkGoalEdit,
   checkTakeOut,
@@ -783,8 +785,12 @@ export function Savings() {
   useSavingsSync();
   const backing = accounts.savings.map((row) => row.name).join(", ");
   const [adding, setAdding] = useState(false);
-  const [note, setNote] = useState("");
+  // A note about one goal ("Test is growing again.") goes once that goal is
+  // removed or planted again (F35).
+  const [note, setNote] = useState<{ goal: string | null; text: string } | null>(null);
   const growing = goals.rows.filter((goal) => goal.status !== "done");
+  const noteShown =
+    note && (note.goal === null || growing.some((goal) => goal.id === note.goal)) ? note.text : "";
   const garden = goals.rows.filter((goal) => goal.status === "done");
   // Savings with no goal in an account whose balance is set show in its one
   // line of money no goal has (reg0-2).
@@ -799,10 +805,15 @@ export function Savings() {
   const over = heldBy.loading ? [] : overclaimed(accounts.all, heldBy.rows, accounts.rates);
   // A savings account with no balance yet: totals can't count it (F55).
   const unset = accounts.savings.filter((row) => row.opening_date === null);
-  const bringBack = (goal: GoalRow) =>
+  const bringBack = (goal: GoalRow) => {
+    const problem = checkBringBack(goal, goals.rows);
+    if (problem) return setNote({ goal: null, text: problem });
     void transact("user", goalStatusOps(goal.id, "active"), `savings:${goal.id}`)
-      .then(() => setNote(`${goal.title} is growing again.`))
-      .catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
+      .then(() => setNote({ goal: goal.id, text: `${goal.title} is growing again.` }))
+      .catch((failure: unknown) =>
+        setNote({ goal: null, text: `Couldn't save: ${message(failure)}` }),
+      );
+  };
   return (
     <section className="panel savings" aria-labelledby="savings">
       <PanelHead
@@ -832,11 +843,16 @@ export function Savings() {
         }
       />
       {adding && <NewGoal goals={goals.rows} onDone={() => setAdding(false)} />}
-      {unset.map((row) => (
-        <p key={row.id} className="meta">
-          {row.name} has no balance yet: set it in Accounts.
-        </p>
-      ))}
+      {unset.map((row) => {
+        // Money known to be there with no goal, a removed goal's too (F35).
+        const known = heldBy.loading ? 0 : unsetFree(row, heldBy.rows, waiting.rows);
+        return (
+          <p key={row.id} className="meta">
+            {row.name} has no balance yet: set it in Accounts.
+            {known > 0 && ` At least ${formatAmount(known)} in it has no goal.`}
+          </p>
+        );
+      })}
       {split.saved.ids.length > 0 && (
         <Waiting
           minor={split.saved.minor}
@@ -913,9 +929,9 @@ export function Savings() {
           </div>
         </section>
       )}
-      {note && (
+      {noteShown && (
         <p className="meta" role="status">
-          {note}
+          {noteShown}
         </p>
       )}
     </section>

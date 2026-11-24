@@ -151,6 +151,24 @@ export function checkGoal(
 }
 
 /**
+ * Bringing a planted goal back to growing (F110): not while a growing goal
+ * has its name, or two growing goals would share it.
+ */
+export function checkBringBack(
+  goal: Pick<GoalRow, "id" | "title">,
+  goals: Pick<GoalRow, "id" | "title" | "status">[],
+): string | null {
+  const name = goal.title.trim().toLowerCase();
+  const twin = goals.find(
+    (other) =>
+      other.id !== goal.id && other.status !== "done" && other.title.trim().toLowerCase() === name,
+  );
+  return twin
+    ? `You already have a growing goal called ${twin.title.trim()}. Rename one first.`
+    : null;
+}
+
+/**
  * The waiting entries a new goal takes: savings made while no goal was
  * growing (F34). With goals there, waiting savings stay for "Give it to…".
  */
@@ -769,6 +787,25 @@ export function unclaimed(
     const minor = worth - (held.find((row) => row.account === account.id)?.minor ?? 0);
     return minor > 0 ? [{ account, minor }] : [];
   });
+}
+
+/**
+ * A birr savings account with no balance yet (F35, F55): what it is known
+ * to hold that no goal has, from the money moved in since it was tracked,
+ * less what goals hold there and savings waiting there for a goal (shown on
+ * their own line). A removed goal's money lands here. 0 when none is known.
+ */
+export function unsetFree(
+  account: AccountRow,
+  held: { account: string; minor: number }[],
+  waiting: { amount_minor: number; account?: string | null }[],
+): Santim {
+  if (account.opening_date !== null || currencyOf(account) !== "ETB") return 0;
+  const goals = held.find((row) => row.account === account.id)?.minor ?? 0;
+  const waits = waiting
+    .filter((entry) => entry.account === account.id && entry.amount_minor > 0)
+    .reduce((sum, entry) => sum + entry.amount_minor, 0);
+  return Math.max(0, account.moved_minor - goals - waits);
 }
 
 /**

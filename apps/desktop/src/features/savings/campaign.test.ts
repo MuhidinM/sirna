@@ -16,6 +16,7 @@ import { GOAL_MONTH_SQL } from "../money/safe";
 import { type Query } from "../projects/capacity";
 import {
   addGoalOps,
+  checkBringBack,
   checkGoal,
   checkTakeOutFrom,
   claimOps,
@@ -40,6 +41,7 @@ import {
   takeOutRoom,
   transferGoal,
   unclaimed,
+  unsetFree,
   WAITING_SQL,
   waitingForNewGoal,
   waitingSplit,
@@ -216,6 +218,16 @@ describe("F8: took X from a goal in the capture box", () => {
     await capture(db, "took 1000 from test");
     expect(goal(db, "test").saved_minor).toBe(0);
     expect(goal(db, "laptop").saved_minor).toBe(50_000);
+  });
+
+  it("promises no route in the chip, before the goal's holdings are known", () => {
+    const db = fresh();
+    const parsed = parseCapture("took 300 from laptop", {
+      nowMs: NOW,
+      accounts: accounts(db),
+      goals: ["laptop"],
+    });
+    expect(echo(parsed, NOW)).toBe("Took out 300 ETB");
   });
 
   it("says which part of a take-out moved out of savings", async () => {
@@ -439,6 +451,20 @@ describe("F35: a removed goal", () => {
     apply(db, [{ op: "delete", table: "savings_goals", id: "test" }]);
     expect(unclaimed(accounts(db), heldBy(db), {})).toMatchObject([{ minor: 100_000 }]);
   });
+
+  it("shows it even when the account has no balance yet", () => {
+    const db = fresh();
+    db.exec("UPDATE money_accounts SET opening_date = NULL WHERE id = 'cbo-savings'");
+    putAside(db, "test", 100_000);
+    putAside(db, null, 30_000);
+    const waiting = db.prepare(WAITING_SQL).all() as unknown as {
+      amount_minor: number;
+      account: string | null;
+    }[];
+    expect(unsetFree(account(db, "cbo-savings"), heldBy(db), waiting)).toBe(0);
+    apply(db, [{ op: "delete", table: "savings_goals", id: "test" }]);
+    expect(unsetFree(account(db, "cbo-savings"), heldBy(db), waiting)).toBe(100_000);
+  });
 });
 
 describe("F36: dollars already in a dollar savings account", () => {
@@ -534,6 +560,14 @@ describe("F73: the week card's Put aside moves the money", () => {
 });
 
 describe("F110: two goals with one name", () => {
+  it("won't bring a planted goal back next to a growing one with its name", () => {
+    const planted = { id: "a", title: "Short", status: "done" as const };
+    const bike = { id: "c", title: "Bike", status: "done" as const };
+    const goals = [planted, { id: "b", title: "short ", status: "active" as const }, bike];
+    expect(checkBringBack(planted, goals)).toMatch(/already have a growing goal called short/);
+    expect(checkBringBack(bike, goals)).toBeNull();
+  });
+
   it("refuses a second goal or a rename to a name in use", () => {
     const others: Pick<GoalRow, "title" | "status">[] = [
       { title: "Laptop", status: "active" },
