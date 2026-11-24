@@ -21,6 +21,11 @@ import {
   visibleChecklist,
 } from "./sheet";
 
+// In a plain browser during development, stand in for Tauri before this page
+// calls it (src/dev/tauriPreview.ts). Removed from production builds.
+if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window))
+  await import("../dev/tauriPreview").then((preview) => preview.install());
+
 const form = document.querySelector<HTMLFormElement>("#setup");
 const title = document.querySelector<HTMLElement>("#setup-title");
 const minutes = document.querySelector<HTMLElement>("#setup-minutes");
