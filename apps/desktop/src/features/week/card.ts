@@ -22,25 +22,39 @@ export interface AreaWeek {
   color: string;
   target_min: number;
   done_min: number;
+  /** 1 when the target is also a ceiling (Experiments). */
+  capped?: number;
 }
+
+/** A session's minutes up to now (?2), paused time left out. */
+const SESSION_MIN = (
+  f: string,
+) => `MAX(0, (COALESCE(${f}.ended_at, ?2) - ${f}.started_at - ${f}.paused_ms
+  - CASE WHEN ${f}.ended_at IS NULL AND ${f}.paused_at IS NOT NULL
+         THEN ?2 - ${f}.paused_at ELSE 0 END) / 60000)`;
 
 /**
  * Minutes per area this week: focus sessions (paused time left out) plus
- * habit blocks marked done. ?1 = week start (ms), ?2 = now (ms).
+ * habit blocks marked done. A done habit block focused on counts once: the
+ * focus, topped up to the block's length. ?1 = week start (ms), ?2 = now (ms).
  */
 export const AREA_WEEK_SQL = `
-  SELECT a.id, a.name, a.color, a.weekly_target_min AS target_min,
+  SELECT a.id, a.name, a.color, a.weekly_target_min AS target_min, a.capped,
          COALESCE((
-           SELECT SUM(MAX(0, (COALESCE(f.ended_at, ?2) - f.started_at - f.paused_ms
-                  - CASE WHEN f.ended_at IS NULL AND f.paused_at IS NOT NULL
-                         THEN ?2 - f.paused_at ELSE 0 END) / 60000))
+           SELECT SUM(${SESSION_MIN("f")})
            FROM focus_sessions AS f
            LEFT JOIN day_blocks AS fb ON fb.id = f.block_id
            WHERE f.kind = 'focus' AND f.started_at >= ?1 AND f.started_at < ?2
              AND COALESCE(f.area_id, fb.area_id) = a.id
          ), 0)
        + COALESCE((
-           SELECT SUM((b.end_at - b.start_at) / 60000)
+           SELECT SUM(MAX(0, (b.end_at - b.start_at) / 60000 - COALESCE((
+             SELECT SUM(${SESSION_MIN("f2")})
+             FROM focus_sessions AS f2
+             WHERE f2.block_id = b.id AND f2.kind = 'focus'
+               AND f2.started_at >= ?1 AND f2.started_at < ?2
+               AND COALESCE(f2.area_id, b.area_id) = a.id
+           ), 0)))
            FROM day_blocks AS b
            WHERE b.deleted_at IS NULL AND b.kind = 'routine' AND b.status = 'done'
              AND b.area_id = a.id AND b.start_at >= ?1 AND b.start_at < ?2
@@ -49,15 +63,19 @@ export const AREA_WEEK_SQL = `
   WHERE a.deleted_at IS NULL AND a.active = 1 AND a.kind != 'work' AND a.weekly_target_min > 0
   ORDER BY a.priority_rank, a.name`;
 
-/** Sessions finished, distractions and days with an overrun. ?1 week start, ?2 now. */
+/**
+ * Sessions finished, distractions and days with an overrun. Distractions and
+ * overruns count on every session, stopped ones too (the time was spent), as
+ * the Dashboard counts them. ?1 week start, ?2 now.
+ */
 export const FOCUS_WEEK_SQL = `
-  SELECT count(*) AS sessions,
+  SELECT count(CASE WHEN outcome = 'completed' THEN 1 END) AS sessions,
          COALESCE(sum(distractions), 0) AS distractions,
          -- The logical day starts at 03:00 Addis, which is 00:00 UTC: its date is the UTC date.
          count(DISTINCT CASE WHEN overrun = 1 THEN date(started_at / 1000, 'unixepoch') END)
            AS overrun_days
   FROM focus_sessions
-  WHERE kind = 'focus' AND outcome = 'completed' AND started_at >= ?1 AND started_at < ?2`;
+  WHERE kind = 'focus' AND started_at >= ?1 AND started_at < ?2`;
 
 export interface FocusWeek {
   sessions: number;
@@ -217,6 +235,8 @@ export function oneChange(input: {
   projects: ProjectWeek[];
   /** False before Friday: an area can't be judged on half a week. */
   weekMostlyDone: boolean;
+  /** Days of this week spent away (away mode): they never count against you. */
+  awayDays?: number;
 }): Change | null {
   const active = input.projects.filter((p) => p.status === "active");
   if (input.next.over && active.length > 0) {
@@ -248,10 +268,14 @@ export function oneChange(input: {
         ],
       };
   }
-  if (input.weekMostlyDone) {
+  // Away days are left out: each target shrinks to the days you were here,
+  // and a week mostly away (4+ days) is not judged at all.
+  const here = 7 - Math.min(7, Math.max(0, input.awayDays ?? 0));
+  if (input.weekMostlyDone && here >= 4) {
+    const fair = (area: AreaWeek) => share({ ...area, target_min: (area.target_min * here) / 7 });
     const behind = input.areas
-      .filter((area) => area.target_min >= 60 && share(area) < 0.5)
-      .sort((a, b) => share(a) - share(b))[0];
+      .filter((area) => area.target_min >= 60 && fair(area) < 0.5)
+      .sort((a, b) => fair(a) - fair(b))[0];
     if (behind) {
       const target = Math.max(60, Math.ceil((behind.done_min * 1.25) / 30) * 30);
       if (target < behind.target_min)

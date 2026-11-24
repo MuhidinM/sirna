@@ -1,5 +1,11 @@
 /** Queries behind the Today screen (plan §3.4). Pure SQL text + small helpers. */
-import { HOME_UTC_OFFSET_MIN, LOGICAL_DAY_START_HOUR, logicalDate } from "../../kernel/dates";
+import {
+  HOME_UTC_OFFSET_MIN,
+  localDate,
+  LOGICAL_DAY_START_HOUR,
+  logicalDate,
+  showDate,
+} from "../../kernel/dates";
 import todayTopSql from "./queries/today_top.sql?raw";
 
 export { todayTopSql };
@@ -49,6 +55,35 @@ export const INBOX_SQL = `
 export const SPENT_TODAY_SQL = `
   SELECT COALESCE(-SUM(amount_minor), 0) AS spent FROM money_txns
   WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor < 0 AND local_date = ?1`;
+
+const clock = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "Africa/Addis_Ababa",
+});
+
+/**
+ * The small line under a task on Today: its estimate and when it is due,
+ * joined only when both are there. A late task's time takes its date from
+ * the moment itself, so 01:00 after midnight reads as that calendar day.
+ */
+export function taskMeta(
+  task: { estimate_min: number | null; due_date: string | null; due_at: number | null },
+  today: string,
+): string {
+  const estimate = task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h` : "";
+  const overdue = task.due_date !== null && task.due_date < today;
+  const when = overdue
+    ? task.due_at !== null
+      ? `since ${showDate(localDate(task.due_at), today)} ${clock.format(task.due_at)}`
+      : `since ${showDate(task.due_date ?? "", today)}`
+    : task.due_at !== null
+      ? clock.format(task.due_at)
+      : task.due_date === today
+        ? "due today"
+        : "";
+  return [estimate, when].filter(Boolean).join(" · ");
+}
 
 /** The last capture that can still be undone. */
 export const LAST_CAPTURE_SQL = `

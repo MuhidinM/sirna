@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
-import { logicalDayStart, todayParams, todayTopSql } from "./today";
+import { logicalDayStart, taskMeta, todayParams, todayTopSql } from "./today";
 
 const now = Date.parse("2026-11-11T12:00:00+03:00");
 
@@ -88,5 +88,31 @@ describe("today's top 3", () => {
     task(db, "gone", { due_date: "2026-11-01", deleted_at: 1 });
     expect(top(db)).toHaveLength(3);
     expect(top(db)).not.toContain("gone");
+  });
+});
+
+describe("the line under a task (taskMeta)", () => {
+  const plain = { estimate_min: null, due_date: null, due_at: null };
+  it("has no dangling dot when there is only an estimate", () => {
+    expect(taskMeta({ ...plain, estimate_min: 45, due_date: "2026-11-24" }, "2026-11-24")).toBe(
+      "~0.8 h · due today",
+    );
+    expect(taskMeta({ ...plain, estimate_min: 45, due_date: "2026-11-30" }, "2026-11-24")).toBe(
+      "~0.8 h",
+    );
+    expect(taskMeta(plain, "2026-11-24")).toBe("");
+  });
+
+  it("dates a late time after midnight by the moment, not the logical day", () => {
+    // 'fix bike at 1am' at 00:30 on 25 Nov: logical due date 24 Nov, due 25 Nov 01:00.
+    const task = {
+      ...plain,
+      due_date: "2026-11-24",
+      due_at: Date.parse("2026-11-25T01:00:00+03:00"),
+    };
+    expect(taskMeta(task, "2026-11-25")).toBe("since 25 Nov 01:00");
+    expect(taskMeta({ ...plain, estimate_min: 30, due_date: "2026-11-23" }, "2026-11-25")).toBe(
+      "~0.5 h · since 23 Nov",
+    );
   });
 });

@@ -2,7 +2,7 @@
  * The morning brief (plan §3.4): at most 12 lines, empty sections hidden, no
  * questions. Pure: the screen and the tests feed it rows and get lines back.
  */
-import { localDate, logicalDate, showDate } from "../../kernel/dates";
+import { logicalDate, showDate } from "../../kernel/dates";
 import { logicalDayStart } from "../tasks/today";
 import { type BlockRow, formatMinutes, nowAndNext } from "../plan/now";
 import { type ChangedCounts, changedText } from "./changed";
@@ -82,6 +82,15 @@ export function loadLabel(plannedMin: number, freeMin: number): string {
   return "over";
 }
 
+/**
+ * The money lines in order: bills first, but a loan follow-up always gets
+ * the second slot, so two late bills can't hide every follow-up.
+ */
+export function moneyLines(bills: string[], followUps: string[]): string[] {
+  if (bills.length === 0 || followUps.length === 0) return [...bills, ...followUps];
+  return [bills[0] as string, followUps[0] as string, ...bills.slice(1), ...followUps.slice(1)];
+}
+
 /** "1 h 30 / 4 h" with a bare "0" for nothing yet. */
 function progress(doneMin: number, targetMin: number): string {
   return `${doneMin === 0 ? "0" : formatMinutes(doneMin)} / ${formatMinutes(targetMin)}`;
@@ -89,9 +98,10 @@ function progress(doneMin: number, targetMin: number): string {
 
 export function buildBrief(input: BriefInput): BriefLine[] {
   const lines: BriefLine[] = [];
+  // The day the brief is for (D22: it starts at 03:00), beside the real time.
   lines.push({
     label: "",
-    text: showDate(localDate(input.nowMs), undefined, { weekday: true }),
+    text: showDate(logicalDate(input.nowMs), undefined, { weekday: true }),
     meta: clock.format(input.nowMs),
   });
 
@@ -109,9 +119,15 @@ export function buildBrief(input: BriefInput): BriefLine[] {
     });
 
   if (input.calendar) lines.push({ label: "CHECK", text: input.calendar, tone: "warn" });
-  (input.due ?? [])
-    .slice(0, 2)
-    .forEach((text, index) => lines.push({ label: index === 0 ? "MONEY" : "", text }));
+  // Two money lines at most; the rest are counted, never dropped silently.
+  const due = input.due ?? [];
+  due.slice(0, 2).forEach((text, index) =>
+    lines.push({
+      label: index === 0 ? "MONEY" : "",
+      text,
+      meta: index === 1 && due.length > 2 ? `+${due.length - 2} more` : undefined,
+    }),
+  );
 
   const live = input.blocks.filter((block) => block.status !== "skipped");
   const { now, next } = nowAndNext(live, input.nowMs);
@@ -196,7 +212,8 @@ export function weekStart(nowMs: number): number {
 
 /**
  * Minutes done per growth, health and faith area this week: focused minutes
- * from sessions, plus routine blocks marked done (Quran, gym).
+ * from sessions, plus routine blocks marked done (Quran, gym). A done block
+ * focused on counts once: the focus, topped up to its length.
  * ?1 week start, ?2 now (for a session still running).
  */
 export const WEEK_SQL = `
@@ -209,7 +226,12 @@ export const WEEK_SQL = `
              AND COALESCE(f.area_id, fb.area_id) = a.id
          ), 0)
        + COALESCE((
-           SELECT SUM((b.end_at - b.start_at) / 60000)
+           SELECT SUM(MAX(0, (b.end_at - b.start_at) / 60000 - COALESCE((
+             SELECT SUM(MAX(0, (COALESCE(f2.ended_at, ?2) - f2.started_at - f2.paused_ms) / 60000))
+             FROM focus_sessions AS f2
+             WHERE f2.block_id = b.id AND f2.kind = 'focus' AND f2.started_at >= ?1
+               AND COALESCE(f2.area_id, b.area_id) = a.id
+           ), 0)))
            FROM day_blocks AS b
            WHERE b.deleted_at IS NULL AND b.kind = 'routine' AND b.status = 'done'
              AND b.area_id = a.id AND b.start_at >= ?1

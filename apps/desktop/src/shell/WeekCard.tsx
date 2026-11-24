@@ -40,7 +40,8 @@ import {
 import { ulid } from "../kernel/ulid";
 import { entryOps, type GoalRow, GOALS_SQL, WEEK_SAVED_SQL } from "../features/savings/savings";
 import { shiftDate } from "../features/plan/dayplan";
-import { weekSummary } from "../features/dashboard/insights";
+import { overCap, weekSummary } from "../features/dashboard/insights";
+import { AWAY_HISTORY_SQL, type AwayChange, awayDays } from "../features/dashboard/streak";
 import { InsightList } from "./Insights";
 import { MonthReviewCard } from "./Money";
 import { WeekPreview } from "./WeekPreview";
@@ -293,14 +294,20 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
     spendParams(monday).slice(0, 2),
   );
   const settings = useLiveQuery<{ key: string; value_json: string }>(SETTINGS_SQL);
+  const awayHistory = useLiveQuery<AwayChange & Record<string, string | number | null>>(
+    AWAY_HISTORY_SQL,
+  );
   const next = useNextWeek(monday);
   const [error, setError] = useState<string | null>(null);
 
   const weekMostlyDone = isoWeekday(today) >= 5;
+  // Days away this week (planned to the Sunday): they never count against an area.
+  const away = awayDays(awayHistory.rows, monday, shiftDate(monday, 6)).size;
   const setting = (key: string) => settings.rows.find((row) => row.key === key)?.value_json;
   const change =
-    next && focus.rows[0]
+    next && focus.rows[0] && !awayHistory.loading
       ? oneChange({
+          awayDays: away,
           next,
           focus: focus.rows[0],
           areas: areas.rows,
@@ -419,8 +426,10 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 sub={
                   focus.rows[0] ? (
                     <>
-                      {focus.rows[0].sessions} focus sessions · {focus.rows[0].distractions}{" "}
-                      distractions noted · {focus.rows[0].overrun_days} day
+                      {focus.rows[0].sessions} focus session
+                      {focus.rows[0].sessions === 1 ? "" : "s"} · {focus.rows[0].distractions}{" "}
+                      distraction{focus.rows[0].distractions === 1 ? "" : "s"} noted ·{" "}
+                      {focus.rows[0].overrun_days} day
                       {focus.rows[0].overrun_days === 1 ? "" : "s"} past the cap
                     </>
                   ) : undefined
@@ -440,8 +449,9 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                       />
                       {area.name}
                     </span>
-                    <span className="pw-bar-value">
+                    <span className={overCap(area) ? "pw-bar-value warn-text" : "pw-bar-value"}>
                       {hoursLabel(area.done_min)} of {hoursLabel(area.target_min)}
+                      {overCap(area) ? " · over its cap" : ""}
                     </span>
                     <Bar
                       value={share(area)}

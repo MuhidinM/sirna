@@ -42,13 +42,21 @@ export const PLAN_DAYS_SQL = `
   WHERE b.deleted_at IS NULL AND b.logical_date >= ?1
   GROUP BY b.logical_date`;
 
-/** Minutes of done habit blocks per day (Quran, gym), so habit areas show in the chart. ?1 first date, ?2 area or ''. */
+/**
+ * Minutes of done habit blocks per day (Quran, gym), so habit areas show in
+ * the chart. Focus on the block already counts in FOCUS_DAYS_SQL, so only the
+ * rest of its length is added. ?1 first date, ?2 area or ''.
+ */
 export const HABIT_DAYS_SQL = `
-  SELECT logical_date AS date, sum((end_at - start_at) / 60000) AS minutes
-  FROM day_blocks
-  WHERE deleted_at IS NULL AND kind = 'routine' AND status = 'done' AND logical_date >= ?1
-    AND (?2 = '' OR area_id = ?2)
-  GROUP BY logical_date`;
+  SELECT b.logical_date AS date,
+         sum(MAX(0, (b.end_at - b.start_at) / 60000 - COALESCE((
+           SELECT SUM(MAX(0, (COALESCE(f.ended_at, f.started_at) - f.started_at - f.paused_ms) / 60000))
+           FROM focus_sessions AS f WHERE f.block_id = b.id AND f.kind = 'focus'
+         ), 0))) AS minutes
+  FROM day_blocks AS b
+  WHERE b.deleted_at IS NULL AND b.kind = 'routine' AND b.status = 'done' AND b.logical_date >= ?1
+    AND (?2 = '' OR b.area_id = ?2)
+  GROUP BY b.logical_date`;
 
 /** Every change to away mode, oldest first (the audit log keeps the value after each). */
 export const AWAY_HISTORY_SQL = `
@@ -268,24 +276,17 @@ const MINUTES = `MAX(0, (COALESCE(f.ended_at, ?2) - f.started_at - f.paused_ms
 export const TILES_SQL = `
   SELECT
     COALESCE(sum(CASE WHEN f.kind = 'focus' THEN ${MINUTES} END), 0) AS focus_min,
-    COALESCE(sum(CASE WHEN f.kind = 'focus' AND a.kind IN ('growth', 'admin') THEN ${MINUTES} END), 0)
-      AS goal_focus_min,
     COALESCE(sum(CASE WHEN f.kind != 'focus' THEN ${MINUTES} END), 0) AS break_min,
     COALESCE(sum(CASE WHEN f.kind = 'focus' THEN f.distractions END), 0) AS distractions,
     COALESCE(sum(CASE WHEN f.kind = 'focus' AND f.outcome = 'completed' THEN 1 END), 0) AS sessions
   FROM focus_sessions f
-  LEFT JOIN day_blocks b ON b.id = f.block_id
-  LEFT JOIN area_items a ON a.id = COALESCE(f.area_id, b.area_id)
   WHERE f.started_at >= ?1 AND f.started_at < ?2`;
 
-/** The week's focus goal: the hours Grow and Admin areas aim for (habits are kept by their blocks). */
-export const GOAL_SQL = `SELECT COALESCE(sum(weekly_target_min), 0) AS goal_min FROM area_items
-  WHERE deleted_at IS NULL AND active = 1 AND kind IN ('growth', 'admin')`;
+// The week's goal on the Focus tile is the Week card's (features/week/card.ts
+// AREA_WEEK_SQL): every area's target and time, counted one way on both.
 
 export interface Tiles {
   focus_min: number;
-  /** Focus in Grow and Admin areas: what the goal counts. */
-  goal_focus_min: number;
   break_min: number;
   distractions: number;
   sessions: number;

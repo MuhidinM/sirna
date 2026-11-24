@@ -76,6 +76,34 @@ describe("where time went", () => {
     // f1, f2, f4, f5 this week; distractions 1 + 2; overruns on 12 and 13 Nov.
     expect(focus).toEqual({ sessions: 4, distractions: 3, overrun_days: 2 });
   });
+
+  it("counts the distractions of a stopped session, not the session", () => {
+    const db = seeded();
+    db.exec(`INSERT INTO focus_sessions (id, area_id, kind, started_at, planned_min, ended_at, paused_ms, outcome, distractions, overrun)
+      VALUES ('s1', 'coding', 'focus', ${at("2026-11-14T06:30:00")}, 50, ${at("2026-11-14T06:50:00")}, 0, 'stopped', 3, 0)`);
+    const focus = db.prepare(FOCUS_WEEK_SQL).get(WEEK_START, NOW) as unknown as FocusWeek;
+    expect(focus).toEqual({ sessions: 4, distractions: 6, overrun_days: 2 });
+  });
+
+  it("counts a habit block focused and marked done once (its length, or the focus if longer)", () => {
+    const db = seeded();
+    db.exec(`
+      INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, source, status, created_at, updated_at) VALUES
+        ('q1', '2026-11-10', ${at("2026-11-10T03:00:00")}, ${at("2026-11-10T03:20:00")}, 'routine', 'quran', 'Quran', 'template', 'done', 0, 0),
+        ('q2', '2026-11-11', ${at("2026-11-11T03:00:00")}, ${at("2026-11-11T03:20:00")}, 'routine', 'quran', 'Quran', 'template', 'done', 0, 0);
+      INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, ended_at, paused_ms, outcome) VALUES
+        ('fq1', 'q1', 'focus', ${at("2026-11-10T03:00:00")}, 20, ${at("2026-11-10T03:20:00")}, 0, 'completed'),
+        ('fq2', 'q2', 'focus', ${at("2026-11-11T03:00:00")}, 25, ${at("2026-11-11T03:25:00")}, 0, 'completed');`);
+    const rows = db.prepare(AREA_WEEK_SQL).all(WEEK_START, NOW) as unknown as AreaWeek[];
+    // 20 (focus covers the block) + 25 (focus past it): 45, not 85.
+    expect(rows.find((r) => r.id === "quran")?.done_min).toBe(45);
+  });
+
+  it("says whether an area is capped", () => {
+    const rows = seeded().prepare(AREA_WEEK_SQL).all(WEEK_START, NOW) as unknown as AreaWeek[];
+    expect(rows.find((r) => r.id === "experiments")?.capped).toBe(1);
+    expect(rows.find((r) => r.id === "coding")?.capped).toBe(0);
+  });
 });
 
 describe("projects", () => {
@@ -174,6 +202,17 @@ describe("one change", () => {
     );
     expect(
       oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: false }),
+    ).toBeNull();
+  });
+
+  it("doesn't cut a target over days you were away", () => {
+    // Away 5 of 7 days: nothing to judge the area on.
+    expect(
+      oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: true, awayDays: 5 }),
+    ).toBeNull();
+    // Away 3 days: Coding's 4 h target is 2 h 17 for the 4 days here; 80 min is over half of it.
+    expect(
+      oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: true, awayDays: 3 }),
     ).toBeNull();
   });
 
