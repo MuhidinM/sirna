@@ -8,7 +8,6 @@
  */
 import { type Op, type SqlValue } from "../../kernel/db";
 import { localToEpoch } from "../../capture/when";
-import { type ParseOptions, type Parsed, parseCapture } from "../../capture/parse";
 
 /** Every edit lands on a 15-minute line. */
 export const SNAP_MIN = 15;
@@ -396,28 +395,8 @@ export interface BoardTask {
 
 // --- Add for today (§5) ---------------------------------------------------------------------------
 
-/**
- * "Add for today": the line read as a capture, always a task, dated today
- * unless it names a day itself ("call bank 3pm" keeps its time).
- */
-export function todayTask(
-  text: string,
-  today: string,
-  nowMs: number,
-  /** Your areas and clock, so `for job a` and `at 9` read as in the capture bar (F83). */
-  context: Pick<ParseOptions, "areas" | "clockStyle"> = {},
-): Parsed | null {
-  const raw = text.trim();
-  if (!raw) return null;
-  const options = { nowMs, ...context };
-  let parsed = parseCapture(raw, options);
-  // An idea, note or money line is still a task here: read it as one, without its prefix.
-  if (parsed.kind !== "task") {
-    parsed = parseCapture(`t: ${raw.replace(/^(?:t|n|idea|pin|wait|fb)\s*:\s*/i, "")}`, options);
-  }
-  if (parsed.kind !== "task") return { kind: "task", title: raw, dueDate: today };
-  return { ...parsed, dueDate: parsed.dueDate ?? today };
-}
+/** "Add for today": in capture/today.ts, so the capture bar can fix such a line (reg2-5). */
+export { todayTask } from "../../capture/today";
 
 // --- Next 7 days columns -----------------------------------------------------------------------------
 

@@ -11,9 +11,8 @@ import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
 import { LATER_STEPS_SQL, stepLabel } from "../features/tasks/list";
-import { todayTask } from "../features/plan/edit";
+import { TODAY_PARSER_ID, todayTask } from "../capture/today";
 import { toOps } from "../capture/ops";
-import { PARSER_ID } from "../capture/parse";
 import { ensureRepeats } from "../features/tasks/repeat";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan, weekStart } from "../features/plan/dayplan";
@@ -422,7 +421,7 @@ function AddForToday({ today }: { today: string }) {
     });
     if (!parsed || parsed.kind !== "task" || saving) return;
     setSaving(true);
-    void commitCapture(text.trim(), toOps(parsed, { nowMs, newId: () => ulid() }), PARSER_ID)
+    void commitCapture(text.trim(), toOps(parsed, { nowMs, newId: () => ulid() }), TODAY_PARSER_ID)
       .then(() => {
         setText("");
         const day = parsed.dueDate ?? today;

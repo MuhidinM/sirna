@@ -41,6 +41,7 @@ import { type AccountRow, ACCOUNTS_SQL, balanceOf } from "../features/money/acco
 import { affordAnswer } from "../features/money/affordLoad";
 import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
+import { TODAY_PARSER, TODAY_PARSER_ID, todayTask } from "./today";
 import { type ClockStyle } from "./when";
 
 import { applyTheme, cachedTheme } from "../theme/theme";
@@ -86,8 +87,16 @@ const TODAY_BLOCKS_SQL = `SELECT id, title FROM day_blocks
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
-/** Set while fixing the last capture with Up arrow: saving replaces it. */
-let editing: { id: number; body: string } | undefined;
+/**
+ * Set while fixing the last capture with Up arrow: saving replaces it. A line
+ * from Add for today (`today`, the day it was for) stays a task for that day (reg2-5).
+ */
+let editing: { id: number; body: string; today?: string } | undefined;
+/**
+ * Goals and what savings accounts hold, so the chip shows the take-out the
+ * save will make, not a transfer it won't (F26-new). Empty until read.
+ */
+let savingsContext: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null, unset: [] };
 /** What the capture being fixed made: the box keeps to that reading. */
 let fixKind: Parsed["kind"] | undefined;
 /** True while a save, fix or undo is in flight. */
@@ -170,6 +179,11 @@ function loadContext() {
       { value_json: string }[],
     ];
     accountBalances = Object.fromEntries(accounts.map((row) => [row.id, balanceOf(row)]));
+    void loadSavingsContext(query as Query, readRates(rates[0]?.value_json))
+      .then((context) => {
+        savingsContext = context;
+      })
+      .catch(() => undefined);
     moneyContext = {
       areas,
       categories,
@@ -185,22 +199,28 @@ function loadContext() {
 
 loadContext();
 
+/** The line read as the capture bar reads it, or as Add for today did when fixing one of those. */
+function readLine(text: string, nowMs: number): Parsed {
+  if (editing?.today) {
+    const task = todayTask(text, editing.today, nowMs, {
+      ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
+      clockStyle,
+    });
+    if (task) return task;
+  }
+  return parseCapture(text, {
+    nowMs,
+    clockStyle,
+    goals: goalNames,
+    blocks: todayBlocks,
+    ...moneyContext,
+  });
+}
+
 function refresh() {
   const text = input.value.trim();
   const nowMs = systemClock.now();
-  options = text
-    ? readings(
-        parseCapture(text, {
-          nowMs,
-          clockStyle,
-          goals: goalNames,
-          blocks: todayBlocks,
-          ...moneyContext,
-        }),
-        text,
-        nowMs,
-      )
-    : [];
+  options = text ? readings(readLine(text, nowMs), text, nowMs) : [];
   // While fixing, keep to the kind the capture made as you change the text.
   picked = editing ? fixReading(options, fixKind) : 0;
   showChip();
@@ -236,7 +256,16 @@ function showChip() {
   }
   const hint = options.length > 1 ? "  ·  Tab: change" : "";
   const note = balanceNote(current, accountBalances, moneyContext.rates ?? {});
-  output.textContent = `${editing ? "Fix · " : ""}${echoLine(current, systemClock.now())}${note}${hint}`;
+  // A saving names its goal and, for a take-out, what really moves (F26-new).
+  const goal =
+    current.kind === "saving"
+      ? goalFinder(savingsContext)(current.goal, current.amount)
+      : undefined;
+  const line = echoLine(current, systemClock.now(), undefined, goal, {
+    hasGoals: savingsContext.goals.some((row) => row.status === "active"),
+    ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
+  });
+  output.textContent = `${editing ? "Fix · " : ""}${line}${note}${hint}`;
 }
 
 function finish(message: string, ms = ECHO_MS) {
@@ -254,21 +283,14 @@ form.addEventListener("submit", (event) => {
     return;
   }
   const nowMs = systemClock.now();
-  const parsed =
-    options[picked] ??
-    parseCapture(rawText, {
-      nowMs,
-      clockStyle,
-      goals: goalNames,
-      blocks: todayBlocks,
-      ...moneyContext,
-    });
+  const parsed = options[picked] ?? readLine(rawText, nowMs);
   // "idea:" or "#jobhunt" alone: nothing to save, so say what's missing and keep the box open.
   if (parsed.kind === "inbox" && parsed.body === "" && parsed.why) {
     output.textContent = parsed.why;
     return;
   }
-  const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
+  const base = editing?.today ? TODAY_PARSER_ID : PARSER_ID;
+  const parser = picked === 0 ? base : `${base}+tab`;
   input.disabled = true;
   busy = true;
   // An idea is placed in the week before it is saved, so the project and its
@@ -376,13 +398,26 @@ form.addEventListener("submit", (event) => {
       }
       // `away till mon` (plan §3.11): Rust stores the return day, logged under
       // this capture, so undoing or fixing the capture undoes away too.
+      // `back`: away ends now, logged under this capture too (F41).
+      if (parsed.kind === "back") {
+        void invoke("clear_away", { rawId })
+          .then(() => finish(fixed + echoLine(parsed, nowMs)))
+          .catch(() => finish("Couldn't end away. Use I'm back on Today."));
+        return;
+      }
       if (parsed.kind === "away") {
         void invoke<string>("set_away", { until: parsed.until ?? null, rawId })
           .then((date) => finish(fixed + echoLine({ kind: "away", until: date }, nowMs)))
           .catch(() => finish("Couldn't set away. Try again."));
         return;
       }
-      finish(fixed + echoLine(parsed, nowMs, idea, savingGoal, { hasGoals }));
+      finish(
+        fixed +
+          echoLine(parsed, nowMs, idea, savingGoal, {
+            hasGoals,
+            ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
+          }),
+      );
     })
     .catch((error: unknown) => {
       busy = false;
@@ -436,7 +471,15 @@ document.addEventListener("keydown", (event) => {
           output.textContent = blocked;
           return;
         }
-        editing = last;
+        // A line from Add for today stays a task for its day (reg2-5).
+        editing =
+          last.parser_id === TODAY_PARSER
+            ? {
+                id: last.id,
+                body: last.body,
+                today: logicalDate(last.received_at ?? systemClock.now()),
+              }
+            : { id: last.id, body: last.body };
         fixKind = madeKind(made);
         input.value = last.body;
         refresh();
