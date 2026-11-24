@@ -93,7 +93,7 @@ describe("echo", () => {
     ["submit report today", "Task · Today"],
     ["pay EEU 600 fri", "Task · Fri 13 Nov"],
     ["buy charger", "Task · Someday"],
-    ["fix login bug #jobA", "Task · Someday · #joba"],
+    ["fix login bug #jobA", "Task · in its area's blocks · #joba"],
     ["wait: recruiter reply mon", "Waiting on recruiter reply · follow up Mon 16 Nov"],
     ["idea: sell old monitor", "Idea"],
     ["pin: git stash pop #coding", "Pinned to cheat sheet · #coding"],
@@ -156,6 +156,16 @@ describe("tasks with an estimate get planned", () => {
       newId: () => "t1",
     });
     expect(later[0]).toMatchObject({ values: { status: "someday", estimate_min: null } });
+  });
+
+  it("makes an undated task with an area a to-do for that area's blocks (F57)", async () => {
+    const { toOps } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    const ops = toOps(parseCapture("#joba send report", { nowMs: now }), {
+      nowMs: now,
+      newId: () => "t1",
+    });
+    expect(ops[0]).toMatchObject({ values: { status: "todo", area_id: "joba", due_date: null } });
   });
 });
 
