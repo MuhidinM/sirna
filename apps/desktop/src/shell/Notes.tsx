@@ -11,9 +11,12 @@ import {
   CHEAT_SQL,
   type CheatRow,
   editOps,
+  find,
+  FIND_SQL,
+  type FoundRow,
   groupCards,
   LONG_CARD,
-  search,
+  NOTES_SQL,
   tokens,
 } from "../features/notes/cheat";
 import { IconSearch } from "./icons";
@@ -143,8 +146,10 @@ export function Notes({
   // Page-level, so Undo stays even when a save emptied (and removed) its card.
   const [lastSave, setLastSave] = useState<LastSave>();
   const [message, setMessage] = useState<string>();
+  const notes = useLiveQuery<FoundRow & Record<string, string | null>>(NOTES_SQL);
+  const searchable = useLiveQuery<FoundRow & Record<string, string | null>>(FIND_SQL);
   const cards = groupCards(rows.rows);
-  const hits = search(cards, queryText);
+  const hits = find(searchable.rows, queryText);
 
   const undo = async () => {
     if (!lastSave) return;
@@ -173,7 +178,7 @@ export function Notes({
             <input
               type="search"
               value={queryText}
-              placeholder="Search cheat lines"
+              placeholder="Search notes, cheat lines, tasks"
               onChange={(event) => setQueryText(event.target.value)}
             />
           </label>
@@ -198,26 +203,26 @@ export function Notes({
           <section className="card pr-card pr-results" aria-label="Search results">
             <PanelHead
               title="Matches"
-              sub={`${hits.length} line${hits.length === 1 ? "" : "s"} for “${queryText.trim()}”`}
+              sub={`${hits.length} match${hits.length === 1 ? "" : "es"} for “${queryText.trim()}”`}
             />
             {hits.length === 0 ? (
-              <p className="empty">No cheat lines match. Try another word.</p>
+              <p className="empty">Nothing matches. Try another word.</p>
             ) : (
               <ul className="cheat-lines pr-lines">
                 {hits.map((hit) => (
-                  <li key={hit.line.id} className="pr-hit">
+                  <li key={hit.id} className="pr-hit">
                     <span className="grow">
-                      <Line text={hit.line.body} />
+                      <Line text={hit.body} />
                     </span>
-                    <span className={`chip tone-${toneOf(colorOf.get(hit.card.key))} pr-chip`}>
-                      {hit.card.title}
+                    <span className={`chip tone-${toneOf(colorOf.get(hit.key))} pr-chip`}>
+                      {hit.label}
                     </span>
                   </li>
                 ))}
               </ul>
             )}
           </section>
-        ) : !rows.loading && cards.length === 0 ? (
+        ) : !rows.loading && !notes.loading && cards.length === 0 && notes.rows.length === 0 ? (
           <p className="empty">
             No cheat sheets yet. Type <code>pin: …</code> in the capture box to start one.
           </p>
@@ -234,6 +239,27 @@ export function Notes({
                 }}
               />
             ))}
+            {notes.rows.length > 0 && (
+              <section className="card pr-card pr-cheat" aria-label="Notes">
+                <PanelHead title="Notes" sub="From n:, fb: and loose ends kept as notes" />
+                <ul className="cheat-lines pr-lines">
+                  {notes.rows.map((note) => (
+                    <li key={note.id} className="pr-hit">
+                      <span className="grow">
+                        <Line text={note.body} />
+                      </span>
+                      {note.area_name && (
+                        <span
+                          className={`chip tone-${toneOf(colorOf.get(note.area_id ?? ""))} pr-chip`}
+                        >
+                          {note.area_name}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
           </div>
         )}
       </section>

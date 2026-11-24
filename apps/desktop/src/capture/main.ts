@@ -7,7 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { systemClock } from "../kernel/clock";
 import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
-import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
+import { find, FIND_SQL, type Found, type FoundRow } from "../features/notes/cheat";
 import { readings } from "./alternatives";
 import { CAPTURE_MADE_SQL, fixBlocked, fixReading, madeKind, type MadeRow } from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
@@ -185,21 +185,19 @@ function refresh() {
   showChip();
 }
 
-/** Cheat lines, loaded once per capture box, for `? query` (plan §3.15). */
-let cheatCards: Promise<Card[]> | undefined;
+/** Cheat lines, notes and open tasks, loaded once per capture box, for `? query` (plan §3.5). */
+let searchable: Promise<FoundRow[]> | undefined;
 
 function showSearch(text: string) {
-  cheatCards ??= query<CheatRow & Record<string, string | null>>(CHEAT_SQL)
-    .then(groupCards)
-    .catch(() => []);
-  void cheatCards.then((cards) => {
+  searchable ??= query<FoundRow & Record<string, string | null>>(FIND_SQL).catch(() => []);
+  void searchable.then((rows) => {
     // Typed on meanwhile: a newer refresh owns the chip.
     if (input.value.trim().slice(1).trim() !== text) return;
-    const hits = search(cards, text);
+    const hits: Found[] = find(rows, text);
     const first = hits[0];
     output.textContent = first
-      ? `${first.line.body} · ${first.card.title}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
-      : "No cheat line matches  ·  Enter: open Notes";
+      ? `${first.body} · ${first.label}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
+      : "Nothing matches  ·  Enter: open Notes";
   });
 }
 

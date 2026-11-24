@@ -9,7 +9,11 @@ import {
   CHEAT_SQL,
   type CheatRow,
   editOps,
+  find,
+  FIND_SQL,
+  type FoundRow,
   groupCards,
+  NOTES_SQL,
   search,
   tokens,
 } from "./cheat";
@@ -124,6 +128,28 @@ describe("editOps", () => {
   it("puts new General lines under no area", () => {
     const general: Card = { key: "", title: "General", lines: [] };
     expect(editOps(general, "a line", () => "g1")[0]).toMatchObject({ values: { area_id: null } });
+  });
+});
+
+describe("notes and `?` search", () => {
+  it("finds `n:` notes, sorted loose ends and open tasks, not only cheat lines", () => {
+    const db = openTestDb();
+    pin(db, "n: Hana prefers calls after 6pm", "n1");
+    pin(db, "pin: reset = git reset --soft HEAD~1 #coding", "c1");
+    db.exec(`INSERT INTO note_items (id, kind, status, body, created_at, updated_at) VALUES
+      ('n2', 'note', 'kept', 'standing desk ideas', 0, 0),
+      ('n3', 'inbox', 'inbox', 'hana loose end', 0, 0);
+      INSERT INTO task_items (id, title, status, area_id, created_at, updated_at) VALUES
+      ('t1', 'Apply: Backend dev at Kifiya', 'todo', 'jobhunt', 0, 0),
+      ('t2', 'Kifiya done one', 'done', NULL, 0, 0);`);
+    const found = db.prepare(FIND_SQL).all() as unknown as FoundRow[];
+    expect(find(found, "hana").map((hit) => [hit.id, hit.label])).toEqual([["n1", "Note"]]);
+    expect(find(found, "kifiya").map((hit) => [hit.id, hit.label])).toEqual([
+      ["t1", "Task · Job hunt"],
+    ]);
+    expect(find(found, "reset").map((hit) => hit.label)).toEqual(["Cheat · Coding skills"]);
+    const notes = db.prepare(NOTES_SQL).all() as unknown as FoundRow[];
+    expect(notes.map((note) => note.id).sort()).toEqual(["n1", "n2"]);
   });
 });
 
