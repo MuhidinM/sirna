@@ -369,8 +369,10 @@ pub(crate) fn undo_blocked(
             "project_items" => "You've changed this project since. Edit it on Projects.",
             "task_items" => "You've changed this task since. Edit it on Plan > Tasks.",
             "money_txns" => "You've changed this entry since. Edit it on Money.",
-            "money_loans" => "You've changed this loan since. Edit it on Money.",
-            "note_items" => "You've changed this note since. Edit it in Sirna.",
+            "money_loans" => "This loan has changed since. Edit it on Money > Lent and owed.",
+            "note_items" => "You've changed this note since. Edit it on Notes.",
+            "note_items:cheat" => "You've changed this line since. Edit it on Plan > Cheat sheets.",
+            "day_blocks" => "You've changed this block since. Edit it on Today.",
             "savings_entries" => "You've changed this saving since. Edit it on Money.",
             "core_settings" => "Away has changed since. Set it on Today.",
             _ => "You've changed this since.",
@@ -1210,11 +1212,13 @@ pub fn set_away(
     Ok(date)
 }
 
-/// "I'm back" on Today.
+/// "I'm back" on Today, or `back` in the capture bar (`raw_id`): logged
+/// under that capture, so undoing or fixing it puts away back (F41).
 #[tauri::command]
-pub fn clear_away(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+pub fn clear_away(raw_id: Option<i64>, app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+    let context = raw_id.map_or_else(|| "away".to_string(), |id| format!("capture:{id}"));
     // An empty date is never later than today, so it means "not away".
-    write_away(&app, &db, "", "away", clock::now_ms(), None)
+    write_away(&app, &db, "", &context, clock::now_ms(), raw_id)
 }
 
 /// Stores the return day. The capture line that asked for it, if any, is

@@ -438,7 +438,9 @@ export function setAway(
   return { result: date, changed: ["core_settings", "core_raw_items"] };
 }
 
-export function clearAway(conn: Conn, now: number): Done<null> {
-  writeAway(conn, "", "away", now);
+/** commands::clear_away: `back` in the capture bar logs it under that capture (F41). */
+export function clearAway(conn: Conn, args: { rawId?: unknown }, now: number): Done<null> {
+  const rawId = args.rawId === null || args.rawId === undefined ? null : Number(args.rawId);
+  writeAway(conn, "", rawId === null ? "away" : `capture:${rawId}`, now, rawId);
   return { result: null, changed: ["core_settings", "core_raw_items"] };
 }

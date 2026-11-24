@@ -13,13 +13,15 @@ export interface CheatRow {
   body: string;
   area_id: string | null;
   area_name: string | null;
+  /** Its place once a card edit set one; null for a pin not yet moved. */
+  sort_order?: number | null;
 }
 
 export interface Card {
   /** The area id or tag; "" for General. */
   key: string;
   title: string;
-  lines: { id: string; body: string }[];
+  lines: { id: string; body: string; sort_order?: number | null }[];
 }
 
 /**
@@ -27,7 +29,7 @@ export interface Card {
  * General last. Within a card: edited order first, then pins as they came.
  */
 export const CHEAT_SQL = `
-  SELECT n.id, n.body, n.area_id, a.name AS area_name
+  SELECT n.id, n.body, n.area_id, a.name AS area_name, n.sort_order
   FROM note_items AS n
   LEFT JOIN area_items AS a ON a.id = n.area_id AND a.deleted_at IS NULL
   WHERE n.kind = 'cheat' AND n.status = 'kept' AND n.deleted_at IS NULL
@@ -50,7 +52,11 @@ export function groupCards(rows: CheatRow[]): Card[] {
       card = { key, title: cardTitle(row), lines: [] };
       cards.set(key, card);
     }
-    card.lines.push({ id: row.id, body: row.body });
+    card.lines.push(
+      row.sort_order === undefined
+        ? { id: row.id, body: row.body }
+        : { id: row.id, body: row.body, sort_order: row.sort_order },
+    );
   }
   return [...cards.values()];
 }
@@ -150,8 +156,11 @@ export function cardText(card: Card): string {
 
 /**
  * The writes that turn a card into `text`: line i updates row i, new lines are
- * inserted, missing lines deleted (soft, so undo can bring them back). Every
- * kept line gets its position, so the order sticks.
+ * inserted, missing lines deleted (soft, so undo can bring them back). A kept
+ * line gets its position, so the order sticks. A line you didn't change that
+ * is already in its place isn't written (reg2-7): a save that only adds a
+ * line leaves a pinned line as the capture made it, so the pin can still be
+ * undone.
  */
 export function editOps(card: Card, text: string, newId: () => string): Op[] {
   const next = text
@@ -159,9 +168,16 @@ export function editOps(card: Card, text: string, newId: () => string): Op[] {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const ops: Op[] = [];
+  // Nothing before the new lines changes: they go on the end. After lines
+  // with no position (pins, in the order they came) a new one needs none
+  // either; it is the newest.
+  const kept = card.lines.slice(0, next.length);
+  const untouched = kept.every((line, index) => line.body === next[index]);
+  const lastOrder = card.lines[card.lines.length - 1]?.sort_order;
   next.forEach((body, index) => {
     const existing = card.lines[index];
     if (existing) {
+      if (untouched || (existing.body === body && existing.sort_order === index)) return;
       ops.push({
         op: "update",
         table: "note_items",
@@ -178,7 +194,10 @@ export function editOps(card: Card, text: string, newId: () => string): Op[] {
           status: "kept",
           body,
           area_id: card.key === "" ? null : card.key,
-          sort_order: index,
+          sort_order:
+            untouched && lastOrder === null
+              ? null
+              : Math.max(index, untouched && typeof lastOrder === "number" ? lastOrder + 1 : 0),
           origin: "notes",
         },
       });

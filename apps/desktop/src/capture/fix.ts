@@ -18,7 +18,10 @@ export const CAPTURE_MADE_SQL = `
          EXISTS (SELECT 1 FROM core_activity b
                  WHERE b.entity_type = a.entity_type AND b.entity_id = a.entity_id
                    AND b.id > a.id AND (b.context IS NULL OR b.context != a.context)
-                   AND b.action != 'undo') AS touched
+                   AND b.action != 'undo'
+                   -- A later change you have undone since doesn't count (reg2-6).
+                   AND NOT EXISTS (SELECT 1 FROM core_activity u
+                                   WHERE u.context = 'undo:' || b.context AND u.action = 'undo')) AS touched
   FROM core_activity a
   WHERE a.context = ?1 AND a.action = 'insert'
   ORDER BY a.id`;
@@ -66,8 +69,10 @@ const CHANGED: Record<string, string> = {
   project_items: "You've changed this project since. Edit it on Projects.",
   task_items: "You've changed this task since. Edit it on Plan > Tasks.",
   money_txns: "You've changed this entry since. Edit it on Money.",
-  money_loans: "You've changed this loan since. Edit it on Money.",
-  note_items: "You've changed this note since. Edit it in Sirna.",
+  money_loans: "This loan has changed since. Edit it on Money > Lent and owed.",
+  note_items: "You've changed this note since. Edit it on Notes.",
+  "note_items:cheat": "You've changed this line since. Edit it on Plan > Cheat sheets.",
+  day_blocks: "You've changed this block since. Edit it on Today.",
   savings_entries: "You've changed this saving since. Edit it on Money.",
   core_settings: "Away has changed since. Set it on Today.",
 };
@@ -98,9 +103,16 @@ export function undoBlocked(rows: BlockRow[], verb: "undo" | "fix"): string | nu
  * Rust's tray reads the same rule (tasks.rs).
  */
 export const LAST_CAPTURE_SQL =
-  "SELECT id, body, parse_status FROM core_raw_items WHERE source = 'capture' AND parse_status != 'ignored' ORDER BY id DESC LIMIT 1";
+  "SELECT id, body, parse_status, parser_id, received_at FROM core_raw_items WHERE source = 'capture' AND parse_status != 'ignored' ORDER BY id DESC LIMIT 1";
 
-export type LastCapture = { id: number; body: string; parse_status: string };
+export type LastCapture = {
+  id: number;
+  body: string;
+  parse_status: string;
+  /** `today` for a line from Add for today (capture/today.ts): a fix keeps it a task for that day. */
+  parser_id?: string | null;
+  received_at?: number;
+};
 
 /** The capture Ctrl+Z or Up acts on: none when the newest one made nothing. */
 export function actionable(last: LastCapture | undefined): LastCapture | undefined {
