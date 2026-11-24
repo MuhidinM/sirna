@@ -568,6 +568,60 @@ async function extraTopOps(query: Query, date: string, plan: DayPlan): Promise<O
     .map((row): Op => ({ op: "delete", table: "task_daily_top", id: row.id }));
 }
 
+/**
+ * After you move a block by a command ("move gym to 6pm"): when it now sits on
+ * an untouched planner block still to come, the day's untouched blocks are
+ * planned again around it (`replanDay`; your moved block is yours now, so it
+ * stays). Returns the ops that undo the replan, or null when nothing was in
+ * the way. A drag on the board doesn't call this: there you place it yourself.
+ */
+export async function replanAround(
+  query: Query,
+  transact: (ops: Op[]) => Promise<unknown>,
+  date: string,
+  blockId: string,
+  newId: () => string,
+  nowMs: number,
+): Promise<Op[] | null> {
+  const { input, stale } = await replanInput(query, date, nowMs);
+  const [moved] = (await query<LiveRow>(LIVE_BLOCKS_SQL, [date])).filter(
+    (row) => row.id === blockId,
+  );
+  if (!moved) return null;
+  const inTheWay = stale.some(
+    (block) =>
+      block.id !== blockId && block.start_at < moved.end_at && moved.start_at < block.end_at,
+  );
+  if (!inTheWay) return null;
+  const plan = generateDay(input);
+  const ops: Op[] = [
+    ...stale.map(({ id }): Op => ({ op: "delete", table: "day_blocks", id })),
+    ...planOps(plan, date, newId, true),
+  ];
+  await transact(ops);
+  // Undo: the new blocks go, the old ones come back as they were.
+  return [
+    ...ops.flatMap((op): Op[] =>
+      op.op === "insert" ? [{ op: "delete", table: "day_blocks", id: op.id }] : [],
+    ),
+    ...stale.map((block): Op => ({
+      op: "upsert",
+      table: "day_blocks",
+      id: block.id,
+      values: {
+        logical_date: date,
+        start_at: block.start_at,
+        end_at: block.end_at,
+        task_id: block.task_id,
+        title: block.title,
+        kind: block.kind,
+        area_id: block.area_id ?? null,
+        light_day: block.light_day ?? 0,
+      },
+    })),
+  ];
+}
+
 /** Days from today on that have a plan. */
 export const PLANNED_FROM_SQL = `
   SELECT DISTINCT logical_date FROM day_blocks

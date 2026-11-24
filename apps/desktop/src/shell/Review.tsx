@@ -8,7 +8,7 @@ import { commitCapture, query, transact } from "../kernel/db";
 import { formatAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import { toOps } from "../capture/ops";
-import { ensureDayPlan } from "../features/plan/dayplan";
+import { ensureDayPlan, replanAround } from "../features/plan/dayplan";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import {
   asksToShrink,
@@ -595,6 +595,23 @@ async function runCommands(
       continue;
     }
     if (result.ops.length > 0) await transact("user", result.ops, "review:command");
+    // A block moved onto the planner's blocks: they make room around it (F15).
+    const placed = result.ops.find(
+      (op) => op.table === "day_blocks" && op.op !== "delete" && "start_at" in op.values,
+    );
+    if (command.kind === "move" && placed && placed.op !== "delete") {
+      const undoReplan = await replanAround(
+        query,
+        (ops) => transact("system", ops, "day-plan"),
+        logicalDate(placed.values.start_at as number),
+        placed.id,
+        () => ulid(),
+        systemClock.now(),
+      );
+      if (undoReplan) done.push({ ...result, undo: [...undoReplan, ...result.undo] });
+      else done.push(result);
+      continue;
+    }
     done.push(result);
   }
   return { done, rest };

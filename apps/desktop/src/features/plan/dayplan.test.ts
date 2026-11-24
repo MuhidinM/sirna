@@ -10,6 +10,7 @@ import {
   isoWeekday,
   loadPlanInput,
   type OpenTaskRow,
+  replanAround,
   replanDay,
   replanFromToday,
   startingNow,
@@ -35,6 +36,8 @@ function apply(db: DatabaseSync, ops: Op[]) {
     const idColumn = op.table === "core_settings" ? "key" : "id";
     const values: Record<string, SqlValue> = { ...op.values };
     const exists = db.prepare(`SELECT 1 FROM ${op.table} WHERE ${idColumn} = ?`).get(op.id);
+    // An upsert revives a soft-deleted row (tx.rs).
+    if (op.op === "upsert" && exists && op.table === "day_blocks") values.deleted_at = null;
     if (op.op === "update" || (op.op === "upsert" && exists)) {
       const sets = Object.keys(values)
         .map((key) => `${key} = ?`)
@@ -1046,5 +1049,62 @@ describe("a later day is planned after the days before it (F18)", () => {
     await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-12");
     await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-13");
     expect(taskDays()).toEqual(["2026-11-12"]);
+  });
+});
+
+describe("a block moved by a command onto a planner block (F15)", () => {
+  const TOMORROW = "2026-11-12";
+  type Live = { id: string; start_at: number; end_at: number; title: string; untouched: number };
+  const liveBlocks = (h: ReturnType<typeof harness>) =>
+    h.db
+      .prepare(
+        `SELECT id, start_at, end_at, title,
+           (source IN ('template', 'generator') AND user_edited_at IS NULL) AS untouched
+         FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL ORDER BY start_at`,
+      )
+      .all(TOMORROW) as Live[];
+
+  it("plans the untouched blocks again around it, and undo puts them back", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "quran", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('k', 'Apply at Kifiya', 'todo', 'jobhunt', '2026-11-12', 0, 0)",
+    );
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    const before = liveBlocks(h);
+    const quran = before.find((b) => b.title === "Quran");
+    const slot = before.find((b) => b.title.startsWith("Job hunt") && b.untouched === 1);
+    if (!quran || !slot) throw new Error("expected Quran and a Job hunt slot");
+    // "move quran to …": it now starts 15 minutes before the slot ends (tx.rs stamps the edit).
+    const length = quran.end_at - quran.start_at;
+    const start = slot.end_at - 15 * 60_000;
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
+      .run(start, start + length, quran.id);
+    const undo = await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, NOW);
+    expect(undo).not.toBeNull();
+    const after = liveBlocks(h);
+    const clash = after.filter(
+      (b) => b.untouched === 1 && b.start_at < start + length && start < b.end_at,
+    );
+    expect(clash).toEqual([]);
+    // The task still gets its time somewhere.
+    expect(after.some((b) => b.title === "Job hunt: Apply at Kifiya")).toBe(true);
+    // Nothing in the way: nothing to do.
+    expect(await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, NOW)).toBeNull();
+    apply(h.db, undo ?? []);
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ? WHERE id = ?")
+      .run(quran.start_at, quran.end_at, quran.id);
+    const shape = (rows: Live[]) => rows.map((b) => [b.start_at, b.end_at, b.title]);
+    expect(shape(liveBlocks(h))).toEqual(shape(before));
   });
 });
