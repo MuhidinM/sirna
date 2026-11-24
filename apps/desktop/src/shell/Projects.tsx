@@ -582,7 +582,10 @@ function IdeaCard({
               Keep {shortDate(project.deadline)}
             </Button>
             <Button disabled={"reason" in suggested} onClick={() => act({ kind: "suggested" })}>
-              Use suggested dates
+              {/* Says the finish it sets, so a date it moves doesn't change unseen (F87-new). */}
+              {"values" in suggested && typeof suggested.values.forecast_finish === "string"
+                ? `Use suggested dates · done ${shortDate(suggested.values.forecast_finish)}`
+                : "Use suggested dates"}
             </Button>
           </>
         )}

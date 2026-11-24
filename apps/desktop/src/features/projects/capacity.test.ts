@@ -433,13 +433,23 @@ describe("user-test fixes", () => {
   });
 
   it("F43: names the project limit, not load, when the limit blocks every week", () => {
-    const three = [project({ id: "a" }), project({ id: "b" }), project({ id: "c" })];
+    const three = [
+      project({ id: "a", title: "Fix the car" }),
+      project({ id: "b", title: "Move flat" }),
+      project({ id: "c", title: "Portfolio" }),
+    ];
     expect(findSlot(120, TODAY, WEEK, three)).toBeNull();
     const reason = noRoom(TODAY, WEEK, three);
-    expect(reason).toEqual({ kind: "limit", running: 3 });
-    expect(noRoomText(reason)).toMatch(/^3 projects run every week .* limit is 2/);
+    expect(reason).toEqual({
+      kind: "limit",
+      running: 3,
+      names: ["Fix the car", "Move flat", "Portfolio"],
+    });
+    expect(noRoomText(reason)).toMatch(
+      /^3 projects run every week for the next year \(Fix the car, Move flat, Portfolio\), and the limit is 2/,
+    );
     const full = { capacity: 1000, areaCommitted: 900 };
-    expect(noRoom(TODAY, full, [])).toEqual({ kind: "load", running: 0 });
+    expect(noRoom(TODAY, full, [])).toEqual({ kind: "load", running: 0, names: [] });
     expect(noRoomText(noRoom(TODAY, full, []))).toMatch(/85% load/);
   });
 

@@ -143,6 +143,13 @@ describe("acting on an idea's card", () => {
     });
   });
 
+  it("keeps a later date of yours when the suggested finish is earlier (F87-new)", () => {
+    const later = { ...dated, deadline: "2027-01-15" };
+    const values = ideaActionValues(later, { kind: "suggested" }, PLAN);
+    expect(values).toMatchObject({ forecast_finish: "2026-12-27" });
+    expect(values).not.toHaveProperty("deadline");
+  });
+
   it("places an undated idea, waiting when two projects run", () => {
     const projects = [active("a"), active("b")];
     const undated = { id: "me", estimate_min: 600, deadline: null };
@@ -216,11 +223,15 @@ describe("review fixes", () => {
 
 describe("user-test fixes", () => {
   it("F43: blames the project limit, not load, when it blocks every week", () => {
-    const projects = [active("a"), active("b"), active("c")];
+    const projects = [
+      { ...active("a"), title: "Fix the car" },
+      { ...active("b"), title: "Move flat" },
+      active("c"),
+    ];
     const placed = placeIdea(ideaInput(idea("idea: learn Go ~2h")), { ...PLAN, projects });
     expect(placed.values.status).toBe("idea");
     expect(placed.echo).toBe(
-      "Idea · saved · 3 projects run every week for the next year (limit 2); finish, pause or date one to place it",
+      "Idea · saved · 3 projects run every week for the next year (Fix the car, Move flat), limit 2; finish, pause or date one to place it",
     );
     const undated = { id: "me", estimate_min: 120, deadline: null };
     expect(ideaAction(undated, { kind: "place" }, { ...PLAN, projects })).toEqual({

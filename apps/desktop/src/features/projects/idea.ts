@@ -17,6 +17,7 @@ import {
   firstMonday,
   hoursLabel,
   MAX_ACTIVE,
+  namesText,
   noRoom,
   noRoomText,
   type PlannedProject,
@@ -127,7 +128,7 @@ export function placeIdea(idea: IdeaInput, plan: WeekPlan | null): Placement {
       values,
       echo:
         reason.kind === "limit"
-          ? `Idea · saved · ${reason.running} projects run every week for the next year (limit ${MAX_ACTIVE}); finish, pause or date one to place it`
+          ? `Idea · saved · ${reason.running} projects run every week for the next year${namesText(reason)}, limit ${MAX_ACTIVE}; finish, pause or date one to place it`
           : "Idea · saved · no room in the next year at 85% load",
     };
   }
@@ -200,7 +201,11 @@ export function ideaAction(project: IdeaRow, action: IdeaAction, plan: WeekPlan)
       start_date: slot.start,
       forecast_finish: slot.finish,
       weekly_min: Math.min(slot.weeklyMin, MAX_WEEKLY_HOURS * 60),
-      ...(action.kind === "suggested" ? { deadline: slot.finish } : {}),
+      // The date moves only when it can't be kept: an earlier finish leaves
+      // your later date as it was (F87-new).
+      ...(action.kind === "suggested" && (!project.deadline || slot.finish > project.deadline)
+        ? { deadline: slot.finish }
+        : {}),
     },
   };
 }
