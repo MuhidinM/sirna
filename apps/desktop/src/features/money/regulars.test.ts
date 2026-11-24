@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
+import { type AccountRow, ACCOUNTS_SQL, balanceOf } from "./accounts";
 import {
   checkRegular,
   regularDraftOf,
@@ -291,6 +292,37 @@ describe("what is due (T-059, T-060)", () => {
     });
     expect(settleOps(november, "2026-11-25", 5, "e")[0]).toMatchObject({
       values: { local_date: "2026-11-25", due_date: "2026-11-24" },
+    });
+  });
+
+  it("never books a late payment before the account's opening date, so the balance drops", () => {
+    const iddir = regular({
+      id: "iddir",
+      name: "Iddir",
+      amount_minor: 20_000,
+      rule_json: JSON.stringify({ every: "month", day: 24 }),
+    });
+    const [october] = dueItems([iddir], [], "2026-10-01", "2026-11-30", "2026-11-24", "2026-11-01");
+    if (!october) throw new Error("no item");
+    // CBO's balance was typed on 20 Nov; Paid on 24 Nov for 24 Oct.
+    const db = openTestDb();
+    db.prepare(
+      "UPDATE money_accounts SET opening_minor = 500000, opening_date = '2026-11-20' WHERE id = 'cbo'",
+    ).run();
+    const [op] = settleOps(october, "2026-11-24", 5, "e", "2026-11-20");
+    if (op?.op !== "insert") throw new Error("insert only");
+    expect(op.values).toMatchObject({ local_date: "2026-11-20", due_date: "2026-10-24" });
+    const cols = Object.keys(op.values);
+    db.prepare(
+      `INSERT INTO money_txns (id, ${cols.join(", ")}, created_at, updated_at) VALUES (?, ${cols.map(() => "?").join(", ")}, 0, 0)`,
+    ).run(op.id, ...(Object.values(op.values) as (string | number | null)[]));
+    const cbo = (db.prepare(ACCOUNTS_SQL).all() as unknown as AccountRow[]).find(
+      (a) => a.id === "cbo",
+    );
+    expect(cbo && balanceOf(cbo)).toBe(480_000);
+    // Opened before the due date: still booked on its own date.
+    expect(settleOps(october, "2026-11-24", 5, "e", "2026-10-01")[0]).toMatchObject({
+      values: { local_date: "2026-10-24" },
     });
   });
 

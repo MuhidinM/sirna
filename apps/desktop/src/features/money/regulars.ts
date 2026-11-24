@@ -393,11 +393,29 @@ export function dueItems(
 /**
  * The entry Paid or Received records: the full amount left, marked with the
  * regular. Dated today, or its own date when that was in an earlier month,
- * so October's bill paid late counts in October, not in November's spending.
+ * so October's bill paid late counts in October, not in November's spending
+ * (but not before the account's opening date).
  */
-export function settleOps(item: DueItem, today: string, nowMs: number, id: string): Op[] {
+export function settleOps(
+  item: DueItem,
+  today: string,
+  nowMs: number,
+  id: string,
+  /** The account's opening date: a balance counts only entries from then on. */
+  openingDate?: string | null,
+): Op[] {
   const out = item.regular.kind === "bill";
-  const date = item.date.slice(0, 7) < today.slice(0, 7) ? item.date : today;
+  // A date from an earlier month is booked on that date, so it stays in its
+  // month, but never before the account's opening date: a balance typed since
+  // would leave it out, and money that really moved would not show.
+  const date =
+    item.date.slice(0, 7) >= today.slice(0, 7)
+      ? today
+      : openingDate && openingDate > item.date
+        ? openingDate < today
+          ? openingDate
+          : today
+        : item.date;
   return [
     {
       op: "insert",

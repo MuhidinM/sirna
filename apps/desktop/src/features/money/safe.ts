@@ -15,7 +15,7 @@ import {
   newConversion,
   type Rates,
 } from "./currency";
-import { balances, type LoanEvent } from "./loans";
+import { type LoanEvent, owedThrough } from "./loans";
 import { type DueItem, readRule, type RegularRow } from "./regulars";
 
 /** Saved into goals in total, and this month per goal (?1 first day, ?2 last day). */
@@ -105,9 +105,10 @@ export function safeToSpend(input: {
   // Borrowed money sits in your accounts but is not yours (F30). Like pay and
   // bills, only loans through counted accounts: money borrowed into an
   // account with no balance was never added, so it isn't taken off either.
-  const owed = balances((input.loans ?? []).filter((event) => counted.has(event.account))).reduce(
-    (sum, person) =>
-      person.iOwe > 0 ? sum + (convert(conversion, rates, person.iOwe, person.currency) ?? 0) : sum,
+  // What is open is worked out from every event, so a repayment through
+  // another account still clears the debt.
+  const owed = owedThrough(input.loans ?? [], counted).reduce(
+    (sum, debt) => sum + (convert(conversion, rates, debt.amount, debt.currency) ?? 0),
     0,
   );
   const lines: SafeLine[] = [{ label: "In your accounts", amount: total }];

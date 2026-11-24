@@ -46,17 +46,11 @@ export interface PersonBalance {
 
 export const personKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
 
-/**
- * Open amounts per person. Repayments clear the oldest first, so "since" is
- * the date of the oldest amount still open. Paying back more than was lent
- * turns the rest the other way (they now owe you less, or you owe them).
- * Dollars and birr never settle each other: each currency is its own line.
- */
-export function balances(events: LoanEvent[]): PersonBalance[] {
-  const people = new Map<
-    string,
-    PersonBalance & { lots: { date: string; left: number; mine: boolean }[] }
-  >();
+type Lot = { date: string; left: number; mine: boolean; account: string };
+
+/** Each person and currency's events, with the amounts still open, oldest first. */
+function openLots(events: LoanEvent[]): Map<string, PersonBalance & { lots: Lot[] }> {
+  const people = new Map<string, PersonBalance & { lots: Lot[] }>();
   for (const event of [...events].sort((a, b) => a.local_date.localeCompare(b.local_date))) {
     const currency = event.currency ?? "ETB";
     const key = `${personKey(event.person)}|${currency}`;
@@ -88,8 +82,44 @@ export function balances(events: LoanEvent[]): PersonBalance[] {
       lot.left -= take;
       amount -= take;
     }
-    if (amount > 0) person.lots.push({ date: event.local_date, left: amount, mine: sign > 0 });
+    if (amount > 0)
+      person.lots.push({
+        date: event.local_date,
+        left: amount,
+        mine: sign > 0,
+        account: event.account,
+      });
   }
+  return people;
+}
+
+/**
+ * What you still owe, per currency, counting only debts whose money came into
+ * one of `accounts`. Repayments settle from every account, so a borrow into
+ * Cash paid back from Telebirr is cleared even when Telebirr isn't counted.
+ */
+export function owedThrough(
+  events: LoanEvent[],
+  accounts: ReadonlySet<string>,
+): { currency: string; amount: number }[] {
+  return [...openLots(events).values()]
+    .map((person) => ({
+      currency: person.currency ?? "ETB",
+      amount: person.lots
+        .filter((lot) => !lot.mine && accounts.has(lot.account))
+        .reduce((sum, lot) => sum + lot.left, 0),
+    }))
+    .filter((debt) => debt.amount > 0);
+}
+
+/**
+ * Open amounts per person. Repayments clear the oldest first, so "since" is
+ * the date of the oldest amount still open. Paying back more than was lent
+ * turns the rest the other way (they now owe you less, or you owe them).
+ * Dollars and birr never settle each other: each currency is its own line.
+ */
+export function balances(events: LoanEvent[]): PersonBalance[] {
+  const people = openLots(events);
   return [...people.values()]
     .map(({ lots, ...person }) => {
       const open = lots.filter((lot) => lot.left > 0);

@@ -159,6 +159,24 @@ describe("safe to spend (T-062)", () => {
     expect(bare.lines.find((line) => line.label === "You owe people")).toBeUndefined();
     // Nothing owed, no line.
     expect(safeToSpend(base).lines.map((line) => line.label)).toEqual(["In your accounts"]);
+    // Borrowed into Cash, paid back through Telebirr (no balance): nothing is owed.
+    const repaid = safeToSpend({
+      ...base,
+      loans: [
+        loan({}),
+        loan({ id: "p", kind: "i_paid", amount_minor: 300_000, account: "telebirr" }),
+      ],
+    });
+    expect(repaid.lines.find((line) => line.label === "You owe people")).toBeUndefined();
+    // Half paid back through Telebirr: the other half is still owed.
+    const half = safeToSpend({
+      ...base,
+      loans: [
+        loan({}),
+        loan({ id: "p", kind: "i_paid", amount_minor: 150_000, account: "telebirr" }),
+      ],
+    });
+    expect(half.lines).toContainEqual({ label: "You owe people", amount: -150_000 });
   });
 });
 

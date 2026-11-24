@@ -93,7 +93,18 @@ export function findings(input: {
         daysLate: late,
         percentReceived: Math.round((item.done / item.regular.amount_minor) * 100),
       },
-      actions: [{ label: "Received", ops: settleOps(item, today, nowMs, newId()) }],
+      actions: [
+        {
+          label: "Received",
+          ops: settleOps(
+            item,
+            today,
+            nowMs,
+            newId(),
+            accounts.find((account) => account.id === item.regular.account)?.opening_date,
+          ),
+        },
+      ],
     });
   }
 

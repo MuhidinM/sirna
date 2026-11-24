@@ -2254,11 +2254,18 @@ export function SettleButton({ item, today }: { item: DueItem; today: string }) 
     <>
       <Button
         onClick={() =>
-          void transact(
-            "user",
-            settleOps(item, today, systemClock.now(), ulid()),
-            `regular:${item.regular.id}`,
-          ).catch((failure: unknown) => setError(`Couldn't record it: ${message(failure)}`))
+          void query<{ opening_date: string | null }>(
+            "SELECT opening_date FROM money_accounts WHERE id = ?",
+            [item.regular.account],
+          )
+            .then((rows) =>
+              transact(
+                "user",
+                settleOps(item, today, systemClock.now(), ulid(), rows[0]?.opening_date),
+                `regular:${item.regular.id}`,
+              ),
+            )
+            .catch((failure: unknown) => setError(`Couldn't record it: ${message(failure)}`))
         }
       >
         {item.regular.kind === "bill" ? "Paid" : "Received"}

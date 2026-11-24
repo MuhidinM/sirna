@@ -311,18 +311,21 @@ function openCodes(person: LoanPerson, kind: "paid_me" | "i_paid"): string[] {
  * nothing open that way, or more than is owed. Balances would otherwise
  * flip it silently into a new debt the other way.
  */
+const capitalise = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+
 function repaymentProblem(parsed: LoanItem, code: string, options: ParseOptions): string | null {
   if (parsed.loanKind !== "paid_me" && parsed.loanKind !== "i_paid") return null;
   const person = (options.loanPeople ?? []).find((p) => squash(p.name) === squash(parsed.person));
   if (!person?.open) return null;
   const line = person.open.find((open) => open.currency === code);
   const owed = line ? (parsed.loanKind === "paid_me" ? line.owedToMe : line.iOwe) : 0;
-  if (owed <= 0) return `No ${code} loan open with ${person.name}`;
+  const name = capitalise(person.name);
+  if (owed <= 0) return `No ${code} loan open with ${name}`;
   if (parsed.amount <= owed) return null;
   const said =
     parsed.loanKind === "paid_me"
-      ? `${person.name} owes you ${formatAmount(owed, code)}`
-      : `You owe ${person.name} ${formatAmount(owed, code)}`;
+      ? `${name} owes you ${formatAmount(owed, code)}`
+      : `You owe ${name} ${formatAmount(owed, code)}`;
   return `${said}, not ${formatAmount(parsed.amount, code)}: write the ${formatAmount(owed, code)} paid back, and the rest as a new loan`;
 }
 
@@ -347,7 +350,7 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
       if (!account && codes.length > 1)
         return looseEnd(
           text,
-          `${open.name} has loans open in ${codes.join(" and ")}: add the currency or an @account`,
+          `${capitalise(open.name)} has loans open in ${codes.join(" and ")}: add the currency or an @account`,
         );
       const code = codes[0];
       if (!account && code && code !== "ETB") home = homeIn(options.accounts ?? [], code);
