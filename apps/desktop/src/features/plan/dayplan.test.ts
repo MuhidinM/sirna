@@ -11,6 +11,7 @@ import {
   loadPlanInput,
   type OpenTaskRow,
   replanDay,
+  replanFromToday,
   startingNow,
   taskOnDay,
   weekStart,
@@ -277,6 +278,33 @@ describe("replanning after a routine change", () => {
     const gym = blocks.find((b) => b.title === "Gym");
     // 06:30 in Addis is 03:30 UTC.
     expect(gym && new Date(gym.start_at).toISOString().slice(11, 16)).toBe("03:30");
+  });
+
+  it("reaches every planned day from today on, not just today and tomorrow (F17)", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    // Opening Fri 13 and Mon 16 in Plan → Day saved their plans.
+    for (const date of ["2026-11-11", "2026-11-13", "2026-11-16"])
+      await ensureDayPlan(h.query, h.transact, NOW, h.newId, date);
+    h.db.prepare("UPDATE routine_blocks SET start_min = 1140 WHERE title = 'Gym'").run();
+    await replanFromToday(h.query, h.transact, NOW, h.newId);
+    const gyms = h.db
+      .prepare(
+        "SELECT logical_date, start_at FROM day_blocks WHERE title = 'Gym' AND deleted_at IS NULL ORDER BY logical_date",
+      )
+      .all() as { logical_date: string; start_at: number }[];
+    expect(gyms.map((g) => g.logical_date)).toEqual(["2026-11-11", "2026-11-13", "2026-11-16"]);
+    // 19:00 in Addis is 16:00 UTC.
+    for (const gym of gyms)
+      expect(new Date(gym.start_at).toISOString().slice(11, 16)).toBe("16:00");
   });
 
   it("leaves a day nobody planned yet alone", async () => {

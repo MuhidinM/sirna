@@ -464,6 +464,26 @@ export async function replanDay(
   ]);
 }
 
+/** Days from today on that have a plan. */
+export const PLANNED_FROM_SQL = `
+  SELECT DISTINCT logical_date FROM day_blocks
+  WHERE deleted_at IS NULL AND logical_date >= ? ORDER BY logical_date`;
+
+/**
+ * After the routine changes: every day from today on that already has a plan
+ * gets a new one (`replanDay`; today keeps the blocks already over).
+ */
+export async function replanFromToday(
+  query: Query,
+  transact: (ops: Op[]) => Promise<unknown>,
+  nowMs: number,
+  newId: () => string,
+): Promise<void> {
+  const today = logicalDate(nowMs);
+  const days = await query<{ logical_date: string }>(PLANNED_FROM_SQL, [today]);
+  for (const { logical_date: date } of days) await replanDay(query, transact, date, newId, nowMs);
+}
+
 /** On today, a part of the day is filled from now on (the morning may be gone). */
 export function startingNow(input: PlanInput, nowMs?: number): PlanInput {
   if (nowMs === undefined || input.date !== logicalDate(nowMs)) return input;
