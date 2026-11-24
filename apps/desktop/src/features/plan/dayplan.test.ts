@@ -887,7 +887,7 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
       .prepare(
         `SELECT id, start_at, end_at, title FROM day_blocks WHERE logical_date = '${DAY}' AND kind = 'area' AND start_at > ? AND end_at - start_at >= ? AND deleted_at IS NULL ORDER BY start_at LIMIT 1`,
       )
-      .get(NOW, 50 * 60_000) as { id: string; start_at: number; end_at: number; title: string };
+      .get(NOW, 45 * 60_000) as { id: string; start_at: number; end_at: number; title: string };
     // "read a book" lands 25 minutes into the slot, for 30 minutes.
     const startsAt = slot.start_at + 25 * 60_000;
     addTimed(h, "book", "read a book", startsAt);

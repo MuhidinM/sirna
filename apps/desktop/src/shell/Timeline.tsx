@@ -66,6 +66,8 @@ const dot = (ms: number) => time.format(ms).replace(":", ".");
 const range = (block: BlockRow) => `${dot(block.start_at)} – ${dot(block.end_at)}`;
 /** "12:00–13:00": times in prose (the Now card), as in the brief. */
 const span = (block: BlockRow) => `${time.format(block.start_at)}–${time.format(block.end_at)}`;
+/** "in 1 h" never breaks between "1" and "h" on the narrow card. */
+const unbroken = (text: string) => text.replace(/ /g, " ");
 
 /** The yellow Now card: the current block, or the next one, with the time left. */
 export function NowCards({
@@ -90,7 +92,7 @@ export function NowCards({
     return (
       <NowCard
         when={span(now)}
-        left={`${formatMinutes(left)} left`}
+        left={unbroken(`${formatMinutes(left)} left`)}
         title={now.title}
         sub={
           <>
@@ -101,7 +103,7 @@ export function NowCards({
               </>
             )}
             {next && minutesToNext !== undefined
-              ? `Next: ${next.title} at ${time.format(next.start_at)} · in ${formatMinutes(minutesToNext)}`
+              ? `Next: ${next.title} at ${time.format(next.start_at)} · ${unbroken(`in ${formatMinutes(minutesToNext)}`)}`
               : "Nothing after this today."}
           </>
         }

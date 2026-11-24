@@ -308,7 +308,7 @@ describe("an editable routine (My week)", () => {
     expect(areaBlocks(plan).map((b) => b.taskId)).toEqual(["Write the report"]);
     const roomy = generateDay(
       input({
-        template: [...twoSlots, { ...second, startMin: 21 * 60 + 30, durationMin: 60 }].map(coding),
+        template: [...twoSlots, { ...second, startMin: 21 * 60 + 30, durationMin: 90 }].map(coding),
         tasks: [big, other],
       }),
     );
@@ -522,10 +522,16 @@ describe("time first (docs/proposals/time-first.md §1)", () => {
     const plan = generateDay(
       input({ template: [slot(19 * 60, 60)], tasks: [bank], doneThisWeekMin: metWeek }),
     );
-    // 60 free minutes, 20% kept open: 48 for the task.
+    // 60 free minutes, 20% kept open: 48, to the quarter hour 45 for the task.
     expect(ownBlocks(plan)).toEqual([
-      expect.objectContaining({ startMin: 19 * 60, durationMin: 48, areaId: null, kind: "area" }),
+      expect.objectContaining({ startMin: 19 * 60, durationMin: 45, areaId: null, kind: "area" }),
     ]);
+  });
+
+  it("ends a block the buffer cuts short on the quarter hour (F104)", () => {
+    // 71 free minutes, 20% kept open: 56, so 17:15-18:11; it ends at 18:00.
+    const plan = generateDay(input({ template: [slot(17 * 60 + 15, 71)] }));
+    expect(areaBlocks(plan).map((b) => [b.startMin, b.durationMin])).toEqual([[17 * 60 + 15, 45]]);
   });
 
   it("fills area slots first; a neutral block only gets what they leave", () => {
