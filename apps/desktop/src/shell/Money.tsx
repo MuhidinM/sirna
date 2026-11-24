@@ -127,12 +127,15 @@ import {
 } from "../features/money/safe";
 import {
   addGoalOps,
+  GOAL_HELD_SQL,
+  type GoalHeld,
   type GoalRow,
   GOALS_SQL,
-  savingGoal,
+  transferGoal,
   transferSaving,
   transferSavingOps,
   UNASSIGNED_SQL,
+  UNHELD,
 } from "../features/savings/savings";
 import {
   addCategoryOps,
@@ -2869,6 +2872,7 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
   const [note, setNote] = useState<string | null>(null);
   const { rates } = useRates();
   const goals = useLiveQuery<GoalRow & Record<string, string | number | null>>(GOALS_SQL);
+  const goalHeld = useLiveQuery<GoalHeld & Record<string, string | number>>(GOAL_HELD_SQL);
   const source = accounts.find((account) => account.id === from);
   const target = accounts.find((account) => account.id === to);
   // Between two currencies, the other half is worked out at the saved rate (time-first §3).
@@ -2899,6 +2903,8 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
           received: halves.received,
           rates,
         });
+        // Out of savings, only a goal holding it there pays, a finished one first (F32, F33).
+        const pays = saving && transferGoal(goals.rows, saving, goalHeld.rows);
         void transact(
           "user",
           [
@@ -2914,13 +2920,12 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
             }),
             ...transferSavingOps({
               saving,
-              // Out of savings, from a finished goal holding it first (F32).
-              goalId: savingGoal(goals.rows, saving?.minor ?? 0),
+              goalId: pays?.goalId ?? null,
               transferId,
               nowMs,
               date: today,
               id: ulid(),
-              origin: "transfer",
+              origin: pays?.unheld ? UNHELD : "transfer",
             }),
           ],
           "transfer",

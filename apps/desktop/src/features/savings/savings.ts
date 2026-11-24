@@ -42,19 +42,35 @@ export interface GoalRow {
  * re-label of money already in a savings account (a claim through "Give it
  * to…") or a correction after a Check (F31, F37). Month and week sums use it.
  */
-export const SAVING_FLOW = `(origin IS NULL OR origin NOT IN ('claim', 'reconcile'))`;
-const FLOW_E = `(e.origin IS NULL OR e.origin NOT IN ('claim', 'reconcile'))`;
+export const SAVING_FLOW = `(origin IS NULL OR origin NOT IN ('claim', 'reconcile', 'unheld'))`;
+const FLOW_E = `(e.origin IS NULL OR e.origin NOT IN ('claim', 'reconcile', 'unheld'))`;
+/**
+ * Money that left a savings account when no goal held it there (F32, F33):
+ * an entry with no goal, so the repair sync sees the transfer as done, that
+ * counts nowhere. The account's balance already shows the money gone.
+ */
+export const UNHELD = "unheld";
+const NOT_UNHELD = `(origin IS NULL OR origin <> 'unheld')`;
 
 /** An entry is held while its account is a savings account (not once set back to spending). */
 const HELD = `e.account IN (SELECT id FROM money_accounts WHERE is_savings = 1)`;
 
+/**
+ * What a goal holds in savings accounts: per account, never below zero (reg0-1,
+ * F32, F33). Entries in one account can sum below zero when a take-out
+ * outlives the put-aside it was set against (the put-aside deleted in Ledger):
+ * the goal then holds nothing there, and the take-out only lowered its number.
+ * Every sum of held money uses this rule, so the card, Safe to spend and the
+ * money no goal has agree.
+ */
 export const GOALS_SQL = `
   SELECT g.id, g.title, g.target_minor, g.start_date, g.status, g.target_date,
          COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
                    WHERE e.goal_id = g.id AND e.deleted_at IS NULL), 0) AS saved_minor,
-         COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
-                   WHERE e.goal_id = g.id AND e.deleted_at IS NULL AND ${HELD}), 0)
-           AS held_minor,
+         (SELECT COALESCE(sum(max(0, h.minor)), 0)
+            FROM (SELECT sum(e.amount_minor) AS minor FROM savings_entries e
+                  WHERE e.goal_id = g.id AND e.deleted_at IS NULL AND ${HELD}
+                  GROUP BY e.account) h) AS held_minor,
          COALESCE((SELECT sum(e.amount_minor) FROM savings_entries e
                    WHERE e.goal_id = g.id AND e.deleted_at IS NULL AND ${FLOW_E}), 0)
            AS flow_minor
@@ -63,22 +79,33 @@ export const GOALS_SQL = `
   ORDER BY g.status = 'done', g.created_at`;
 
 /** Entries waiting for a goal; `held` is the part in a savings account. */
-export const UNASSIGNED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor, count(*) AS n,
+export const UNASSIGNED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor,
+    count(*) AS n,
     COALESCE(sum(CASE WHEN ${HELD} THEN amount_minor END), 0) AS held
-  FROM savings_entries e WHERE goal_id IS NULL AND deleted_at IS NULL`;
+  FROM savings_entries e WHERE goal_id IS NULL AND deleted_at IS NULL AND ${NOT_UNHELD}`;
 
 /**
  * Waiting entries one by one: money put aside (+) waits for a goal to go to;
  * money taken out (−) waits for the goal it came from (F33).
  */
-export const WAITING_SQL = `SELECT id, amount_minor FROM savings_entries
-  WHERE goal_id IS NULL AND deleted_at IS NULL ORDER BY occurred_at, id`;
+export const WAITING_SQL = `SELECT id, amount_minor, account FROM savings_entries
+  WHERE goal_id IS NULL AND deleted_at IS NULL AND ${NOT_UNHELD} ORDER BY occurred_at, id`;
 
 /** What each goal holds in each savings account (ETB worth of its entries there). */
 export const GOAL_HELD_SQL = `SELECT e.goal_id, e.account, COALESCE(sum(e.amount_minor), 0) AS minor
   FROM savings_entries e
   WHERE e.deleted_at IS NULL AND e.goal_id IS NOT NULL AND ${HELD}
   GROUP BY e.goal_id, e.account`;
+
+export interface GoalHeld {
+  goal_id: string;
+  account: string;
+  minor: number;
+}
+
+/** What a goal holds in one account: never below zero (see GOALS_SQL). */
+export const heldIn = (held: GoalHeld[], goalId: string, account: string): Santim =>
+  Math.max(0, held.find((row) => row.goal_id === goalId && row.account === account)?.minor ?? 0);
 
 export type Stage = 0 | 1 | 2 | 3 | 4 | 5;
 export const STAGE_NAMES = ["Seed", "Sprout", "Small plant", "Bushy", "Flowering", "Tree"] as const;
@@ -192,18 +219,36 @@ export function entryOps(
 /**
  * What "Give it to…" hands over, and to which goals (F33): money put aside
  * (+) to any growing goal; money taken out (−) only back to a goal that
- * holds that much, a finished one included, so no goal goes below zero.
+ * holds that much, a finished one included, so no goal goes below zero. A
+ * take-out from a savings account needs a goal holding that much in that
+ * account, not only in all (F33: held money must not go negative).
+ * Savings waiting in an account listed in `where.folded` (a savings account
+ * with its balance set) show in that account's line of money no goal has
+ * (reg0-2), so they are left out here.
  */
 export function waitingSplit(
-  waiting: { id: string; amount_minor: number }[],
+  waiting: { id: string; amount_minor: number; account?: string | null }[],
   goals: Pick<GoalRow, "id" | "status" | "saved_minor">[],
+  where: { held?: GoalHeld[]; savings?: string[]; folded?: string[] } = {},
 ): {
   saved: { ids: string[]; minor: Santim; goals: string[] };
   taken: { ids: string[]; minor: Santim; goals: string[] };
 } {
-  const plus = waiting.filter((entry) => entry.amount_minor > 0);
+  const folded = new Set(where.folded ?? []);
+  const plus = waiting.filter(
+    (entry) => entry.amount_minor > 0 && !(entry.account && folded.has(entry.account)),
+  );
   const minus = waiting.filter((entry) => entry.amount_minor < 0);
   const taken = -minus.reduce((sum, entry) => sum + entry.amount_minor, 0);
+  // What left each savings account, by account.
+  const savings = new Set(where.savings ?? []);
+  const out = new Map<string, Santim>();
+  for (const entry of minus)
+    if (entry.account && savings.has(entry.account))
+      out.set(entry.account, (out.get(entry.account) ?? 0) - entry.amount_minor);
+  const holds = (goal: Pick<GoalRow, "id" | "saved_minor">) =>
+    goal.saved_minor >= taken &&
+    [...out].every(([account, minor]) => heldIn(where.held ?? [], goal.id, account) >= minor);
   return {
     saved: {
       ids: plus.map((entry) => entry.id),
@@ -213,7 +258,7 @@ export function waitingSplit(
     taken: {
       ids: minus.map((entry) => entry.id),
       minor: taken,
-      goals: goals.filter((goal) => goal.saved_minor >= taken).map((goal) => goal.id),
+      goals: goals.filter(holds).map((goal) => goal.id),
     },
   };
 }
@@ -412,6 +457,30 @@ export function savingGoal(
   return onlyActiveGoal(goals);
 }
 
+/**
+ * The goal a transfer's saving goes to (F32, F33, reg0-1). Money going in:
+ * the only active goal, else it waits. Money coming out of a savings account
+ * comes from a goal that holds that much in that account, a finished one
+ * first; with two such goals it waits for "Give it to…". When no goal holds
+ * it there, it was money no goal had (or the account's balance is unknown):
+ * no goal is charged and the entry is `unheld` (see UNHELD).
+ */
+export function transferGoal(
+  goals: Pick<GoalRow, "id" | "status" | "saved_minor">[],
+  saving: { account: string; minor: Santim },
+  held: GoalHeld[],
+): { goalId: string | null; unheld: boolean } {
+  if (saving.minor >= 0) return { goalId: onlyActiveGoal(goals), unheld: false };
+  const need = -saving.minor;
+  const holders = goals.filter(
+    (goal) => goal.saved_minor >= need && heldIn(held, goal.id, saving.account) >= need,
+  );
+  const ripe = holders.filter((goal) => goal.status === "done");
+  const pick = ripe.length > 0 ? ripe : holders;
+  if (pick.length === 0) return { goalId: null, unheld: true };
+  return { goalId: pick.length === 1 ? (pick[0]?.id ?? null) : null, unheld: false };
+}
+
 /** Put aside and take out need two accounts in the same currency. */
 export function checkMove(
   spend: Pick<AccountRow, "id" | "currency"> | undefined,
@@ -474,6 +543,8 @@ export function savingsSyncOps(input: {
   since: Record<string, number>;
   rates: Rates;
   newId: () => string;
+  /** What each goal holds in each savings account; out of savings needs it. */
+  held?: GoalHeld[];
 }): Op[] {
   const goals = new Set(input.goals.map((goal) => goal.id));
   const ops: Op[] = input.orphans.map((row) => ({
@@ -487,14 +558,17 @@ export function savingsSyncOps(input: {
     if (minor === null || minor === 0) continue;
     // A saving brought back keeps its goal while that goal is still there.
     const kept = half.entry_goal && goals.has(half.entry_goal) ? half.entry_goal : null;
-    const goalId = savingGoal(input.goals, minor);
+    const target = input.held
+      ? transferGoal(input.goals, { account: half.account, minor }, input.held)
+      : { goalId: savingGoal(input.goals, minor), unheld: false };
+    const goalId = half.entry_id ? (kept ?? target.goalId) : target.goalId;
     const values = {
-      goal_id: half.entry_id ? (kept ?? goalId) : goalId,
+      goal_id: goalId,
       occurred_at: half.occurred_at,
       local_date: half.local_date,
       amount_minor: minor,
       note: null,
-      origin: "transfer",
+      origin: target.unheld && !goalId ? UNHELD : "transfer",
       account: half.account,
       transfer_id: half.transfer_id,
     };
@@ -658,12 +732,21 @@ export function goalPace(goal: GoalRow, today: string): GoalPace {
 
 /**
  * What each account's goal entries hold (?: none). Entries are in ETB worth.
- * A removed goal holds nothing: its money is the account's again (F35).
+ * A removed goal holds nothing: its money is the account's again (F35). A
+ * goal never holds below zero in an account (see GOALS_SQL). Money saved
+ * there without a goal is not held: it is part of what the account holds
+ * that no goal has, one line with one Give (reg0-2); money taken out and
+ * waiting for its goal still counts against what is held.
  */
-export const HELD_BY_ACCOUNT_SQL = `SELECT account, COALESCE(sum(amount_minor), 0) AS minor
-  FROM savings_entries
-  WHERE deleted_at IS NULL AND account IS NOT NULL
-    AND (goal_id IS NULL OR goal_id IN (SELECT id FROM savings_goals WHERE deleted_at IS NULL))
+export const HELD_BY_ACCOUNT_SQL = `SELECT account, COALESCE(sum(minor), 0) AS minor FROM (
+    SELECT account, max(0, sum(amount_minor)) AS minor FROM savings_entries
+    WHERE deleted_at IS NULL AND account IS NOT NULL
+      AND goal_id IN (SELECT id FROM savings_goals WHERE deleted_at IS NULL)
+    GROUP BY account, goal_id
+    UNION ALL
+    SELECT account, amount_minor AS minor FROM savings_entries
+    WHERE deleted_at IS NULL AND account IS NOT NULL AND goal_id IS NULL AND amount_minor < 0
+      AND ${NOT_UNHELD})
   GROUP BY account`;
 
 /**
@@ -702,7 +785,8 @@ export function overclaimed(
     if (balance === null) return [];
     const worth = toEtb(balance, currencyOf(account), rates);
     if (worth === null) return [];
-    const minor = (held.find((row) => row.account === account.id)?.minor ?? 0) - worth;
+    // An account below zero is short by what goals count, never more.
+    const minor = (held.find((row) => row.account === account.id)?.minor ?? 0) - Math.max(0, worth);
     return minor > 0 ? [{ account, minor }] : [];
   });
 }
@@ -794,6 +878,11 @@ export interface SavingsContext {
   unclaimed: Record<string, Santim>;
   /** The goal money taken out of savings with no goal named comes from. */
   ripe: (minor: number) => string | null;
+  /** The goal a transfer into or out of a savings account goes to (see transferGoal). */
+  transferGoal?: (saving: { account: string; minor: Santim }) => {
+    goalId: string | null;
+    unheld: boolean;
+  };
   /** Savings accounts with no balance set yet (by id): what they hold is unknown. */
   unset: string[];
 }
@@ -815,7 +904,7 @@ export function goalFinder(context: SavingsContext) {
 export async function loadSavingsContext(read: Query, rates: Rates): Promise<SavingsContext> {
   const [goals, goalHeld, accounts, held] = await Promise.all([
     read<GoalRow & Record<string, string | number | null>>(GOALS_SQL),
-    read<{ goal_id: string; account: string; minor: number }>(GOAL_HELD_SQL),
+    read<GoalHeld & Record<string, string | number>>(GOAL_HELD_SQL),
     read<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL),
     read<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL),
   ]);
@@ -831,6 +920,7 @@ export async function loadSavingsContext(read: Query, rates: Rates): Promise<Sav
       unclaimed(accounts, held, rates).map((row) => [row.account.id, row.minor]),
     ),
     ripe: (minor) => savingGoal(goals, minor),
+    transferGoal: (saving) => transferGoal(goals, saving, goalHeld),
     unset: savings.filter((account) => account.opening_date === null).map((row) => row.id),
   };
 }
@@ -859,5 +949,32 @@ export function claimOps(
         account,
       },
     },
+  ];
+}
+
+/**
+ * Gives `minor` of what a savings account holds that no goal has (reg0-2):
+ * savings made into it with no goal go first, whole and oldest first, as the
+ * real saving they were; the rest is a claim of money already there.
+ */
+export function giveOps(
+  goalId: string,
+  account: string,
+  minor: Santim,
+  waiting: { id: string; amount_minor: number }[],
+  nowMs: number,
+  localDate: string,
+  newId: () => string,
+): Op[] {
+  let left = minor;
+  const taken: string[] = [];
+  for (const entry of waiting) {
+    if (entry.amount_minor <= 0 || entry.amount_minor > left) continue;
+    taken.push(entry.id);
+    left -= entry.amount_minor;
+  }
+  return [
+    ...assignOps(taken, goalId),
+    ...(left > 0 ? claimOps(goalId, account, left, nowMs, localDate, newId()) : []),
   ];
 }

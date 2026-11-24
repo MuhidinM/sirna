@@ -22,6 +22,8 @@ import {
   assignOps,
   claimOps,
   GOAL_HELD_SQL,
+  type GoalHeld,
+  giveOps,
   HELD_BY_ACCOUNT_SQL,
   overclaimed,
   unclaimed,
@@ -79,16 +81,23 @@ export function useSavingsSync() {
   const transfers = useLiveQuery<Rows<SavingsTransfer>>(SAVINGS_TRANSFERS_SQL);
   const orphans = useLiveQuery<{ id: string }>(ORPHAN_SAVINGS_SQL);
   const goals = useLiveQuery<Rows<GoalRow>>(GOALS_SQL);
+  const held = useLiveQuery<Rows<GoalHeld>>(GOAL_HELD_SQL);
   const since = useLiveQuery<{ value_json: string }>(SAVINGS_SINCE_SQL);
   const rates = useLiveQuery<{ value_json: string }>(RATES_SQL);
   const loading =
-    transfers.loading || orphans.loading || goals.loading || since.loading || rates.loading;
+    transfers.loading ||
+    orphans.loading ||
+    goals.loading ||
+    held.loading ||
+    since.loading ||
+    rates.loading;
   const ops: Op[] = loading
     ? []
     : savingsSyncOps({
         transfers: transfers.rows,
         orphans: orphans.rows,
         goals: goals.rows,
+        held: held.rows,
         since: readSavingsSince(since.rows[0]?.value_json),
         rates: readRates(rates.rows[0]?.value_json),
         newId: () => ulid(),
@@ -700,10 +709,13 @@ function Unclaimed({
   account,
   minor,
   goals,
+  waiting,
 }: {
   account: AccountRow;
   minor: number;
   goals: GoalRow[];
+  /** Savings made into this account with no goal: part of `minor`, given first. */
+  waiting: { id: string; amount_minor: number }[];
 }) {
   const [goalId, setGoalId] = useState("");
   const [amount, setAmount] = useState("");
@@ -717,7 +729,7 @@ function Unclaimed({
     setNote("");
     void transact(
       "user",
-      claimOps(goalId, account.id, chosen, now, logicalDate(now), ulid()),
+      giveOps(goalId, account.id, chosen, waiting, now, logicalDate(now), ulid),
       "savings",
     ).catch((failure: unknown) => setNote(`Couldn't save: ${message(failure)}`));
   };
@@ -762,7 +774,9 @@ function Unclaimed({
 /** Savings goals with their plants, and a garden of finished ones (plan §3.13). */
 export function Savings() {
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
-  const waiting = useLiveQuery<{ id: string; amount_minor: number }>(WAITING_SQL);
+  const waiting = useLiveQuery<{ id: string; amount_minor: number; account: string | null }>(
+    WAITING_SQL,
+  );
   const heldBy = useLiveQuery<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL);
   const goalHeld = useLiveQuery<{ goal_id: string; account: string; minor: number }>(GOAL_HELD_SQL);
   const accounts = useMoneyAccounts();
@@ -772,7 +786,14 @@ export function Savings() {
   const [note, setNote] = useState("");
   const growing = goals.rows.filter((goal) => goal.status !== "done");
   const garden = goals.rows.filter((goal) => goal.status === "done");
-  const split = waitingSplit(waiting.rows, goals.rows);
+  // Savings with no goal in an account whose balance is set show in its one
+  // line of money no goal has (reg0-2).
+  const folded = accounts.savings.filter((row) => row.opening_date !== null).map((row) => row.id);
+  const split = waitingSplit(waiting.rows, goals.rows, {
+    held: goalHeld.rows,
+    savings: accounts.savings.map((row) => row.id),
+    folded,
+  });
   const pick = (ids: string[]) => goals.rows.filter((goal) => ids.includes(goal.id));
   const free = heldBy.loading ? [] : unclaimed(accounts.all, heldBy.rows, accounts.rates);
   const over = heldBy.loading ? [] : overclaimed(accounts.all, heldBy.rows, accounts.rates);
@@ -833,7 +854,13 @@ export function Savings() {
         />
       )}
       {free.map(({ account, minor }) => (
-        <Unclaimed key={account.id} account={account} minor={minor} goals={growing} />
+        <Unclaimed
+          key={account.id}
+          account={account}
+          minor={minor}
+          goals={growing}
+          waiting={waiting.rows.filter((row) => row.account === account.id && row.amount_minor > 0)}
+        />
       ))}
       {over.map(({ account, minor }) => (
         <Overclaimed

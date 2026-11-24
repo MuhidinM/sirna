@@ -15,6 +15,7 @@ import {
   moveOps,
   takeOutOps,
   transferSavingOps,
+  UNHELD,
 } from "../features/savings/savings";
 import {
   type LoanItem,
@@ -56,6 +57,14 @@ export interface OpsContext {
   unclaimed?: Record<string, number>;
   /** Savings accounts with no balance set yet (by id). */
   unset?: string[];
+  /**
+   * The goal a transfer into or out of a savings account goes to, and the
+   * saving it counts (0: no goal had the money there). See transferGoal.
+   */
+  transferGoal?: (saving: { account: string; minor: number }) => {
+    goalId: string | null;
+    unheld: boolean;
+  };
 }
 
 /**
@@ -202,16 +211,21 @@ function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
     origin: "capture",
   }).map((op) => withoutBirr(op));
   if (!parsed.saving) return ops;
+  // Out of savings, only a goal holding it there is charged (F32, F33).
+  const target = context.transferGoal?.(parsed.saving) ?? {
+    goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
+    unheld: false,
+  };
   return [
     ...ops,
     ...transferSavingOps({
       saving: parsed.saving,
-      goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
+      goalId: target.goalId,
       transferId,
       nowMs,
       date: parsed.date,
       id: newId(),
-      origin: "capture",
+      origin: target.unheld ? UNHELD : "capture",
     }),
   ];
 }
