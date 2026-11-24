@@ -15,6 +15,7 @@ import {
   newConversion,
   type Rates,
 } from "./currency";
+import { balances, type LoanEvent } from "./loans";
 import { type DueItem } from "./regulars";
 
 /** Saved into goals in total, and this month per goal (?1 first day, ?2 last day). */
@@ -45,6 +46,7 @@ export interface SafeToSpend {
 
 /**
  * (money in spending accounts − money put aside in goals but still in them
+ *  − what you still owe people
  *  + pay still to come this month − bills still to pay this month − what
  *  goals with a date still need this month) ÷ days left, rounded down.
  * Savings accounts never count: what sits there is already put aside.
@@ -63,6 +65,8 @@ export function safeToSpend(input: {
   /** The part of `unassigned` already in a savings account. */
   unassignedHeld?: Santim;
   rates?: Rates;
+  /** Money lent and owed: what you still owe is not yours to spend. */
+  loans?: LoanEvent[];
 }): SafeToSpend {
   const rates = input.rates ?? {};
   const conversion = newConversion();
@@ -98,8 +102,17 @@ export function safeToSpend(input: {
     if (need === null) return sum;
     return sum + Math.max(0, need - (input.savedThisMonth[goal.id] ?? 0));
   }, 0);
+  // Borrowed money sits in your accounts but is not yours (F30). Like pay and
+  // bills, only loans through counted accounts: money borrowed into an
+  // account with no balance was never added, so it isn't taken off either.
+  const owed = balances((input.loans ?? []).filter((event) => counted.has(event.account))).reduce(
+    (sum, person) =>
+      person.iOwe > 0 ? sum + (convert(conversion, rates, person.iOwe, person.currency) ?? 0) : sum,
+    0,
+  );
   const lines: SafeLine[] = [{ label: "In your accounts", amount: total }];
   if (earmarked > 0) lines.push({ label: "Put aside in goals", amount: -earmarked });
+  if (owed > 0) lines.push({ label: "You owe people", amount: -owed });
   if (payLeft > 0) lines.push({ label: "Pay still to come this month", amount: payLeft });
   if (billsLeft > 0) lines.push({ label: "Bills still to pay this month", amount: -billsLeft });
   if (goalsLeft > 0) lines.push({ label: "Goals still to fund this month", amount: -goalsLeft });

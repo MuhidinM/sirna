@@ -316,6 +316,7 @@ export function useSafe(today: string) {
   const waiting = useLiveQuery<{ minor: number; n: number; held: number }>(UNASSIGNED_SQL);
   const { items, loading } = useDue(today);
   const { rates, loading: ratesLoading } = useRates();
+  const loans = useLiveQuery<LoanEvent & Record<string, string | number | null>>(LOANS_SQL);
   const safe = safeToSpend({
     accounts: accounts.rows,
     goals: goals.rows,
@@ -326,12 +327,14 @@ export function useSafe(today: string) {
     unassigned: waiting.rows[0]?.minor ?? 0,
     unassignedHeld: waiting.rows[0]?.held ?? 0,
     rates,
+    loans: loans.rows,
   });
   return {
     safe,
     goals: goals.rows,
     loading:
       loading ||
+      loans.loading ||
       accounts.loading ||
       goals.loading ||
       saved.loading ||
