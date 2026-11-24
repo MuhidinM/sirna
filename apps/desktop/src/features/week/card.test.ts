@@ -6,6 +6,8 @@ import {
   type AreaWeek,
   dismissOps,
   FOCUS_WEEK_SQL,
+  FOCUSED_BY_DAY_SQL,
+  TIME_SESSIONS_SQL,
   type FocusWeek,
   historyWeeks,
   isHandled,
@@ -75,6 +77,24 @@ describe("where time went", () => {
     const focus = seeded().prepare(FOCUS_WEEK_SQL).get(WEEK_START, NOW) as unknown as FocusWeek;
     // f1, f2, f4, f5 this week; distractions 1 + 2; overruns on 12 and 13 Nov.
     expect(focus).toEqual({ sessions: 4, distractions: 3, overrun_days: 2 });
+  });
+
+  it("counts the sessions behind the minutes, a running one included (reg1-5)", () => {
+    const db = seeded();
+    db.exec(`
+      INSERT INTO focus_sessions (id, area_id, kind, started_at, planned_min, ended_at, paused_ms, outcome) VALUES
+        ('w1', 'joba', 'focus', ${at("2026-11-15T10:00:00")}, 25, ${at("2026-11-15T10:25:00")}, 0, 'completed'),
+        ('r1', 'coding', 'focus', ${at("2026-11-15T16:45:00")}, 50, NULL, 0, NULL);`);
+    // f1, f2, f4, f5 and the running r1 (15 min so far); not the job's w1.
+    expect(db.prepare(TIME_SESSIONS_SQL).get(WEEK_START, NOW)).toEqual({ sessions: 5 });
+    const rows = db.prepare(AREA_WEEK_SQL).all(WEEK_START, NOW) as unknown as AreaWeek[];
+    expect(rows.find((r) => r.id === "coding")?.done_min).toBe(80 + 15);
+    // Today's chart counts the running session the same way (and the job's too).
+    const days = db.prepare(FOCUSED_BY_DAY_SQL).all(MONDAY, "2026-11-15", NOW) as {
+      day: string;
+      minutes: number;
+    }[];
+    expect(days.find((d) => d.day === "2026-11-15")?.minutes).toBe(25 + 15);
   });
 
   it("counts the distractions of a stopped session, not the session", () => {

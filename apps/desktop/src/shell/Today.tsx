@@ -400,7 +400,7 @@ export function Today({
           </section>
 
           <div className="panel-row">
-            <FocusWeek today={today} />
+            <FocusWeek today={today} nowMs={minuteNow} />
             <section className="panel" aria-labelledby="money">
               <PanelHead id="money" title="Money today" sub="Safe to spend and what is due" />
               <TodayMoney today={today} spentToday={spent.rows} onOpen={onOpenMoney} />
