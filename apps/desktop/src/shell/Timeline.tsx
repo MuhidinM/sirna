@@ -239,9 +239,14 @@ export function Timeline({
       : null;
     (card ?? lanes)?.focus();
   };
+  /** The Add a block button, while the open popover came from it (reg3-6). */
+  const addOpener = useRef<HTMLElement | null>(null);
   /** The popover closes and focus goes back where you were (a11y). */
   const closeEditor = (blockId: string | null) => {
-    focusBlock(blockId);
+    const opener = addOpener.current;
+    addOpener.current = null;
+    if (blockId === null && opener?.isConnected) opener.focus();
+    else focusBlock(blockId);
     setEditing(null);
   };
 
@@ -401,6 +406,7 @@ export function Timeline({
     if (target.closest(".event, .day-editor, .day-edit-bar")) return;
     const top = event.currentTarget.getBoundingClientRect().top;
     const minute = minuteOf(day, first) + (event.clientY - top) / perMin;
+    addOpener.current = null;
     setEditing({ mode: "add", draft: newDraft(minute), opened: ++opened.current });
   };
 
@@ -432,7 +438,8 @@ export function Timeline({
           )}
           <Button
             className="day-add"
-            onClick={() => {
+            onClick={(event) => {
+              addOpener.current = event.currentTarget;
               const nowMin = minuteOf(day, nowMs);
               const at = day === today && nowMin > OPEN_FROM_MIN ? nowMin + SNAP_MIN : 9 * 60;
               setEditing({ mode: "add", draft: newDraft(at), opened: ++opened.current });
@@ -663,6 +670,7 @@ export function Timeline({
               write(ops, said, before);
               const id = editing.mode === "edit" ? editing.block.id : null;
               const deleted = id !== null && ops.some((op) => op.op === "delete" && op.id === id);
+              addOpener.current = null;
               closeEditor(deleted ? focusAfterDelete(blocks, id) : id);
             }}
             areaName={areaName}

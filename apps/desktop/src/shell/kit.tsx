@@ -14,7 +14,7 @@ import {
 } from "react";
 
 import { IconArrowLeft, IconArrowRight, IconPlus } from "./icons";
-import { nextDay } from "./keys";
+import { nextDay, returnsFocus } from "./keys";
 
 // --- Panel head ---------------------------------------------------------------------------
 
@@ -424,9 +424,23 @@ export function EventCard({
   );
 }
 
-export function GhostCard({ label, onClick }: { label: string; onClick: () => void }) {
+export function GhostCard({
+  label,
+  onClick,
+  returnKey,
+}: {
+  label: string;
+  onClick: () => void;
+  /** The `returnsFocus` mark, when the card is removed while its form is open. */
+  returnKey?: string;
+}) {
   return (
-    <button type="button" className="ghost-card" onClick={onClick}>
+    <button
+      type="button"
+      className="ghost-card"
+      onClick={onClick}
+      {...(returnKey ? returnsFocus(returnKey) : {})}
+    >
       <span className="ghost-plus" aria-hidden="true">
         <IconPlus size={18} />
       </span>

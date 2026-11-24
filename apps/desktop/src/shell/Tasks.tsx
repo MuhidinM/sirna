@@ -319,6 +319,8 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
   const steps = parseSteps(text, task.estimate_min);
   const problem = checkSteps(steps);
   const total = stepsMinutes(steps);
+  // Escape gives focus back to this row's Split button (reg3-4).
+  const onEscape = useEscapeToCancel(onClose);
   const suggest = () => {
     if (strict === null || !task.estimate_min) return;
     setBusy("asking");
@@ -377,10 +379,7 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
             setText(event.target.value);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape" && busy === null) {
-              event.preventDefault();
-              onClose();
-            }
+            if (busy === null) onEscape(event);
           }}
         />
       </label>
@@ -553,7 +552,11 @@ function TaskItem({
                 Edit
               </Button>
               {splittable && !splitting && (
-                <Button className="btn-ghost" onClick={() => setSplitting(true)}>
+                <Button
+                  className="btn-ghost"
+                  {...returnsFocus(`task-split:${row.id}`)}
+                  onClick={() => setSplitting(true)}
+                >
                   Split
                 </Button>
               )}
