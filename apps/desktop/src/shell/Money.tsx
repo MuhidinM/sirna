@@ -57,6 +57,7 @@ import {
   payAccount,
   reconcileOps,
   reconcileText,
+  shownBalance,
   renameAccountOps,
   SAVINGS_SINCE_SQL,
   savingsOps,
@@ -491,6 +492,7 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
         <ul className="list-rows">
           {accounts.rows.map((account) => {
             const balance = balanceOf(account);
+            const shown = shownBalance(account);
             return (
               <li key={account.id}>
                 <span className={balance === null ? "dot-pink" : "dot-cream"} aria-hidden="true" />
@@ -499,8 +501,10 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
                   {account.pays_in === 1 && <span className="meta"> · pay lands here</span>}
                   {isSavings(account) && <span className="meta"> · savings</span>}
                 </span>
-                <span className={balance === null ? "meta" : "money-num"}>
-                  {balance === null ? "not set" : formatAmount(balance, currencyOf(account))}
+                <span className={shown === null ? "meta" : "money-num"}>
+                  {shown === null
+                    ? "not set"
+                    : `${formatAmount(shown.minor, currencyOf(account))}${shown.partial ? " moved in · not set" : ""}`}
                 </span>
               </li>
             );

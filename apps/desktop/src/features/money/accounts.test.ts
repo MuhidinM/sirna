@@ -17,6 +17,7 @@ import {
   reconcileOps,
   reconcileText,
   setPayAccountOps,
+  shownBalance,
   spendAccount,
   totalBalance,
   TRANSFER_HALVES_SQL,
@@ -76,6 +77,22 @@ describe("your accounts (T-058)", () => {
     expect(payAccount(accounts(db))).toBe("cbo");
     expect(spendAccount(accounts(db))).toBe("cash");
     expect(totalBalance(accounts(db))).toEqual({ total: 0, unknown: 7 });
+  });
+
+  it("shows what moved into a savings account with no balance, as the total counts it (F55)", () => {
+    const base = { ...account(openTestDb(), "cbo-savings"), opening_date: null };
+    expect(shownBalance({ ...base, moved_minor: 400_000 })).toEqual({
+      minor: 400_000,
+      partial: true,
+    });
+    expect(shownBalance({ ...base, moved_minor: 0 })).toBeNull();
+    expect(
+      shownBalance({ ...base, opening_date: TODAY, opening_minor: 0, moved_minor: 5 }),
+    ).toEqual({
+      minor: 5,
+      partial: false,
+    });
+    expect(shownBalance({ ...base, is_savings: 0, moved_minor: 400_000 })).toBeNull();
   });
 
   it("sets a first balance at the start of today, counting today's entries", () => {

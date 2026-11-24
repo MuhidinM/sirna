@@ -63,6 +63,19 @@ export function totalBalance(accounts: AccountRow[]): { total: Santim; unknown: 
   return { total, unknown };
 }
 
+/**
+ * What an account's row shows (F55): its balance; for a birr savings
+ * account with no balance yet, the money moved into it, which the total
+ * counts, marked as not the whole balance; otherwise null ("not set").
+ */
+export function shownBalance(account: AccountRow): { minor: Santim; partial: boolean } | null {
+  const balance = balanceOf(account);
+  if (balance !== null) return { minor: balance, partial: false };
+  if (isSavings(account) && currencyOf(account) === "ETB" && account.moved_minor !== 0)
+    return { minor: account.moved_minor, partial: true };
+  return null;
+}
+
 /** The account's currency (ETB unless set). */
 export const currencyOf = (account: Pick<AccountRow, "currency"> | undefined) =>
   account?.currency ?? "ETB";
