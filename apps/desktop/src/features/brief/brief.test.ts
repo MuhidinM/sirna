@@ -180,15 +180,18 @@ describe("buildBrief", () => {
 });
 
 describe("moneyLines", () => {
-  it("gives a loan follow-up a slot beside the bills", () => {
+  it("gives loan follow-ups a slot beside the bills, two to a line (F28)", () => {
     expect(moneyLines(["Iddir 1", "Iddir 2"], ["Ask Hana", "Ask Dawit"])).toEqual([
       "Iddir 1",
-      "Ask Hana",
+      "Ask Hana · Ask Dawit",
       "Iddir 2",
-      "Ask Dawit",
     ]);
+    expect(moneyLines(["Iddir 1"], ["Ask Hana"])).toEqual(["Iddir 1", "Ask Hana"]);
     expect(moneyLines(["Iddir 1", "Iddir 2"], [])).toEqual(["Iddir 1", "Iddir 2"]);
-    expect(moneyLines([], ["Ask Hana", "Ask Dawit"])).toEqual(["Ask Hana", "Ask Dawit"]);
+    expect(moneyLines([], ["Ask Hana", "Ask Dawit", "Ask Abel"])).toEqual([
+      "Ask Hana · Ask Dawit",
+      "Ask Abel",
+    ]);
   });
 });
 
