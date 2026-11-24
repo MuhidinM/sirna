@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { type BlockRow, firstStep, focusOffer, formatMinutes, nowAndNext } from "./now";
+import { openTestDb } from "../../test/sqlite";
+import {
+  type BlockRow,
+  blockProgress,
+  firstStep,
+  focusOffer,
+  formatMinutes,
+  nowAndNext,
+  TODAY_BLOCKS_SQL,
+} from "./now";
 
 const at = (hhmm: string) => Date.parse(`2026-11-11T${hhmm}:00+03:00`);
 const block = (
@@ -83,5 +92,30 @@ describe("Start focus on the Now card (rule 7)", () => {
     expect(focusOffer(undefined, null)).toEqual({ blockId: null });
     expect(focusOffer(undefined, undefined)).toEqual({ blockId: null });
     expect(focusOffer(now, "focus")).toBeNull();
+  });
+});
+
+describe("when a block counts as done (focus)", () => {
+  const hour = { start_at: 0, end_at: 60 * 60_000, status: "planned" };
+  it("is done when marked, or after 80% of its length in focus", () => {
+    expect(blockProgress({ ...hour, focused_min: 35 })).toEqual({
+      focusedMin: 35,
+      lengthMin: 60,
+      done: false,
+    });
+    expect(blockProgress({ ...hour, focused_min: 48 }).done).toBe(true);
+    expect(blockProgress({ ...hour, status: "done", focused_min: null }).done).toBe(true);
+  });
+});
+
+describe("the focus time on a block (TODAY_BLOCKS_SQL)", () => {
+  it("adds finished focus sessions, paused time left out", () => {
+    const db = openTestDb();
+    db.exec(`INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, title, source, created_at, updated_at)
+      VALUES ('b', '2026-11-24', 0, 3600000, 'area', 'Coding', 'generator', 0, 0)`);
+    db.exec(`INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, paused_ms, ended_at)
+      VALUES ('f1', 'b', 'focus', 0, 25, 300000, 1800000), ('f2', 'b', 'focus', 0, 25, 0, NULL)`);
+    const [row] = db.prepare(TODAY_BLOCKS_SQL).all("2026-11-24") as { focused_min: number }[];
+    expect(row?.focused_min).toBe(25);
   });
 });

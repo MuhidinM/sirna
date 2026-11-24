@@ -98,9 +98,9 @@ New rules, in order:
 
 ## 5. Look and small fixes
 
-- Night and Forest: the canvas turns dark too (Night ≈ #1c1c1a, Forest ≈
-  #18442a), cream blocks become soft dark tones, only the loud cards stay
-  bright. Contrast tests updated.
+- Night: the canvas turns dark (≈ #1c1c1a), cream blocks become soft dark
+  tones, only the loud cards stay bright. Forest keeps its white canvas
+  (changed back on 2026-11-24 after your note). Contrast tests cover both.
 - Widget: a transparent window like the capture bar, so no second corner.
 - Logo: the bite is a straight slot the width of the check, running from near
   the dot out through the top-right corner, with a round inner end.

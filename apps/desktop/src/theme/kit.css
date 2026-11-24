@@ -701,15 +701,34 @@ button.month-day:hover {
   height: 100%;
 }
 
+.day-lanes .event.short {
+  container-type: inline-size;
+}
+
+/* The title comes first and keeps its room; the time shrinks, then hides in a
+   narrow lane (the editor and the screen reader label still give it). */
 .day-lanes .event.short .event-label {
   order: 2;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .day-lanes .event.short .event-title {
+  flex: 0 1 auto;
+  min-width: min(100%, 6em);
   font-size: var(--text-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@container (max-width: 240px) {
+  .day-lanes .event.short .event-label {
+    display: none;
+  }
 }
 
 .day-rest {
@@ -737,6 +756,11 @@ button.month-day:hover {
 
 .day-lanes .event {
   z-index: 1;
+}
+
+.event-at {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .event-due {

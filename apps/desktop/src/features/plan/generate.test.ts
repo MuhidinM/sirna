@@ -439,6 +439,26 @@ describe("time first (docs/proposals/time-first.md §1)", () => {
     expect(plan.blocks.map((b) => b.title)).toEqual(["Job A", "Dentist call"]);
   });
 
+  it("lists a timed task inside its own area's block instead of a card beside it", () => {
+    const job = { ...slot(8 * 60, 240, "joba"), kind: "fixed" as const, title: "Job A" };
+    const ui = { ...task("update the abc ui", "joba"), atMin: 10 * 60 };
+    const plan = generateDay(input({ template: [job], tasks: [ui] }));
+    expect(plan.blocks.map((b) => b.title)).toEqual(["Job A"]);
+    // A moved Job A you kept holds it too; one that ends before the task doesn't.
+    const kept = {
+      startMin: 9 * 60,
+      durationMin: 120,
+      kind: "fixed" as const,
+      areaId: "joba",
+      title: "Job A",
+    };
+    expect(ownBlocks(generateDay(input({ kept: [kept], tasks: [ui] })))).toEqual([]);
+    const early = { ...kept, durationMin: 45 };
+    expect(
+      ownBlocks(generateDay(input({ kept: [early], tasks: [ui] }))).map((b) => b.taskId),
+    ).toEqual(["update the abc ui"]);
+  });
+
   it("keeps a timed task on a light day", () => {
     const plan = generateDay(
       input({ recentEnergy: [1, 1], tasks: [{ ...task("Pharmacy", null), atMin: 18 * 60 }] }),
@@ -658,5 +678,44 @@ describe("a routine or calendar block you moved", () => {
       }),
     );
     expect(plan.blocks.some((b) => b.title === "Dentist")).toBe(false);
+  });
+});
+
+describe("the steps of a split task (r2-15)", () => {
+  const slot = (startMin: number, durationMin: number) => ({
+    startMin,
+    durationMin,
+    kind: "area" as const,
+    areaId: null,
+    title: "Focus block",
+  });
+  const metWeek = { jobhunt: 240, coding: 240, experiments: 180, admin: 140 };
+  const step = (no: number, estimateMin: number): TaskInput => ({
+    ...task(`test ${no}`, null),
+    estimateMin,
+    step: { parentId: "test", no, waits: no > 1 },
+  });
+  const steps = [step(3, 30), step(1, 30), step(2, 15)];
+
+  it("plans every step on the calendar, in order, each after the one before", () => {
+    const plan = generateDay(
+      input({ template: [slot(9 * 60, 180)], tasks: steps, doneThisWeekMin: metWeek }),
+    );
+    const own = plan.blocks.filter((b) => b.fromTask);
+    expect(own.map((b) => b.taskId)).toEqual(["test 1", "test 2", "test 3"]);
+    expect(own.map((b) => b.durationMin)).toEqual([30, 15, 30]);
+    for (let i = 1; i < own.length; i++) {
+      const before = own[i - 1];
+      expect(own[i]?.startMin).toBeGreaterThanOrEqual(
+        (before?.startMin ?? 0) + (before?.durationMin ?? 0),
+      );
+    }
+  });
+
+  it("keeps a later step out of Top 3 while the one before is still to do", () => {
+    const plan = generateDay(
+      input({ template: [slot(9 * 60, 180)], tasks: steps, doneThisWeekMin: metWeek }),
+    );
+    expect(plan.top).toEqual(["test 1"]);
   });
 });

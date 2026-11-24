@@ -11,11 +11,39 @@ export interface BlockRow {
   status: string;
   color: string | null;
   task_title: string | null;
+  /** Minutes of finished focus sessions on this block (paused time left out). */
+  focused_min?: number | null;
+}
+
+/** A block counts as done when you mark it, or when focus covered this much of it. */
+export const FOCUS_DONE_SHARE = 0.8;
+
+/**
+ * How far a block has got: focus minutes against its length, and whether it
+ * counts as done (marked done, or focused for 80% of its length).
+ */
+export function blockProgress(
+  block: Pick<BlockRow, "start_at" | "end_at" | "status" | "focused_min">,
+): {
+  focusedMin: number;
+  lengthMin: number;
+  done: boolean;
+} {
+  const lengthMin = Math.max(1, Math.round((block.end_at - block.start_at) / 60000));
+  const focusedMin = Math.max(0, Math.round(block.focused_min ?? 0));
+  return {
+    focusedMin,
+    lengthMin,
+    done: block.status === "done" || focusedMin >= Math.ceil(lengthMin * FOCUS_DONE_SHARE),
+  };
 }
 
 export const TODAY_BLOCKS_SQL = `
   SELECT b.id, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title, b.status,
-         a.color, t.title AS task_title
+         a.color, t.title AS task_title,
+         (SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
+            FROM focus_sessions AS f
+            WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL) AS focused_min
   FROM day_blocks AS b
   LEFT JOIN area_items AS a ON a.id = b.area_id
   LEFT JOIN task_items AS t ON t.id = b.task_id AND t.deleted_at IS NULL

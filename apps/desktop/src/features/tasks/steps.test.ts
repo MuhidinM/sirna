@@ -48,7 +48,7 @@ function split() {
 }
 
 describe("the steps of a split task (T-051)", () => {
-  it("offers one step at a time, in order", () => {
+  it("offers one step at a time in lists, every step in order to the planner", () => {
     const { db, finish } = split();
     const open = () => ({
       due: ids(db.prepare(DUE_SQL).all(DAY)),
@@ -59,12 +59,18 @@ describe("the steps of a split task (T-051)", () => {
         ),
       ),
     });
-    expect(open()).toEqual({ due: ["s1"], plan: ["s1"], top: ["s1"] });
+    // Lists offer the next step; the planner sees every step still to do and
+    // plans them in order on the calendar (r2-15).
+    expect(open()).toEqual({ due: ["s1"], plan: ["s1", "s2", "s3"], top: ["s1"] });
     finish("s1");
-    expect(open()).toEqual({ due: ["s2"], plan: ["s2"], top: ["s2"] });
+    expect(open()).toEqual({ due: ["s2"], plan: ["s2", "s3"], top: ["s2"] });
     // A dropped step doesn't hold up the next one.
     db.prepare("UPDATE task_items SET status = 'dropped' WHERE id = 's2'").run();
     expect(open()).toEqual({ due: ["s3"], plan: ["s3"], top: ["s3"] });
+    // A step that is waiting on something holds up the ones after it, everywhere.
+    db.prepare("UPDATE task_items SET status = 'todo' WHERE id = 's2'").run();
+    db.prepare("UPDATE task_items SET status = 'waiting' WHERE id = 's2'").run();
+    expect(open().plan).toEqual([]);
   });
 
   it("labels each step with its place", () => {

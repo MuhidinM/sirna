@@ -22,7 +22,14 @@ const noDirectClock = {
 };
 
 export default defineConfig([
-  globalIgnores(["**/dist/**", "**/target/**", "**/src-tauri/gen/**", "**/coverage/**"]),
+  globalIgnores([
+    "**/dist/**",
+    "**/target/**",
+    "**/src-tauri/gen/**",
+    "**/coverage/**",
+    // Agent worktrees and local Claude settings.
+    ".claude/**",
+  ]),
   js.configs.recommended,
   ...tseslint.configs.strict,
   reactHooks.configs.flat.recommended,

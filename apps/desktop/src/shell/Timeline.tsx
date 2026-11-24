@@ -42,6 +42,8 @@ import { statusOps } from "../features/tasks/list";
 import { systemClock } from "../kernel/clock";
 import {
   type BlockRow,
+  blockProgress,
+  FOCUS_DONE_SHARE,
   firstStep,
   focusOffer,
   formatMinutes,
@@ -504,6 +506,12 @@ export function Timeline({
             const shownTasks = expanded ? tasks : tasks.slice(0, fits);
             const hidden = tasks.length - shownTasks.length;
             const skipped = block.status === "skipped";
+            // Focus on a block counts toward it; 80% of its length (or Done) finishes it.
+            const progress = blockProgress(block);
+            const focusText =
+              progress.focusedMin > 0
+                ? `${progress.focusedMin} of ${progress.lengthMin} min focused`
+                : "";
             const style: CSSProperties = {
               top: y(block.start_at),
               height: expanded ? "auto" : height,
@@ -513,7 +521,7 @@ export function Timeline({
               width: `calc(${100 / lane.of}% - ${lane.of > 1 ? 4 : 0}px)`,
             };
             const color = block.color ?? "admin";
-            const tail = `${block.kind === "fixed" ? " · fixed" : ""}${skipped ? " · skipped" : ""}`;
+            const tail = `${block.kind === "fixed" ? " · fixed" : ""}${skipped ? " · skipped" : ""}${progress.done && !skipped ? " · done" : ""}${short && focusText && !progress.done ? ` · ${progress.focusedMin}/${progress.lengthMin} min` : ""}`;
             const source = original.get(block.id) ?? block;
             return (
               <div role="listitem" key={block.id}>
@@ -521,14 +529,12 @@ export function Timeline({
                   tone={toneOf(color)}
                   label={
                     short
-                      ? `${range(block)}${block.task_title && block.kind === "area" ? ` · ${block.task_title}` : ""}${tail}`
+                      ? `${range(block)}${block.task_title && block.kind === "area" && block.task_title !== block.title ? ` · ${block.task_title}` : ""}${tail}`
                       : `${range(block)}${tail}`
                   }
                   title={block.title}
                   art={!short && block.kind === "fixed" && minutes >= 90}
-                  faded={
-                    (day === today && block.end_at <= nowMs) || block.status === "done" || skipped
-                  }
+                  faded={(day === today && block.end_at <= nowMs) || progress.done || skipped}
                   current={day === today && block.id === now?.id}
                   className={[
                     short && !expanded ? "short" : "",
@@ -570,8 +576,11 @@ export function Timeline({
                               checked={false}
                               onChange={() => onDone?.(task)}
                             />
+                            {task.due_at !== null && task.due_at !== undefined && (
+                              <span className="event-at">{dot(task.due_at)} </span>
+                            )}
                             {task.title}
-                            {task.due_date && (
+                            {task.due_date && !(task.due_at && task.due_date === day) && (
                               <span className="event-due">
                                 {" "}
                                 · due {showDate(task.due_date, today)}
@@ -581,6 +590,23 @@ export function Timeline({
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {!short && focusText && (
+                    <div
+                      className="event-progress"
+                      role="progressbar"
+                      aria-label={`${block.title}: ${focusText}${progress.done ? ", done" : ""}`}
+                      aria-valuemin={0}
+                      aria-valuemax={progress.lengthMin}
+                      aria-valuenow={Math.min(progress.focusedMin, progress.lengthMin)}
+                      title={`${focusText}. A block is done at ${Math.ceil(progress.lengthMin * FOCUS_DONE_SHARE)} min, or when you mark it done.`}
+                    >
+                      <span
+                        style={{
+                          width: `${Math.min(100, (progress.focusedMin / progress.lengthMin) * 100)}%`,
+                        }}
+                      />
+                    </div>
                   )}
                   {(hidden > 0 || expanded) && tasks.length > 0 && (
                     <button
@@ -793,6 +819,27 @@ function BlockEditor({
           {block ? "Save" : "Add"}
         </Button>
         <Button onClick={onClose}>Cancel</Button>
+        {block && (
+          <Button
+            onClick={() => {
+              const done = block.status === "done";
+              onSave(
+                [
+                  {
+                    op: "update",
+                    table: "day_blocks",
+                    id: block.id,
+                    values: { status: done ? "planned" : "done" },
+                  },
+                ],
+                done ? `${block.title}: not done.` : `${block.title}: done.`,
+                { [block.id]: blockBefore(block) },
+              );
+            }}
+          >
+            {block.status === "done" ? "Not done" : "Mark done"}
+          </Button>
+        )}
         {block && (
           <Button
             className="day-delete btn-danger"

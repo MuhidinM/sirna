@@ -165,6 +165,18 @@ describe("task lists inside blocks", () => {
     expect([...lists.keys()]).toEqual(["c2"]);
   });
 
+  it("puts a timed task in its area's block at that time, first", () => {
+    const at = (id: string, start: number, end: number) => ({
+      ...block(id, "joba", end),
+      start_at: start,
+    });
+    const blocks = [at("morning", 100, 200), at("afternoon", 300, 400)];
+    const timed = { ...row("update ui", "joba"), due_at: 350 };
+    const lists = blockTaskLists(blocks, [row("Send report", "joba"), timed], 0);
+    expect(lists.get("morning")?.map((t) => t.id)).toEqual(["Send report"]);
+    expect(lists.get("afternoon")?.map((t) => t.id)).toEqual(["update ui"]);
+  });
+
   it("leaves out a task already picked for an area block", () => {
     const blocks = [block("c1", "coding", 300, "Read docs", "Coding: Read docs")];
     const lists = blockTaskLists(blocks, [row("Read docs", "coding"), row("Fix bug", "coding")], 0);
