@@ -166,6 +166,8 @@ export async function syncCalendar(deps: SyncDeps, allowShrink = false): Promise
   }
   if (changed)
     for (const date of [today, shiftDate(today, 1)])
-      await replanDay(deps.query, deps.transact, date, deps.newId).catch(() => undefined);
+      await replanDay(deps.query, deps.transact, date, deps.newId, deps.nowMs).catch(
+        () => undefined,
+      );
   return status;
 }

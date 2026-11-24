@@ -112,6 +112,36 @@ export const OPEN_TASKS_SQL = `
         AND before_step.status = 'waiting' AND before_step.deleted_at IS NULL)
   ORDER BY t.created_at`;
 
+/**
+ * Minutes each task already has in saved plans from now up to (not including)
+ * a later day: blocks still to come, not finished, skipped or moved, and with
+ * no focus in them (focus time is in remaining_min already). ?1 = now (epoch
+ * ms), ?2 = today, ?3 = the day being planned.
+ */
+export const BOOKED_EARLIER_SQL = `
+  SELECT b.task_id, SUM((b.end_at - b.start_at) / 60000) AS minutes FROM day_blocks b
+  WHERE b.deleted_at IS NULL AND b.task_id IS NOT NULL
+    AND b.status NOT IN ('done', 'skipped', 'moved') AND b.end_at > ?1
+    AND b.logical_date >= ?2 AND b.logical_date < ?3
+    AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = b.id)
+  GROUP BY b.task_id`;
+
+/**
+ * A later day is planned after the days before it (as Next 7 days forecasts
+ * it): a task's minutes booked on earlier saved days come off what it still
+ * needs; a task covered by them, or with no estimate and a block already,
+ * isn't planned again. A task with a time or a part of this day keeps it.
+ */
+export function afterBooked(tasks: TaskInput[], booked: Map<string, number>): TaskInput[] {
+  return tasks.flatMap((task) => {
+    const minutes = booked.get(task.id);
+    if (minutes === undefined || (task.atMin ?? null) !== null || task.window) return [task];
+    if (!hasEstimate(task)) return [];
+    const left = (task.remainingMin ?? task.estimateMin ?? 0) - minutes;
+    return left > 0 ? [{ ...task, remainingMin: left }] : [];
+  });
+}
+
 export const CHOSEN_TOP_SQL =
   "SELECT task_id FROM task_daily_top WHERE logical_date = ? AND chosen_by = 'user' ORDER BY position";
 
@@ -242,7 +272,16 @@ function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBloc
   };
 }
 
-export async function loadPlanInput(query: Query, date: string): Promise<PlanInput> {
+/**
+ * What the generator needs for `date`. With `nowMs` and a day after today,
+ * the tasks' time already booked on the saved days before it comes off
+ * (`afterBooked`); without it (the in-memory forecast) nothing is taken off.
+ */
+export async function loadPlanInput(
+  query: Query,
+  date: string,
+  nowMs?: number,
+): Promise<PlanInput> {
   const dayStartMs = localToEpoch(date, 0);
   const minuteOf = (epochMs: number) => Math.round((epochMs - dayStartMs) / 60000);
 
@@ -299,6 +338,18 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
     shiftDate(date, -1),
     shiftDate(date, -2),
   ]);
+  const today = nowMs === undefined ? undefined : logicalDate(nowMs);
+  const booked = new Map(
+    nowMs !== undefined && today !== undefined && today < date
+      ? (
+          await query<{ task_id: string; minutes: number }>(BOOKED_EARLIER_SQL, [
+            nowMs,
+            today,
+            date,
+          ])
+        ).map((row) => [row.task_id, row.minutes])
+      : [],
+  );
 
   let restDay: number | undefined;
   try {
@@ -354,10 +405,13 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       };
     }),
     doneThisWeekMin: Object.fromEntries(done.map((row) => [row.area_id, row.minutes])),
-    tasks: tasks.flatMap((task) => {
-      const planned = taskOnDay(task, date);
-      return planned ? [planned] : [];
-    }),
+    tasks: afterBooked(
+      tasks.flatMap((task) => {
+        const planned = taskOnDay(task, date);
+        return planned ? [planned] : [];
+      }),
+      booked,
+    ),
     chosenTop: chosen.map((row) => row.task_id),
     // Clipped to the logical day (03:00 to 03:00).
     events: events.map((event) => {
@@ -451,7 +505,7 @@ async function replanInput(
   date: string,
   nowMs?: number,
 ): Promise<{ input: PlanInput; stale: KeptRow[] }> {
-  const loaded = startingNow(await loadPlanInput(query, date), nowMs);
+  const loaded = startingNow(await loadPlanInput(query, date, nowMs), nowMs);
   const untouched = await query<KeptRow>(STALE_BLOCKS_SQL, [date]);
   if (loaded.notBeforeMin === undefined || nowMs === undefined)
     return { input: loaded, stale: untouched };
@@ -833,7 +887,7 @@ async function planOnce(
   // A day already gone stays as it was.
   if ((exists?.n ?? 0) > 0)
     return date < logicalDate(nowMs) ? false : healDay(query, transact, date, newId, nowMs);
-  const input = startingNow(await loadPlanInput(query, date), nowMs);
+  const input = startingNow(await loadPlanInput(query, date, nowMs), nowMs);
   if (input.template.length === 0) return false; // no routine yet (setup not done)
   const plan = generateDay(input);
   await transact(planOps(plan, date, newId, input.chosenTop.length > 0));

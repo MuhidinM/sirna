@@ -980,3 +980,71 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
     expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
   });
 });
+
+describe("a later day is planned after the days before it (F18)", () => {
+  it("doesn't book a task again that an earlier saved day already covers", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, due_date, estimate_min, created_at, updated_at) VALUES
+       ('a', 'Write About page', 'todo', 'coding', '2026-11-10', 60, 0, 0),
+       ('b', 'Apply at Kifiya', 'todo', 'jobhunt', '2026-11-12', 45, 1, 1),
+       ('c', 'Renew residence ID', 'todo', 'admin', '2026-11-13', 30, 2, 2),
+       ('d', 'Case study', 'todo', 'coding', '2026-11-14', 120, 3, 3)`,
+    );
+    for (const date of ["2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14"])
+      await ensureDayPlan(h.query, h.transact, NOW, h.newId, date);
+    const rows = h.db
+      .prepare(
+        `SELECT logical_date, task_id, (end_at - start_at) / 60000 AS minutes FROM day_blocks
+         WHERE task_id IS NOT NULL AND deleted_at IS NULL AND end_at > ? ORDER BY start_at`,
+      )
+      .all(NOW) as { logical_date: string; task_id: string; minutes: number }[];
+    const estimate: Record<string, number> = { a: 60, b: 45, c: 30, d: 120 };
+    const booked = new Map<string, number>();
+    for (const row of rows) {
+      // A later day only gives a task time the days before it didn't.
+      expect(booked.get(row.task_id) ?? 0).toBeLessThan(estimate[row.task_id] ?? 0);
+      booked.set(row.task_id, (booked.get(row.task_id) ?? 0) + row.minutes);
+    }
+    // Every task gets its time somewhere in these days.
+    expect([...booked.keys()].sort()).toEqual(["a", "b", "c", "d"]);
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+  });
+
+  it("doesn't book an overdue task again on the next day opened", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, due_date, estimate_min, created_at, updated_at) VALUES
+       ('a', 'Write About page', 'todo', 'coding', '2026-11-10', 60, 0, 0)`,
+    );
+    const taskDays = () =>
+      (
+        h.db
+          .prepare(
+            "SELECT logical_date FROM day_blocks WHERE task_id = 'a' AND deleted_at IS NULL AND end_at > ?",
+          )
+          .all(NOW) as { logical_date: string }[]
+      ).map((row) => row.logical_date);
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-12");
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-13");
+    expect(taskDays()).toEqual(["2026-11-12"]);
+  });
+});
