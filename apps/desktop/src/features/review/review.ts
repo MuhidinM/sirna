@@ -4,7 +4,8 @@
  */
 import { type Op } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
-import { type Parsed, parseCapture } from "../../capture/parse";
+import { type ParseOptions, type Parsed, parseCapture } from "../../capture/parse";
+import { rowCurrencySql } from "../money/currency";
 import { logicalDayStart } from "../tasks/today";
 
 export const REVIEW_PARSER = "review@1";
@@ -25,22 +26,28 @@ export const OPEN_DUE_SQL = `
   WHERE deleted_at IS NULL AND status = 'todo' AND COALESCE(planned_date, due_date) <= ?1
   ORDER BY COALESCE(planned_date, due_date), created_at`;
 
-/** Expenses typed today, newest first. */
+/** Expenses typed today, newest first, each in its own currency (F3, F4). */
 export const SPENT_LIST_SQL = `
-  SELECT id, description, amount_minor FROM money_txns
-  WHERE deleted_at IS NULL AND transfer_id IS NULL AND local_date = ?1 AND amount_minor < 0
-  ORDER BY occurred_at DESC`;
+  SELECT m.id, m.description, m.amount_minor, ${rowCurrencySql("m")} AS currency
+  FROM money_txns m
+  LEFT JOIN money_accounts acc ON acc.id = m.account
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL AND m.local_date = ?1 AND m.amount_minor < 0
+  ORDER BY m.occurred_at DESC`;
 
 /**
  * One-tap chips: an expense typed the same way at least 3 times in the last
- * 60 days (plan §3.14). ?1 = the first date counted.
+ * 60 days (plan §3.14), from the same account in the same currency.
+ * ?1 = the first date counted.
  */
 export const CHIPS_SQL = `
-  SELECT description, amount_minor, category_id, count(*) AS uses FROM money_txns
-  WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor < 0 AND local_date >= ?1
-  GROUP BY lower(description), amount_minor
+  SELECT m.description, m.amount_minor, m.category_id, m.account,
+         ${rowCurrencySql("m")} AS currency, count(*) AS uses
+  FROM money_txns m
+  LEFT JOIN money_accounts acc ON acc.id = m.account
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL AND m.amount_minor < 0 AND m.local_date >= ?1
+  GROUP BY lower(m.description), m.amount_minor, m.account, 5
   HAVING count(*) >= 3
-  ORDER BY uses DESC, description
+  ORDER BY uses DESC, m.description
   LIMIT 6`;
 
 export function chipsSince(today: string): string {
@@ -69,27 +76,40 @@ export function carryOps(tasks: { id: string; carries: number }[], tomorrow: str
 export interface SpendingLine {
   text: string;
   parsed: Extract<Parsed, { kind: "expense" | "income" }> | undefined;
+  /** Why the parser couldn't keep it ("No USD account…"), when it said. */
+  why?: string;
 }
 
 /**
  * "lunch 120, taxi 40" → one line per comma or newline. Each line is read by
- * the capture parser as spending; a line it can't read stays unparsed so the
- * screen can say so instead of guessing.
+ * the capture parser as spending, with the same accounts, rates and
+ * categories as the capture bar (F3: `@telebirr` and `$3` land the same way);
+ * a line it can't read stays unparsed so the screen can say so instead of guessing.
  */
-export function readSpending(text: string, nowMs: number): SpendingLine[] {
+export function readSpending(text: string, options: ParseOptions): SpendingLine[] {
   return text
     .split(/[,\n]/)
     .map((piece) => piece.trim())
     .filter((piece) => piece.length > 0)
     .map((piece) => {
-      const parsed = parseCapture(piece, { nowMs });
-      return { text: piece, parsed: parsed.kind === "expense" ? parsed : undefined };
+      const parsed = parseCapture(piece, options);
+      if (parsed.kind === "expense") return { text: piece, parsed };
+      return parsed.kind === "inbox" && parsed.why
+        ? { text: piece, parsed: undefined, why: parsed.why }
+        : { text: piece, parsed: undefined };
     });
 }
 
 /** A chip tapped: the same expense again, today. */
 export function chipOps(
-  chip: { description: string; amount_minor: number; category_id: string | null },
+  chip: {
+    description: string;
+    amount_minor: number;
+    category_id: string | null;
+    /** Where it was paid from, and in what: a $5 chip stays $5 on Wise. */
+    account?: string | null;
+    currency?: string | null;
+  },
   today: string,
   nowMs: number,
   id: string,
@@ -100,6 +120,8 @@ export function chipOps(
       table: "money_txns",
       id,
       values: {
+        ...(chip.account ? { account: chip.account } : {}),
+        ...(chip.currency ? { currency: chip.currency } : {}),
         occurred_at: nowMs,
         local_date: today,
         amount_minor: chip.amount_minor,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
-import { logicalDayStart, todayParams, todayTopSql } from "./today";
+import { logicalDayStart, SPENT_TODAY_SQL, todayParams, todayTopSql } from "./today";
 
 const now = Date.parse("2026-11-11T12:00:00+03:00");
 
@@ -88,5 +88,27 @@ describe("today's top 3", () => {
     task(db, "gone", { due_date: "2026-11-01", deleted_at: 1 });
     expect(top(db)).toHaveLength(3);
     expect(top(db)).not.toContain("gone");
+  });
+});
+
+describe("SPENT_TODAY_SQL", () => {
+  it("keeps dollars apart from birr (F4)", () => {
+    const db = openTestDb();
+    const add = db.prepare(
+      `INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, created_at, updated_at)
+       VALUES (?, ?, 1, '2026-11-11', ?, 'x', 0, 0)`,
+    );
+    add.run("a", "cash", -18000);
+    add.run("b", "wise", -400);
+    add.run("c", "cash", -1500);
+    db.prepare("UPDATE money_txns SET currency = 'USD' WHERE id = 'c'").run();
+    const rows = db.prepare(SPENT_TODAY_SQL).all("2026-11-11") as {
+      currency: string;
+      spent: number;
+    }[];
+    expect(rows.sort((x, y) => x.currency.localeCompare(y.currency))).toEqual([
+      { currency: "ETB", spent: 18000 },
+      { currency: "USD", spent: 1900 },
+    ]);
   });
 });

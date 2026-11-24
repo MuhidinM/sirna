@@ -8,6 +8,14 @@ import { commitCapture, query, transact } from "../kernel/db";
 import { formatAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import { toOps } from "../capture/ops";
+import {
+  approxMark,
+  conversionNotes,
+  RATES_SQL,
+  readRates,
+  sumInEtb,
+} from "../features/money/currency";
+import { loadMoneyContext } from "../features/money/parseContext";
 import { ensureDayPlan } from "../features/plan/dayplan";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
 import {
@@ -450,24 +458,34 @@ function SpendingStep({
   nowMs: number;
   next: (none: boolean) => void;
 }) {
-  const spent = useLiveQuery<{ id: string; description: string; amount_minor: number }>(
-    SPENT_LIST_SQL,
-    [today],
-  );
+  const spent = useLiveQuery<{
+    id: string;
+    description: string;
+    amount_minor: number;
+    currency: string;
+  }>(SPENT_LIST_SQL, [today]);
   const chips = useLiveQuery<{
     description: string;
     amount_minor: number;
     category_id: string | null;
+    account: string;
+    currency: string;
   }>(CHIPS_SQL, [chipsSince(today)]);
+  const rateRows = useLiveQuery<{ value_json: string }>(RATES_SQL);
   const [text, setText] = useState("");
   const [unread, setUnread] = useState<string[]>([]);
+  const [why, setWhy] = useState<string[]>([]);
 
   const add = async () => {
-    const lines = readSpending(text, nowMs);
+    // The same accounts, rates and categories as the capture bar (F3).
+    const context = await loadMoneyContext(query);
+    const lines = readSpending(text, { nowMs, ...context });
     const left: string[] = [];
+    const reasons: string[] = [];
     for (const line of lines) {
       if (!line.parsed) {
         left.push(line.text);
+        if (line.why) reasons.push(line.why);
         continue;
       }
       // Store first, parse second: each line lands as a raw capture too.
@@ -478,10 +496,20 @@ function SpendingStep({
       );
     }
     setUnread(left);
+    setWhy(reasons);
     setText(left.join(", "));
   };
 
-  const total = spent.rows.reduce((sum, txn) => sum + txn.amount_minor, 0);
+  // Dollars count at the saved rate, not as birr; without a rate they are listed apart (F4).
+  const rates = readRates(rateRows.rows[0]?.value_json);
+  const { total, conversion } = sumInEtb(
+    spent.rows.map((txn) => ({ minor: -txn.amount_minor, currency: txn.currency })),
+    rates,
+  );
+  const notes = conversionNotes(conversion, rates);
+  const leftOut = [...conversion.missing.entries()]
+    .map(([code, minor]) => ` + ${formatAmount(minor, code)}`)
+    .join("");
 
   return (
     <div className="rv-step-body">
@@ -492,7 +520,7 @@ function SpendingStep({
             title="What did you spend today?"
             sub={
               spent.rows.length > 0
-                ? `${formatAmount(-total)} so far`
+                ? `${approxMark(notes)}${formatAmount(total)}${leftOut} so far`
                 : "One line each, comma separated"
             }
           />
@@ -501,7 +529,7 @@ function SpendingStep({
               {spent.rows.map((txn) => (
                 <li key={txn.id} className="task">
                   <span>{txn.description}</span>
-                  <span className="rv-amount">{formatAmount(-txn.amount_minor)}</span>
+                  <span className="rv-amount">{formatAmount(-txn.amount_minor, txn.currency)}</span>
                 </li>
               ))}
             </ul>
@@ -525,7 +553,8 @@ function SpendingStep({
           </form>
           {unread.length > 0 && (
             <p role="alert" className="error">
-              Couldn&apos;t read: {unread.join(", ")}. Write it as “what amount”.
+              Couldn&apos;t read: {unread.join(", ")}.{" "}
+              {why.length > 0 ? why.join(" ") : "Write it as “what amount”."}
             </p>
           )}
         </section>
@@ -542,7 +571,7 @@ function SpendingStep({
                     void transact("user", chipOps(chip, today, systemClock.now(), ulid()))
                   }
                 >
-                  {chip.description} {formatAmount(-chip.amount_minor)}
+                  {chip.description} {formatAmount(-chip.amount_minor, chip.currency)}
                 </Button>
               ))}
             </div>

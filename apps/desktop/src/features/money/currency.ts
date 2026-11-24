@@ -164,6 +164,20 @@ export function convert(
   return etb;
 }
 
+/**
+ * Adds amounts kept in several currencies into one ETB total at the saved
+ * rates; money with no rate is left out and noted in `conversion`.
+ */
+export function sumInEtb(
+  items: { minor: Santim; currency?: string | null | undefined }[],
+  rates: Rates,
+  conversion: Conversion = newConversion(),
+): { total: Santim; conversion: Conversion } {
+  let total = 0;
+  for (const item of items) total += convert(conversion, rates, item.minor, item.currency) ?? 0;
+  return { total, conversion };
+}
+
 /** Joins what several totals converted. */
 export function mergeConversions(...all: Conversion[]): Conversion {
   const merged = newConversion();

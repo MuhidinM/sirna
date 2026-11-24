@@ -77,6 +77,7 @@ import {
   RATES_SQL,
   rateOps,
   readRates,
+  sumInEtb,
   syncRateBox,
 } from "../features/money/currency";
 import {
@@ -1881,17 +1882,26 @@ export function TodayMoney({
   onOpen,
 }: {
   today: string;
-  spentToday: number;
+  /** Today's spending per currency (SPENT_TODAY_SQL). */
+  spentToday: { currency: string; spent: number }[];
   onOpen?: (() => void) | undefined;
 }) {
   const { summary, loading } = useMonth(monthOf(today).from, today);
   const { safe, loading: safeLoading } = useSafe(today);
-  if (loading || safeLoading) return null;
+  const { rates, loading: ratesLoading } = useRates();
+  if (loading || safeLoading || ratesLoading) return null;
   const short = (minor: number) => formatAmount(minor).replace(/ ETB$/, "");
-  const approx = (safe.known ? safe.notes : summary.notes)?.approx ? " (≈)" : "";
+  // Dollars spent today count at the saved rate, not as birr (F4).
+  const spent = sumInEtb(
+    spentToday.map((row) => ({ minor: row.spent, currency: row.currency })),
+    rates,
+  );
+  const spentNotes = conversionNotes(spent.conversion, rates);
+  const approx =
+    (safe.known ? safe.notes : summary.notes)?.approx || spentNotes.approx ? " (≈)" : "";
   const line = safe.known
-    ? `Spent ${short(spentToday)} today · ${safeLine(safe)}${approx}`
-    : `${moneyLine(summary, spentToday)}${approx}`;
+    ? `Spent ${short(spent.total)} today · ${safeLine(safe)}${approx}`
+    : `${moneyLine(summary, spent.total)}${approx}`;
   const [lead = "", ...rest] = line.split(" · ");
   return (
     <div className="money-today-block">
@@ -1906,6 +1916,7 @@ export function TodayMoney({
           </Button>
         )}
       </div>
+      {spentNotes.missing && <p className="warn-text money-rate-note">{spentNotes.missing}</p>}
       <TodayDue today={today} />
       <Advisor today={today} />
     </div>

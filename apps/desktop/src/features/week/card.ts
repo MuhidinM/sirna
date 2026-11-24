@@ -12,6 +12,13 @@ import {
   type WeekModel,
   weekLoad,
 } from "../projects/capacity";
+import {
+  type Conversion,
+  convert,
+  newConversion,
+  type Rates,
+  rowCurrencySql,
+} from "../money/currency";
 import { shiftDate } from "../plan/dayplan";
 
 // --- 1. Where time went --------------------------------------------------------
@@ -136,23 +143,27 @@ export interface SpendRow {
   category: string;
   week_minor: number;
   past_minor: number;
+  /** The rows' currency; missing means birr. */
+  currency?: string | null;
 }
 
 /**
  * Spending by category: this week and the 4 weeks before it (for the
  * average). ?1 = this Monday, ?2 = the Monday 4 weeks earlier, ?3 = next Monday.
- * Amounts are santim, expenses positive.
+ * Amounts are minor units, expenses positive, one row per category and
+ * currency: dollars are not added to birr here (F4), spendLines converts.
  */
 export const SPEND_SQL = `
-  SELECT COALESCE(c.name, 'Other') AS category,
+  SELECT COALESCE(c.name, 'Other') AS category, ${rowCurrencySql("m")} AS currency,
          COALESCE(sum(CASE WHEN m.local_date >= ?1 AND m.local_date < ?3 THEN -m.amount_minor END), 0)
            AS week_minor,
          COALESCE(sum(CASE WHEN m.local_date >= ?2 AND m.local_date < ?1 THEN -m.amount_minor END), 0)
            AS past_minor
   FROM money_txns m
   LEFT JOIN money_categories c ON c.id = m.category_id
+  LEFT JOIN money_accounts acc ON acc.id = m.account
   WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL AND m.amount_minor < 0 AND m.local_date >= ?2 AND m.local_date < ?3
-  GROUP BY COALESCE(c.name, 'Other')
+  GROUP BY COALESCE(c.name, 'Other'), 2
   HAVING week_minor > 0 OR past_minor > 0
   ORDER BY week_minor DESC, past_minor DESC`;
 
@@ -179,20 +190,37 @@ export interface SpendLine {
   average: number | null;
 }
 
-/** This week against the weekly average of the weeks before (up to 4) that have data. */
+/**
+ * This week against the weekly average of the weeks before (up to 4) that
+ * have data, in ETB: foreign money converts at the saved rates, and money
+ * with no rate is left out and named in `conversion` (F4).
+ */
 export function spendLines(
   rows: SpendRow[],
   weeks: number,
-): { lines: SpendLine[]; week: number; average: number | null } {
-  const lines = rows.map((row) => ({
-    category: row.category,
-    week: Number(row.week_minor) || 0,
-    average: weeks > 0 ? Math.round((Number(row.past_minor) || 0) / weeks) : null,
-  }));
+  rates: Rates = {},
+): { lines: SpendLine[]; week: number; average: number | null; conversion: Conversion } {
+  const conversion = newConversion();
+  const byCategory = new Map<string, { week: number; past: number }>();
+  for (const row of rows) {
+    const week = convert(conversion, rates, Number(row.week_minor) || 0, row.currency) ?? 0;
+    const past = convert(conversion, rates, Number(row.past_minor) || 0, row.currency) ?? 0;
+    const sum = byCategory.get(row.category) ?? { week: 0, past: 0 };
+    byCategory.set(row.category, { week: sum.week + week, past: sum.past + past });
+  }
+  const lines = [...byCategory]
+    .filter(([, sum]) => sum.week > 0 || sum.past > 0)
+    .map(([category, sum]) => ({
+      category,
+      week: sum.week,
+      average: weeks > 0 ? Math.round(sum.past / weeks) : null,
+    }))
+    .sort((x, y) => y.week - x.week || (y.average ?? 0) - (x.average ?? 0));
   return {
     lines,
     week: lines.reduce((sum, line) => sum + line.week, 0),
     average: weeks > 0 ? lines.reduce((sum, line) => sum + (line.average ?? 0), 0) : null,
+    conversion,
   };
 }
 

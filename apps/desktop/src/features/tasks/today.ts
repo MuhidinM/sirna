@@ -1,5 +1,6 @@
 /** Queries behind the Today screen (plan §3.4). Pure SQL text + small helpers. */
 import { HOME_UTC_OFFSET_MIN, LOGICAL_DAY_START_HOUR, logicalDate } from "../../kernel/dates";
+import { rowCurrencySql } from "../money/currency";
 import todayTopSql from "./queries/today_top.sql?raw";
 
 export { todayTopSql };
@@ -45,10 +46,16 @@ export const INBOX_SQL = `
   ORDER BY created_at DESC
   LIMIT 10`;
 
-/** Today's spending, santim (positive number). */
+/**
+ * Today's spending per currency, minor units (positive numbers): dollars are
+ * not birr, so the screen converts them at the saved rate (F4).
+ */
 export const SPENT_TODAY_SQL = `
-  SELECT COALESCE(-SUM(amount_minor), 0) AS spent FROM money_txns
-  WHERE deleted_at IS NULL AND transfer_id IS NULL AND amount_minor < 0 AND local_date = ?1`;
+  SELECT ${rowCurrencySql("m")} AS currency, -SUM(m.amount_minor) AS spent
+  FROM money_txns m
+  LEFT JOIN money_accounts acc ON acc.id = m.account
+  WHERE m.deleted_at IS NULL AND m.transfer_id IS NULL AND m.amount_minor < 0 AND m.local_date = ?1
+  GROUP BY 1`;
 
 /** The last capture that can still be undone. */
 export const LAST_CAPTURE_SQL = `

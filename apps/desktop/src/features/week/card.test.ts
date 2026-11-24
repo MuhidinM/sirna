@@ -110,6 +110,22 @@ describe("money", () => {
     expect(money.week).toBe(42000);
     expect(money.average).toBe(40000);
   });
+
+  it("converts dollars at the saved rate instead of adding them as birr (F4)", () => {
+    const db = seeded();
+    db.exec(`INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, category_id, created_at, updated_at)
+      VALUES ('usd1', 'wise', 1, '2026-11-10', -1500, 'netflix', 'cat_food', 0, 0)`);
+    const rows = db.prepare(SPEND_SQL).all(...spendParams(MONDAY)) as unknown as SpendRow[];
+    const rates = { USD: { rate: "132.50", set_on: "2026-11-01" } };
+    const money = spendLines(rows, 3, rates);
+    // 420 ETB + $15 × 132.50 = 1,987.50 ETB.
+    expect(money.lines[0]).toEqual({ category: "Food", week: 42000 + 198750, average: 26667 });
+    expect([...money.conversion.used]).toEqual(["USD"]);
+    // No rate: the dollars are left out and named, not counted as 15 birr.
+    const bare = spendLines(rows, 3);
+    expect(bare.lines[0]?.week).toBe(42000);
+    expect(bare.conversion.missing.get("USD")).toBe(1500);
+  });
 });
 
 describe("one change", () => {
