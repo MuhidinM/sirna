@@ -81,6 +81,27 @@ export function readRule(json: string): Rule | null {
   return null;
 }
 
+/**
+ * Dates you skipped (F29): kept in rule_json next to the rule, as
+ * `{"every":"month","day":24,"skip":["2026-10-24"]}`. readRule ignores them.
+ */
+export function readSkips(json: string): string[] {
+  try {
+    const value = JSON.parse(json) as { skip?: unknown };
+    return Array.isArray(value.skip)
+      ? value.skip.filter((date): date is string => typeof date === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The rule with its skipped dates, as rule_json stores it; none older than `keepFrom`. */
+function ruleJson(rule: Rule | null, skips: string[], keepFrom: string): string {
+  const kept = [...new Set(skips.filter((date) => date >= keepFrom))].sort();
+  return JSON.stringify(rule && kept.length > 0 ? { ...rule, skip: kept } : rule);
+}
+
 const isoWeekday = (date: string) => {
   const day = new Date(`${date}T00:00:00Z`).getUTCDay();
   return day === 0 ? 7 : day;
@@ -141,12 +162,14 @@ export const REGULARS_SQL = `
  * loans never settle anything.
  */
 export const REGULAR_TXNS_SQL = `
-  SELECT regular_id, due_date, area_id, amount_minor, local_date, description, category_id
-  FROM money_txns
-  WHERE deleted_at IS NULL AND transfer_id IS NULL
-    AND ((regular_id IS NOT NULL AND due_date >= ?1 AND due_date <= ?2)
-      OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))
-  ORDER BY local_date, rowid`;
+  SELECT t.regular_id, t.due_date, t.area_id, t.amount_minor, t.local_date, t.description,
+         t.category_id, ${rowCurrencySql("t")} AS currency
+  FROM money_txns t
+  LEFT JOIN money_accounts acc ON acc.id = t.account
+  WHERE t.deleted_at IS NULL AND t.transfer_id IS NULL
+    AND ((t.regular_id IS NOT NULL AND t.due_date >= ?1 AND t.due_date <= ?2)
+      OR (t.regular_id IS NULL AND t.local_date >= ?1 AND t.local_date <= ?2))
+  ORDER BY t.local_date, t.rowid`;
 
 export interface RegularTxn {
   regular_id: string | null;
@@ -156,6 +179,8 @@ export interface RegularTxn {
   local_date: string;
   description?: string | null;
   category_id?: string | null;
+  /** The entry's currency; ETB when not given. */
+  currency?: string | null;
 }
 
 export type DueState = "paid" | "due" | "late" | "upcoming";
@@ -174,15 +199,18 @@ export interface DueItem {
 export const PAY_GRACE_DAYS = 3;
 /** Money that comes or goes up to this many days early still counts for the date. */
 export const EARLY_DAYS = 7;
-/** Late items from the end of last month are still shown this long into the next. */
-export const LOOK_BACK_DAYS = 10;
+/**
+ * An unpaid bill or pay stays on the list this many days after its date,
+ * whatever its day of the month (F84), until you pay it or skip it.
+ */
+export const LATE_KEEP_DAYS = 31;
 
 /**
  * The dates to work out a month: occurrences from the start of last month
- * (so a late payment settles last month's date, not this month's), entries
- * from a week before that (so an early payment for the first one counts),
- * to the month's end. Only items from `shownFrom`, or still open within
- * LOOK_BACK_DAYS before it, are shown.
+ * (so a late payment settles last month's date, not this month's), or
+ * LATE_KEEP_DAYS back if that is earlier; entries from a week before that
+ * (so an early payment for the first one counts), to the month's end. Only
+ * items from `shownFrom`, or still open within LATE_KEEP_DAYS of today, are shown.
  */
 export function dueWindow(today: string): {
   from: string;
@@ -191,7 +219,9 @@ export function dueWindow(today: string): {
   shownFrom: string;
 } {
   const { from, to } = monthOf(today);
-  const occurrencesFrom = previousMonthStart(from);
+  const lastMonth = previousMonthStart(from);
+  const keep = shiftDate(today, -LATE_KEEP_DAYS);
+  const occurrencesFrom = keep < lastMonth ? keep : lastMonth;
   // On a month's last day, tomorrow too: the evening bill toast names it and opens this page.
   const tomorrow = shiftDate(today, 1);
   return {
@@ -251,7 +281,8 @@ const daysBetween = (a: string, b: string) =>
  * a month you never recorded doesn't take the next month's payment. Dates
  * up to EARLY_DAYS after `to` are worked out too, so an early payment at the
  * end of a month counts the same on every day. Items before `shownFrom` are
- * kept only while still open and within LOOK_BACK_DAYS of it.
+ * kept only while still open and within LATE_KEEP_DAYS of today. Dates you
+ * skipped are left out: they neither show nor take a payment.
  */
 export function dueItems(
   regulars: RegularRow[],
@@ -270,7 +301,10 @@ export function dueItems(
     if (!rule) continue;
     // Occurrences before you added it are not yours to settle now.
     const since = regular.created_at > 0 ? logicalDate(regular.created_at) : from;
-    const dates = occurrences(rule, from > since ? from : since, until);
+    const skipped = new Set(readSkips(regular.rule_json));
+    const dates = occurrences(rule, from > since ? from : since, until).filter(
+      (date) => !skipped.has(date),
+    );
     dates.forEach((date, index) => {
       const done = txns
         .filter((txn) => txn.regular_id === regular.id && txn.due_date === date)
@@ -293,7 +327,9 @@ export function dueItems(
     .sort((a, b) => compareCodePoints(a.local_date, b.local_date));
   for (const txn of free) {
     const day = txn.local_date;
+    // Only money in the regular's own currency settles it: 15 birr is not $15.
     const fits = (item: Work) =>
+      (txn.currency ?? "ETB") === (item.regular.currency ?? "ETB") &&
       shiftDate(item.date, -EARLY_DAYS) <= day &&
       (item.regular.kind === "pay"
         ? txn.amount_minor > 0 &&
@@ -350,13 +386,36 @@ export function dueItems(
     .filter(
       (item) =>
         item.date >= shownFrom ||
-        (item.state !== "paid" && item.date >= shiftDate(shownFrom, -LOOK_BACK_DAYS)),
+        (item.state !== "paid" && item.date >= shiftDate(today, -LATE_KEEP_DAYS)),
     );
 }
 
-/** The entry Paid or Received records: the full amount left, today, marked with the regular. */
-export function settleOps(item: DueItem, today: string, nowMs: number, id: string): Op[] {
+/**
+ * The entry Paid or Received records: the full amount left, marked with the
+ * regular. Dated today, or its own date when that was in an earlier month,
+ * so October's bill paid late counts in October, not in November's spending
+ * (but not before the account's opening date).
+ */
+export function settleOps(
+  item: DueItem,
+  today: string,
+  nowMs: number,
+  id: string,
+  /** The account's opening date: a balance counts only entries from then on. */
+  openingDate?: string | null,
+): Op[] {
   const out = item.regular.kind === "bill";
+  // A date from an earlier month is booked on that date, so it stays in its
+  // month, but never before the account's opening date: a balance typed since
+  // would leave it out, and money that really moved would not show.
+  const date =
+    item.date.slice(0, 7) >= today.slice(0, 7)
+      ? today
+      : openingDate && openingDate > item.date
+        ? openingDate < today
+          ? openingDate
+          : today
+        : item.date;
   return [
     {
       op: "insert",
@@ -365,7 +424,7 @@ export function settleOps(item: DueItem, today: string, nowMs: number, id: strin
       values: {
         account: item.regular.account,
         occurred_at: nowMs,
-        local_date: today,
+        local_date: date,
         amount_minor: out ? -item.left : item.left,
         description: item.regular.name,
         category_id: item.regular.category_id ?? (out ? null : "cat_salary"),
@@ -407,6 +466,24 @@ export interface RegularDraft {
   areaId: string;
   /** The account's currency, kept with the regular. */
   currency?: string;
+  /** Dates already skipped, kept when you change it. */
+  skip?: string[];
+}
+
+/** A form's draft for a regular you have, to change it. */
+export function regularDraftOf(regular: RegularRow): RegularDraft {
+  const rule = readRule(regular.rule_json);
+  return {
+    kind: regular.kind,
+    name: regular.name,
+    amount: regular.amount_minor,
+    ruleText: rule ? ruleText(rule) : "",
+    categoryId: regular.category_id ?? "",
+    account: regular.account,
+    areaId: regular.area_id ?? "",
+    ...(regular.currency ? { currency: regular.currency } : {}),
+    skip: readSkips(regular.rule_json),
+  };
 }
 
 export function checkRegular(draft: RegularDraft): string | null {
@@ -430,7 +507,7 @@ export function regularOps(draft: RegularDraft, id: string, existing = false): O
         kind: draft.kind,
         name: draft.name.trim(),
         amount_minor: draft.amount,
-        rule_json: JSON.stringify(rule),
+        rule_json: ruleJson(rule, draft.skip ?? [], ""),
         category_id: draft.kind === "bill" ? draft.categoryId || null : "cat_salary",
         account: draft.account,
         area_id: draft.kind === "pay" ? draft.areaId || null : null,
@@ -442,6 +519,35 @@ export function regularOps(draft: RegularDraft, id: string, existing = false): O
 
 export function removeRegularOps(id: string): Op[] {
   return [{ op: "delete", table: "money_regulars", id }];
+}
+
+/**
+ * Skip one date (F29): it stops showing and asking, and nothing is recorded.
+ * Skips older than the list ever shows are dropped, so the rule stays small.
+ */
+export function skipOps(item: DueItem, today: string): Op[] {
+  const rule = readRule(item.regular.rule_json);
+  const skips = [...readSkips(item.regular.rule_json), item.date];
+  return [
+    {
+      op: "update",
+      table: "money_regulars",
+      id: item.regular.id,
+      values: { rule_json: ruleJson(rule, skips, shiftDate(today, -2 * LATE_KEEP_DAYS)) },
+    },
+  ];
+}
+
+/** Pause a regular (it stops showing) or start it again. */
+export function pauseOps(regular: Pick<RegularRow, "id" | "active">): Op[] {
+  return [
+    {
+      op: "update",
+      table: "money_regulars",
+      id: regular.id,
+      values: { active: regular.active === 1 ? 0 : 1 },
+    },
+  ];
 }
 
 /** "Rent 6,000 · monthly on the 1st". */

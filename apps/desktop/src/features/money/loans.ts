@@ -46,17 +46,11 @@ export interface PersonBalance {
 
 export const personKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
 
-/**
- * Open amounts per person. Repayments clear the oldest first, so "since" is
- * the date of the oldest amount still open. Paying back more than was lent
- * turns the rest the other way (they now owe you less, or you owe them).
- * Dollars and birr never settle each other: each currency is its own line.
- */
-export function balances(events: LoanEvent[]): PersonBalance[] {
-  const people = new Map<
-    string,
-    PersonBalance & { lots: { date: string; left: number; mine: boolean }[] }
-  >();
+type Lot = { date: string; left: number; mine: boolean; account: string };
+
+/** Each person and currency's events, with the amounts still open, oldest first. */
+function openLots(events: LoanEvent[]): Map<string, PersonBalance & { lots: Lot[] }> {
+  const people = new Map<string, PersonBalance & { lots: Lot[] }>();
   for (const event of [...events].sort((a, b) => a.local_date.localeCompare(b.local_date))) {
     const currency = event.currency ?? "ETB";
     const key = `${personKey(event.person)}|${currency}`;
@@ -88,8 +82,44 @@ export function balances(events: LoanEvent[]): PersonBalance[] {
       lot.left -= take;
       amount -= take;
     }
-    if (amount > 0) person.lots.push({ date: event.local_date, left: amount, mine: sign > 0 });
+    if (amount > 0)
+      person.lots.push({
+        date: event.local_date,
+        left: amount,
+        mine: sign > 0,
+        account: event.account,
+      });
   }
+  return people;
+}
+
+/**
+ * What you still owe, per currency, counting only debts whose money came into
+ * one of `accounts`. Repayments settle from every account, so a borrow into
+ * Cash paid back from Telebirr is cleared even when Telebirr isn't counted.
+ */
+export function owedThrough(
+  events: LoanEvent[],
+  accounts: ReadonlySet<string>,
+): { currency: string; amount: number }[] {
+  return [...openLots(events).values()]
+    .map((person) => ({
+      currency: person.currency ?? "ETB",
+      amount: person.lots
+        .filter((lot) => !lot.mine && accounts.has(lot.account))
+        .reduce((sum, lot) => sum + lot.left, 0),
+    }))
+    .filter((debt) => debt.amount > 0);
+}
+
+/**
+ * Open amounts per person. Repayments clear the oldest first, so "since" is
+ * the date of the oldest amount still open. Paying back more than was lent
+ * turns the rest the other way (they now owe you less, or you owe them).
+ * Dollars and birr never settle each other: each currency is its own line.
+ */
+export function balances(events: LoanEvent[]): PersonBalance[] {
+  const people = openLots(events);
   return [...people.values()]
     .map(({ lots, ...person }) => {
       const open = lots.filter((lot) => lot.left > 0);
@@ -105,11 +135,14 @@ export function balances(events: LoanEvent[]): PersonBalance[] {
     );
 }
 
+/** "abel" reads as a name: "Abel" (F108). */
+const named = (person: string) => person.charAt(0).toUpperCase() + person.slice(1);
+
 const VERB: Record<LoanKind, (person: string) => string> = {
-  lent: (person) => `Lent to ${person}`,
-  borrowed: (person) => `Borrowed from ${person}`,
-  paid_me: (person) => `${person} paid back`,
-  i_paid: (person) => `Paid back ${person}`,
+  lent: (person) => `Lent to ${named(person)}`,
+  borrowed: (person) => `Borrowed from ${named(person)}`,
+  paid_me: (person) => `${named(person)} paid back`,
+  i_paid: (person) => `Paid back ${named(person)}`,
 };
 
 /** The event, and the money it moves in an account (kept out of in and out). */
@@ -168,6 +201,25 @@ export function checkLoan(person: string, amount: Santim): string | null {
   if (!person.trim()) return "Who: a name.";
   if (!Number.isSafeInteger(amount) || amount <= 0) return "An amount above zero.";
   return null;
+}
+
+/**
+ * Paying back more than is open would flip the rest into a debt the other
+ * way without a word (F24): refuse it and say how much is open.
+ */
+export function checkRepayment(
+  person: Pick<PersonBalance, "person" | "owedToMe" | "iOwe" | "currency">,
+  amount: Santim,
+): string | null {
+  const theyOwe = person.owedToMe > 0;
+  const open = theyOwe ? person.owedToMe : person.iOwe;
+  if (amount <= open) return null;
+  const currency = person.currency ?? "ETB";
+  const name = named(person.person);
+  const said = theyOwe
+    ? `${name} owes you ${formatAmount(open, currency)}`
+    : `You owe ${name} ${formatAmount(open, currency)}`;
+  return `${said}, not ${formatAmount(amount, currency)}. Pay back up to that, and add the rest as a new loan.`;
 }
 
 export function followUpOps(eventId: string, date: string | null): Op[] {
@@ -258,22 +310,46 @@ export function owedInEtb(people: PersonBalance[], rates: Rates, conversion: Con
   );
 }
 
+/** What is open with one person in one currency. */
+export interface OpenLoan {
+  currency: string;
+  owedToMe: Santim;
+  iOwe: Santim;
+}
+
 /**
  * People with an open loan for the capture parser, each name once: someone
  * owing in birr and in dollars is one person (owing either way in any
- * currency is enough to read "abel paid back 400").
+ * currency is enough to read "abel paid back 400"). `open` keeps each
+ * currency apart, so a repayment lands in the loan's currency and can't
+ * go past what is owed (F24, F27).
  */
 export function loanPeople(
-  people: Pick<PersonBalance, "person" | "owedToMe" | "iOwe">[],
-): { name: string; owedToMe: number; iOwe: number }[] {
-  const byKey = new Map<string, { name: string; owedToMe: number; iOwe: number }>();
+  people: Pick<PersonBalance, "person" | "owedToMe" | "iOwe" | "currency">[],
+): { name: string; owedToMe: number; iOwe: number; open: OpenLoan[] }[] {
+  const byKey = new Map<
+    string,
+    { name: string; owedToMe: number; iOwe: number; open: OpenLoan[] }
+  >();
   for (const person of people) {
     const key = personKey(person.person);
+    const line = {
+      currency: person.currency ?? "ETB",
+      owedToMe: person.owedToMe,
+      iOwe: person.iOwe,
+    };
     const seen = byKey.get(key);
     if (seen) {
       seen.owedToMe = Math.max(seen.owedToMe, person.owedToMe);
       seen.iOwe = Math.max(seen.iOwe, person.iOwe);
-    } else byKey.set(key, { name: person.person, owedToMe: person.owedToMe, iOwe: person.iOwe });
+      seen.open.push(line);
+    } else
+      byKey.set(key, {
+        name: person.person,
+        owedToMe: person.owedToMe,
+        iOwe: person.iOwe,
+        open: [line],
+      });
   }
   return [...byKey.values()];
 }

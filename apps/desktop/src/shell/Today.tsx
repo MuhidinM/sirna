@@ -280,7 +280,7 @@ export function Today({
     follow_up_date: string | null;
   }>(WAITING_SQL);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_SQL);
-  const spent = useLiveQuery<{ spent: number }>(SPENT_TODAY_SQL, [today]);
+  const spent = useLiveQuery<{ currency: string; spent: number }>(SPENT_TODAY_SQL, [today]);
   const blocks = useLiveQuery<BlockRow & Record<string, string | number | null>>(TODAY_BLOCKS_SQL, [
     today,
   ]);
@@ -393,11 +393,7 @@ export function Today({
             <FocusWeek today={today} />
             <section className="panel" aria-labelledby="money">
               <PanelHead id="money" title="Money today" sub="Safe to spend and what is due" />
-              <TodayMoney
-                today={today}
-                spentToday={spent.rows[0]?.spent ?? 0}
-                onOpen={onOpenMoney}
-              />
+              <TodayMoney today={today} spentToday={spent.rows} onOpen={onOpenMoney} />
             </section>
           </div>
         </div>

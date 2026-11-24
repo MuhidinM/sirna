@@ -220,6 +220,51 @@ describe("the ledger", () => {
       ].join("\n"),
     );
   });
+
+  it("marks transfers and loans in the CSV and names the account (F66)", () => {
+    const base = { category: null, category_id: null, local_date: "2026-11-24" };
+    const csv = toCsv([
+      row({
+        ...base,
+        occurred_at: 1,
+        amount_minor: -200_000,
+        description: "Moved to Cash",
+        account: "cbo",
+        account_name: "CBO",
+        transfer_id: "01T",
+      }),
+      row({
+        ...base,
+        occurred_at: 2,
+        amount_minor: 200_000,
+        description: "Moved from CBO",
+        account_name: "Cash",
+        transfer_id: "01T",
+      }),
+      row({
+        ...base,
+        occurred_at: 3,
+        amount_minor: -30_000,
+        description: "Lent to kebede",
+        account_name: "Cash",
+        transfer_id: "loan:01L",
+      }),
+      row({
+        ...base,
+        occurred_at: 4,
+        amount_minor: 10_000,
+        description: "Kebede paid back",
+        account_name: "Cash",
+        transfer_id: "loan:01L",
+      }),
+    ]);
+    expect(csv.split("\n").slice(1, 5)).toEqual([
+      "2026-11-24,transfer out,2000.00,ETB,,Moved to Cash,CBO",
+      "2026-11-24,transfer in,2000.00,ETB,,Moved from CBO,Cash",
+      "2026-11-24,loan out,300.00,ETB,,Lent to kebede,Cash",
+      "2026-11-24,loan in,100.00,ETB,,Kebede paid back,Cash",
+    ]);
+  });
 });
 
 describe("the queries", () => {

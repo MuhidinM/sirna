@@ -50,6 +50,7 @@ import { PanelHead } from "./kit";
 import { MonthPanel } from "./MonthPanel";
 import { isFirstSunday } from "../features/money/review";
 import { previousMonthStart } from "../features/money/money";
+import { approxMark, conversionNotes, RATES_SQL, readRates } from "../features/money/currency";
 import { type AreaColor, Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -293,6 +294,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
     spendParams(monday).slice(0, 2),
   );
   const settings = useLiveQuery<{ key: string; value_json: string }>(SETTINGS_SQL);
+  const rateRows = useLiveQuery<{ value_json: string }>(RATES_SQL);
   const next = useNextWeek(monday);
   const [error, setError] = useState<string | null>(null);
 
@@ -309,7 +311,11 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
         })
       : null;
   const showChange = change && !isHandled(setting(DISMISSED_KEY), monday);
-  const money = spendLines(spend.rows, historyWeeks(since.rows[0]?.since ?? null, monday));
+  // Dollars count at the saved rate, not as birr (F4).
+  const rates = readRates(rateRows.rows[0]?.value_json);
+  const money = spendLines(spend.rows, historyWeeks(since.rows[0]?.since ?? null, monday), rates);
+  const spendNotes = conversionNotes(money.conversion, rates);
+  const approx = approxMark(spendNotes);
   const activeCount = projects.rows.filter((p) => p.status === "active").length;
   const write = (ops: Parameters<typeof transact>[1], context: string) =>
     transact("user", ops, context).catch((failure: unknown) =>
@@ -468,13 +474,15 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 title="Money"
                 sub={
                   money.average !== null
-                    ? `Usually ${formatAmount(money.average)} a week`
+                    ? `Usually ${approx}${formatAmount(money.average)} a week`
                     : "Spent this week"
                 }
               />
               <p className="pw-big">
+                {approx}
                 {formatAmount(money.week)} <span className="soft">spent this week</span>
               </p>
+              {spendNotes.missing && <p className="warn-text">{spendNotes.missing}</p>}
               <ul className="pw-spend">
                 {money.lines.map((line) => (
                   <li

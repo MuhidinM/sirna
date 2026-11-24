@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
+import { loadMoneyContext } from "../money/parseContext";
+import { type Query } from "../projects/capacity";
 import {
   asksToShrink,
   carryOps,
   CHIPS_SQL,
+  chipOps,
   chipsSince,
   nextDate,
   OPEN_DUE_SQL,
   readSpending,
   REVIEW_SQL,
   sortInboxOps,
+  SPENT_LIST_SQL,
 } from "./review";
 
 const night = Date.parse("2026-11-11T21:10:00+03:00");
@@ -25,7 +29,7 @@ describe("nextDate", () => {
 
 describe("readSpending", () => {
   it("splits on commas and reads each as spending today", () => {
-    const lines = readSpending("lunch 120, taxi 40,  ", night);
+    const lines = readSpending("lunch 120, taxi 40,  ", { nowMs: night });
     expect(lines.map((l) => [l.text, l.parsed?.amount, l.parsed?.date])).toEqual([
       ["lunch 120", 12000, "2026-11-11"],
       ["taxi 40", 4000, "2026-11-11"],
@@ -33,13 +37,39 @@ describe("readSpending", () => {
   });
 
   it("keeps a line it can't read", () => {
-    const [line] = readSpending("call mum", night);
+    const [line] = readSpending("call mum", { nowMs: night });
     expect(line?.parsed).toBeUndefined();
+  });
+
+  it("reads @account and currency as the capture bar does (F3)", async () => {
+    const db = openTestDb();
+    const query: Query = (sql, params = []) =>
+      Promise.resolve(db.prepare(sql).all(...params) as never);
+    const context = await loadMoneyContext(query);
+    const lines = readSpending("taxi 40 @telebirr, kitfo 300, coffee $3", {
+      nowMs: night,
+      ...context,
+    });
+    expect(
+      lines.map((l) => [l.parsed?.description, l.parsed?.account, l.parsed?.currency]),
+    ).toEqual([
+      ["taxi", "telebirr", undefined],
+      ["kitfo", "cash", undefined],
+      ["coffee", "wise", "USD"],
+    ]);
+    // Toss away the dollar account: "$3" can't land on birr Cash.
+    db.exec("UPDATE money_accounts SET deleted_at = 1 WHERE id = 'wise'");
+    const [coffee] = readSpending("coffee $3", {
+      nowMs: night,
+      ...(await loadMoneyContext(query)),
+    });
+    expect(coffee?.parsed).toBeUndefined();
+    expect(coffee?.why).toMatch(/USD/);
   });
 
   it("counts after midnight as the same evening", () => {
     const late = Date.parse("2026-11-12T01:00:00+03:00");
-    expect(readSpending("tea 15", late)[0]?.parsed?.date).toBe("2026-11-11");
+    expect(readSpending("tea 15", { nowMs: late })[0]?.parsed?.date).toBe("2026-11-11");
   });
 });
 
@@ -100,6 +130,35 @@ describe("queries", () => {
     expect(chips.map((c) => [String(c.description).toLowerCase(), c.amount_minor, c.uses])).toEqual(
       [["lunch", -12000, 3]],
     );
+  });
+
+  it("keeps each expense and chip in its own currency and account (F3, F4)", () => {
+    const db = openTestDb();
+    const add = db.prepare(
+      `INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, category_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'cat_food', 0, 0)`,
+    );
+    add.run("a", "wise", 1, "2026-11-11", -500, "netflix");
+    add.run("b", "wise", 2, "2026-11-04", -500, "netflix");
+    add.run("c", "wise", 3, "2026-10-28", -500, "netflix");
+    add.run("d", "cash", 4, "2026-11-11", -500, "netflix");
+    expect(db.prepare(SPENT_LIST_SQL).all("2026-11-11")).toEqual([
+      { id: "d", description: "netflix", amount_minor: -500, currency: "ETB" },
+      { id: "a", description: "netflix", amount_minor: -500, currency: "USD" },
+    ]);
+    const [chip, ...rest] = db.prepare(CHIPS_SQL).all(chipsSince("2026-11-11")) as {
+      description: string;
+      amount_minor: number;
+      category_id: string | null;
+      account: string;
+      currency: string;
+    }[];
+    expect(rest).toEqual([]);
+    expect(chip).toMatchObject({ account: "wise", currency: "USD", amount_minor: -500 });
+    if (!chip) throw new Error("no chip");
+    expect(chipOps(chip, "2026-11-11", 9, "e")[0]).toMatchObject({
+      values: { account: "wise", currency: "USD", amount_minor: -500 },
+    });
   });
 
   it("lists open tasks due today or before", () => {

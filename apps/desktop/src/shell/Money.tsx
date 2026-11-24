@@ -77,14 +77,18 @@ import {
   RATES_SQL,
   rateOps,
   readRates,
+  sumInEtb,
+  switchCurrency,
   syncRateBox,
 } from "../features/money/currency";
 import {
   checkRegular,
+  regularDraftOf,
   type DueItem,
   dueItems,
   dueLines,
   dueWindow,
+  pauseOps,
   type RegularDraft,
   regularOps,
   type RegularRow,
@@ -94,10 +98,12 @@ import {
   type RegularTxn,
   removeRegularOps,
   settleOps,
+  skipOps,
 } from "../features/money/regulars";
 import {
   balances,
   checkLoan,
+  checkRepayment,
   LOAN_SQL,
   loanIdOf,
   loanRestoreOps,
@@ -312,6 +318,7 @@ export function useSafe(today: string) {
   const waiting = useLiveQuery<{ minor: number; n: number; held: number }>(UNASSIGNED_SQL);
   const { items, loading } = useDue(today);
   const { rates, loading: ratesLoading } = useRates();
+  const loans = useLiveQuery<LoanEvent & Record<string, string | number | null>>(LOANS_SQL);
   const safe = safeToSpend({
     accounts: accounts.rows,
     goals: goals.rows,
@@ -322,12 +329,14 @@ export function useSafe(today: string) {
     unassigned: waiting.rows[0]?.minor ?? 0,
     unassignedHeld: waiting.rows[0]?.held ?? 0,
     rates,
+    loans: loans.rows,
   });
   return {
     safe,
     goals: goals.rows,
     loading:
       loading ||
+      loans.loading ||
       accounts.loading ||
       goals.loading ||
       saved.loading ||
@@ -370,7 +379,9 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
         <h2 id="safe" className="now-when">
           Safe to spend
         </h2>
-        <span className="time-pill">{safe.daysLeft} days left</span>
+        <span className="time-pill">
+          {safe.daysLeft} {safe.daysLeft === 1 ? "day" : "days"} left
+        </span>
       </div>
       {short ? (
         <p className="money-safe-total">Nothing safe</p>
@@ -501,9 +512,11 @@ function EmergencyCard({ today }: { today: string }) {
     historyParams(today),
   );
   const { rates } = useRates();
+  const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
   const [note, setNote] = useState<string | null>(null);
-  if (loading || history.loading) return null;
-  const month = essentialMonth(usualByCategory(history.rows, rates));
+  if (loading || history.loading || regulars.loading) return null;
+  // Rent and other regular bills count even before a month of history (F100).
+  const month = essentialMonth(usualByCategory(history.rows, rates), regulars.rows, rates);
   const fund = goals.find((goal) => isEmergency(goal) && goal.status !== "done");
   const head = (
     <PanelHead
@@ -665,7 +678,8 @@ function OutByMonth({
 
 function MonthView({ month, today }: { month: string; today: string }) {
   const { summary, history, current, loading } = useMonth(month, today);
-  if (loading) return null;
+  const { safe, loading: safeLoading } = useSafe(today);
+  if (loading || safeLoading) return null;
   const biggest = Math.max(
     1,
     ...summary.categories.map((line) => Math.max(line.spent, line.usual ?? 0)),
@@ -685,7 +699,9 @@ function MonthView({ month, today }: { month: string; today: string }) {
           value={Math.abs(summary.left)}
           approx={approx}
           sub={
-            current && summary.perDay !== null
+            // One "a day" answer per page: once an account has a balance, Safe to
+            // spend gives it, and this month's flow is only the fallback (R-MON-07, F56).
+            current && !safe.known && summary.perDay !== null
               ? `about ${formatAmount(summary.perDay)} a day`
               : undefined
           }
@@ -1231,6 +1247,8 @@ function TxnForm({
     initial.amount > 0 ? String(initial.amount / 100) : "",
   );
   const [error, setError] = useState<string | null>(null);
+  const [converted, setConverted] = useState<string | null>(null);
+  const { rates } = useRates();
   const set = (part: Partial<TxnDraft>) => setDraft((old) => ({ ...old, ...part }));
   const shown = categories.filter(
     (category) => category.kind === (draft.kind === "in" ? "income" : "expense"),
@@ -1304,7 +1322,19 @@ function TxnForm({
         </label>
         <label className="money-field">
           <span>Account</span>
-          <select value={accountId} onChange={(e) => set({ account: e.target.value })}>
+          <select
+            value={accountId}
+            onChange={(e) => {
+              // $4 moved to birr Cash stays worth $4, not 4 birr (F71).
+              const next = currencyOf(accounts.find((account) => account.id === e.target.value));
+              const typed = parseAmount(amountText);
+              const switched = switchCurrency(typed, currency, next, rates);
+              if (switched.minor !== null && switched.minor !== typed)
+                setAmountText(String(switched.minor / 100));
+              if (next !== currency) setConverted(switched.note);
+              set({ account: e.target.value });
+            }}
+          >
             {accounts.map((account) => (
               <option key={account.id} value={account.id}>
                 {account.name}
@@ -1318,6 +1348,11 @@ function TxnForm({
           <input type="date" value={draft.date} onChange={(e) => set({ date: e.target.value })} />
         </label>
       </div>
+      {converted && (
+        <p className="meta" role="status">
+          {converted}
+        </p>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
@@ -1878,17 +1913,26 @@ export function TodayMoney({
   onOpen,
 }: {
   today: string;
-  spentToday: number;
+  /** Today's spending per currency (SPENT_TODAY_SQL). */
+  spentToday: { currency: string; spent: number }[];
   onOpen?: (() => void) | undefined;
 }) {
   const { summary, loading } = useMonth(monthOf(today).from, today);
   const { safe, loading: safeLoading } = useSafe(today);
-  if (loading || safeLoading) return null;
+  const { rates, loading: ratesLoading } = useRates();
+  if (loading || safeLoading || ratesLoading) return null;
   const short = (minor: number) => formatAmount(minor).replace(/ ETB$/, "");
-  const approx = (safe.known ? safe.notes : summary.notes)?.approx ? " (≈)" : "";
+  // Dollars spent today count at the saved rate, not as birr (F4).
+  const spent = sumInEtb(
+    spentToday.map((row) => ({ minor: row.spent, currency: row.currency })),
+    rates,
+  );
+  const spentNotes = conversionNotes(spent.conversion, rates);
+  const approx =
+    (safe.known ? safe.notes : summary.notes)?.approx || spentNotes.approx ? " (≈)" : "";
   const line = safe.known
-    ? `Spent ${short(spentToday)} today · ${safeLine(safe)}${approx}`
-    : `${moneyLine(summary, spentToday)}${approx}`;
+    ? `Spent ${short(spent.total)} today · ${safeLine(safe)}${approx}`
+    : `${moneyLine(summary, spent.total)}${approx}`;
   const [lead = "", ...rest] = line.split(" · ");
   return (
     <div className="money-today-block">
@@ -1903,6 +1947,7 @@ export function TodayMoney({
           </Button>
         )}
       </div>
+      {spentNotes.missing && <p className="warn-text money-rate-note">{spentNotes.missing}</p>}
       <TodayDue today={today} />
       <Advisor today={today} />
     </div>
@@ -1947,7 +1992,7 @@ function PersonRow({
     (currency === "ETB" ? spendAccount(accounts) : (choices[0]?.id ?? spendAccount(accounts)));
   const settle = () => {
     const minor = amount.trim() ? (parseAmount(amount) ?? 0) : open;
-    const problem = checkLoan(person.person, minor);
+    const problem = checkLoan(person.person, minor) ?? checkRepayment(person, minor);
     if (problem) {
       setNote(problem);
       return;
@@ -1995,7 +2040,7 @@ function PersonRow({
           className="money-input"
           inputMode="decimal"
           aria-label={`Amount paid back, ${person.person}`}
-          placeholder={`all ${birr(open)}`}
+          placeholder={`all ${formatAmount(open, currency)}`}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
@@ -2209,11 +2254,18 @@ export function SettleButton({ item, today }: { item: DueItem; today: string }) 
     <>
       <Button
         onClick={() =>
-          void transact(
-            "user",
-            settleOps(item, today, systemClock.now(), ulid()),
-            `regular:${item.regular.id}`,
-          ).catch((failure: unknown) => setError(`Couldn't record it: ${message(failure)}`))
+          void query<{ opening_date: string | null }>(
+            "SELECT opening_date FROM money_accounts WHERE id = ?",
+            [item.regular.account],
+          )
+            .then((rows) =>
+              transact(
+                "user",
+                settleOps(item, today, systemClock.now(), ulid(), rows[0]?.opening_date),
+                `regular:${item.regular.id}`,
+              ),
+            )
+            .catch((failure: unknown) => setError(`Couldn't record it: ${message(failure)}`))
         }
       >
         {item.regular.kind === "bill" ? "Paid" : "Received"}
@@ -2257,8 +2309,34 @@ function DueRow({ item, today }: { item: DueItem; today: string }) {
       <span className="money-row-line">
         <span className={`money-state ${item.state}`}>{STATE_TEXT[item.state]}</span>
         {item.state !== "paid" && <SettleButton item={item} today={today} />}
+        {item.state !== "paid" && item.done === 0 && <SkipButton item={item} today={today} />}
       </span>
     </li>
+  );
+}
+
+/** Skip this one date (F29): it stops asking, and nothing is recorded. Undo brings it back. */
+function SkipButton({ item, today }: { item: DueItem; today: string }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <Button
+        className="btn-ghost"
+        title="Not this time: nothing is recorded"
+        onClick={() =>
+          void transact("user", skipOps(item, today), `regular:${item.regular.id}`).catch(
+            (failure: unknown) => setError(`Couldn't skip it: ${message(failure)}`),
+          )
+        }
+      >
+        Skip
+      </Button>
+      {error && (
+        <span role="alert" className="error">
+          {error}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -2272,12 +2350,23 @@ const emptyRegular = (kind: RegularDraft["kind"], account: string): RegularDraft
   areaId: "",
 });
 
-function RegularForm() {
+/** Adds a regular, or changes one you have (`editing`, F29). */
+function RegularForm({
+  editing = null,
+  onDone,
+}: {
+  editing?: RegularRow | null;
+  onDone?: () => void;
+}) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const categories = useLiveQuery<Category>(CATEGORIES_SQL);
   const jobs = useLiveQuery<{ id: string; name: string }>(JOBS_SQL);
-  const [draft, setDraft] = useState<RegularDraft>(emptyRegular("bill", ""));
-  const [amountText, setAmountText] = useState("");
+  const [draft, setDraft] = useState<RegularDraft>(() =>
+    editing ? regularDraftOf(editing) : emptyRegular("bill", ""),
+  );
+  const [amountText, setAmountText] = useState(() =>
+    editing ? formatNumber(editing.amount_minor) : "",
+  );
   const [note, setNote] = useState<string | null>(null);
   const set = (part: Partial<RegularDraft>) => setDraft((old) => ({ ...old, ...part }));
   const account =
@@ -2286,7 +2375,7 @@ function RegularForm() {
   const currency = currencyOf(accounts.rows.find((row) => row.id === account));
   return (
     <section className="card money-full" aria-labelledby="regular-add">
-      <h2 id="regular-add">Add pay or a bill</h2>
+      <h2 id="regular-add">{editing ? `Change ${editing.name}` : "Add pay or a bill"}</h2>
       <form
         className="money-form"
         onSubmit={(event) => {
@@ -2295,6 +2384,12 @@ function RegularForm() {
           const problem = checkRegular(full);
           if (problem) {
             setNote(problem);
+            return;
+          }
+          if (editing) {
+            void transact("user", regularOps(full, editing.id, true), `regular:${editing.id}`)
+              .then(() => onDone?.())
+              .catch((failure: unknown) => setNote(`Couldn't save it: ${message(failure)}`));
             return;
           }
           void transact("user", regularOps(full, ulid()), "regular")
@@ -2311,6 +2406,7 @@ function RegularForm() {
             <span>Kind</span>
             <select
               value={draft.kind}
+              disabled={editing !== null}
               onChange={(e) => setDraft(emptyRegular(e.target.value as RegularDraft["kind"], ""))}
             >
               <option value="bill">A bill I pay</option>
@@ -2393,7 +2489,12 @@ function RegularForm() {
           </label>
         </div>
         <div className="money-actions">
-          <Button type="submit">Add</Button>
+          <Button type="submit">{editing ? "Save" : "Add"}</Button>
+          {editing && (
+            <Button className="btn-ghost" onClick={() => onDone?.()}>
+              Cancel
+            </Button>
+          )}
           <span className="meta">
             When: <code>monthly 10</code>, <code>monthly last</code>, <code>every mon</code>,{" "}
             <code>every weekday</code>.
@@ -2454,6 +2555,8 @@ function SuggestedRegulars({ today, regulars }: { today: string; regulars: Regul
 function RegularsView({ today }: { today: string }) {
   const { items, regulars, loading } = useDue(today);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editing = regulars.find((row) => row.id === editingId) ?? null;
   if (loading) return null;
   const pay = items.filter((item) => item.regular.kind === "pay");
   const bills = items.filter((item) => item.regular.kind === "bill");
@@ -2504,7 +2607,11 @@ function RegularsView({ today }: { today: string }) {
         )}
       </section>
       <SuggestedRegulars today={today} regulars={regulars} />
-      <RegularForm />
+      {editing ? (
+        <RegularForm key={editing.id} editing={editing} onDone={() => setEditingId(null)} />
+      ) : (
+        <RegularForm key="new" />
+      )}
       {regulars.length > 0 && (
         <section className="card" aria-labelledby="regular-all">
           <h2 id="regular-all">All regulars</h2>
@@ -2513,18 +2620,37 @@ function RegularsView({ today }: { today: string }) {
               <li key={row.id} className="money-row">
                 <span>
                   {row.kind === "pay" ? (row.job ?? row.name) : row.name}
-                  <span className="meta"> · {regularText(row)}</span>
+                  <span className="meta">
+                    {" "}
+                    · {regularText(row)}
+                    {row.active !== 1 ? " · paused" : ""}
+                  </span>
                 </span>
-                <Button
-                  className="btn-ghost btn-danger"
-                  onClick={() =>
-                    void transact("user", removeRegularOps(row.id), `regular:${row.id}`).catch(
-                      (failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`),
-                    )
-                  }
-                >
-                  Remove
-                </Button>
+                <span className="money-row-line">
+                  <Button className="btn-ghost" onClick={() => setEditingId(row.id)}>
+                    Edit
+                  </Button>
+                  <Button
+                    className="btn-ghost"
+                    onClick={() =>
+                      void transact("user", pauseOps(row), `regular:${row.id}`).catch(
+                        (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
+                      )
+                    }
+                  >
+                    {row.active === 1 ? "Pause" : "Resume"}
+                  </Button>
+                  <Button
+                    className="btn-ghost btn-danger"
+                    onClick={() =>
+                      void transact("user", removeRegularOps(row.id), `regular:${row.id}`).catch(
+                        (failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </span>
               </li>
             ))}
           </ul>

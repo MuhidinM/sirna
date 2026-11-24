@@ -93,7 +93,18 @@ export function findings(input: {
         daysLate: late,
         percentReceived: Math.round((item.done / item.regular.amount_minor) * 100),
       },
-      actions: [{ label: "Received", ops: settleOps(item, today, nowMs, newId()) }],
+      actions: [
+        {
+          label: "Received",
+          ops: settleOps(
+            item,
+            today,
+            nowMs,
+            newId(),
+            accounts.find((account) => account.id === item.regular.account)?.opening_date,
+          ),
+        },
+      ],
     });
   }
 
@@ -164,17 +175,19 @@ export function findings(input: {
   for (const cap of caps) {
     const used = spent.get(cap.id)?.spent ?? 0;
     const status = capStatus(used, cap.cap_minor, summary.day, summary.days);
+    // Today counts, as in Safe to spend: the last day has 1 day to go, not 0 (F108).
+    const daysLeft = summary.days - summary.day + 1;
     if (status.over)
       out.push({
         key: `cap_over:${cap.id}`,
         kind: "cap_over",
         rank: 4,
-        text: `${cap.name} is over its cap: ${formatAmount(used)} of ${formatAmount(cap.cap_minor)}, with ${summary.days - summary.day} days to go.`,
+        text: `${cap.name} is over its cap: ${formatAmount(used)} of ${formatAmount(cap.cap_minor)}, with ${daysLeft} ${daysLeft === 1 ? "day" : "days"} to go.`,
         facts: {
           finding: "over its cap",
           category: safeName(cap.name),
           percentOfCap: Math.round(status.share * 100),
-          daysLeft: summary.days - summary.day,
+          daysLeft,
         },
         actions: [
           {

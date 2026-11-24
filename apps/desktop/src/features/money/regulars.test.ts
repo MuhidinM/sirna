@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
+import { type AccountRow, ACCOUNTS_SQL, balanceOf } from "./accounts";
 import {
   checkRegular,
+  regularDraftOf,
   type DueItem,
   dueItems,
   dueLines,
+  dueWindow,
   occurrences,
   parseRule,
+  pauseOps,
+  readRule,
   type RegularRow,
   regularOps,
   REGULARS_SQL,
@@ -15,6 +20,7 @@ import {
   type RegularTxn,
   ruleText,
   settleOps,
+  skipOps,
 } from "./regulars";
 
 describe("repeat rules (T-059)", () => {
@@ -160,6 +166,164 @@ describe("what is due (T-059, T-060)", () => {
       "2026-11-14",
     );
     expect(full[0]?.state).toBe("paid");
+  });
+
+  it("doesn't let an entry in another currency settle a regular (F7)", () => {
+    const figma = regular({
+      id: "figma",
+      name: "Figma",
+      amount_minor: 1_500,
+      rule_json: JSON.stringify({ every: "month", day: 26 }),
+      category_id: "cat_shopping",
+      account: "wise",
+      currency: "USD",
+    });
+    const birr = txn({ amount_minor: -1_500, description: "figma", local_date: "2026-11-24" });
+    const open = dueItems([figma], [birr], "2026-11-01", "2026-11-30", "2026-11-24");
+    expect(states(open)).toEqual([["figma", "2026-11-26", "upcoming", 1_500]]);
+    const dollars = dueItems(
+      [figma],
+      [{ ...birr, currency: "USD" }],
+      "2026-11-01",
+      "2026-11-30",
+      "2026-11-24",
+    );
+    expect(states(dollars)).toEqual([["figma", "2026-11-26", "paid", 0]]);
+    // Pay too: birr from the job doesn't settle dollar pay.
+    const usdPay = { ...jobA, currency: "USD" };
+    const got = [txn({ area_id: "joba", amount_minor: 1_800_000, local_date: "2026-11-10" })];
+    expect(dueItems([usdPay], got, "2026-11-01", "2026-11-30", "2026-11-10")[0]?.state).toBe("due");
+  });
+
+  it("reads each entry's currency from its account (F7)", () => {
+    const db = openTestDb();
+    db.exec(`INSERT INTO money_txns
+      (id, account, occurred_at, local_date, amount_minor, description, origin, created_at, updated_at)
+      VALUES ('t1', 'wise', 0, '2026-11-24', -1500, 'figma', 'capture', 0, 0),
+             ('t2', 'cash', 0, '2026-11-24', -1500, 'figma', 'capture', 0, 0)`);
+    const rows = db
+      .prepare(REGULAR_TXNS_SQL)
+      .all("2026-11-01", "2026-11-30") as unknown as RegularTxn[];
+    expect(rows.map((row) => row.currency)).toEqual(["USD", "ETB"]);
+  });
+
+  it("keeps an unpaid date the same number of days, whatever its day of month (F84)", () => {
+    const iddir = regular({
+      id: "iddir",
+      name: "Iddir",
+      amount_minor: 20_000,
+      rule_json: JSON.stringify({ every: "month", day: 24 }),
+      category_id: "cat_family",
+    });
+    const at = (today: string) => {
+      const window = dueWindow(today);
+      return states(dueItems([iddir], [], window.from, window.to, today, window.shownFrom));
+    };
+    // 31 days on it is still shown; the day after, it goes.
+    expect(at("2026-11-24")[0]).toEqual(["iddir", "2026-10-24", "late", 20_000]);
+    expect(at("2026-11-25")[0]?.[1]).toBe("2026-11-24");
+    // An 18th bill lasts as long, across the month's end too (it used to go after 13 days).
+    const rent = regular({ rule_json: JSON.stringify({ every: "month", day: 18 }) });
+    const rentAt = (today: string) => {
+      const window = dueWindow(today);
+      return states(dueItems([rent], [], window.from, window.to, today, window.shownFrom));
+    };
+    expect(rentAt("2026-12-01")[0]).toEqual(["rent", "2026-11-18", "late", 600_000]);
+    expect(rentAt("2026-12-19")[0]).toEqual(["rent", "2026-11-18", "late", 600_000]);
+    expect(rentAt("2026-12-20")[0]?.[1]).toBe("2026-12-18");
+    expect(rentAt("2026-11-10")[0]).toEqual(["rent", "2026-10-18", "late", 600_000]);
+  });
+
+  it("skips one date, keeps the skip when changed, and pauses (F29)", () => {
+    const iddir = regular({
+      id: "iddir",
+      name: "Iddir",
+      amount_minor: 20_000,
+      rule_json: JSON.stringify({ every: "month", day: 24 }),
+    });
+    const [late] = dueItems([iddir], [], "2026-10-01", "2026-11-30", "2026-11-24", "2026-11-01");
+    if (!late) throw new Error("no late item");
+    expect(late.date).toBe("2026-10-24");
+    const [op] = skipOps(late, "2026-11-24");
+    expect(op).toEqual({
+      op: "update",
+      table: "money_regulars",
+      id: "iddir",
+      values: { rule_json: '{"every":"month","day":24,"skip":["2026-10-24"]}' },
+    });
+    if (!op || op.op !== "update") throw new Error("no update");
+    const skipped = { ...iddir, rule_json: String(op.values.rule_json) };
+    expect(readRule(skipped.rule_json)).toEqual({ every: "month", day: 24 });
+    expect(
+      states(dueItems([skipped], [], "2026-10-01", "2026-11-30", "2026-11-24", "2026-11-01")),
+    ).toEqual([["iddir", "2026-11-24", "due", 20_000]]);
+    // Changing it keeps what was skipped.
+    const draft = { ...regularDraftOf(skipped), amount: 25_000 };
+    expect(draft.ruleText).toBe("monthly on the 24th");
+    expect(regularOps(draft, "iddir", true)[0]).toMatchObject({
+      op: "update",
+      values: {
+        amount_minor: 25_000,
+        rule_json: '{"every":"month","day":24,"skip":["2026-10-24"]}',
+      },
+    });
+    expect(pauseOps(iddir)[0]).toMatchObject({ values: { active: 0 } });
+    expect(pauseOps({ ...iddir, active: 0 })[0]).toMatchObject({ values: { active: 1 } });
+  });
+
+  it("dates a late payment from an earlier month on its own date (F29)", () => {
+    const iddir = regular({
+      id: "iddir",
+      name: "Iddir",
+      amount_minor: 20_000,
+      rule_json: JSON.stringify({ every: "month", day: 24 }),
+    });
+    const [october, november] = dueItems(
+      [iddir],
+      [],
+      "2026-10-01",
+      "2026-11-30",
+      "2026-11-24",
+      "2026-11-01",
+    );
+    if (!october || !november) throw new Error("no items");
+    expect(settleOps(october, "2026-11-24", 5, "e")[0]).toMatchObject({
+      values: { local_date: "2026-10-24", due_date: "2026-10-24" },
+    });
+    expect(settleOps(november, "2026-11-25", 5, "e")[0]).toMatchObject({
+      values: { local_date: "2026-11-25", due_date: "2026-11-24" },
+    });
+  });
+
+  it("never books a late payment before the account's opening date, so the balance drops", () => {
+    const iddir = regular({
+      id: "iddir",
+      name: "Iddir",
+      amount_minor: 20_000,
+      rule_json: JSON.stringify({ every: "month", day: 24 }),
+    });
+    const [october] = dueItems([iddir], [], "2026-10-01", "2026-11-30", "2026-11-24", "2026-11-01");
+    if (!october) throw new Error("no item");
+    // CBO's balance was typed on 20 Nov; Paid on 24 Nov for 24 Oct.
+    const db = openTestDb();
+    db.prepare(
+      "UPDATE money_accounts SET opening_minor = 500000, opening_date = '2026-11-20' WHERE id = 'cbo'",
+    ).run();
+    const [op] = settleOps(october, "2026-11-24", 5, "e", "2026-11-20");
+    if (op?.op !== "insert") throw new Error("insert only");
+    expect(op.values).toMatchObject({ local_date: "2026-11-20", due_date: "2026-10-24" });
+    const cols = Object.keys(op.values);
+    db.prepare(
+      `INSERT INTO money_txns (id, ${cols.join(", ")}, created_at, updated_at) VALUES (?, ${cols.map(() => "?").join(", ")}, 0, 0)`,
+    ).run(op.id, ...(Object.values(op.values) as (string | number | null)[]));
+    const cbo = (db.prepare(ACCOUNTS_SQL).all() as unknown as AccountRow[]).find(
+      (a) => a.id === "cbo",
+    );
+    expect(cbo && balanceOf(cbo)).toBe(480_000);
+    // Opened before the due date: still booked on its own date.
+    expect(settleOps(october, "2026-11-24", 5, "e", "2026-10-01")[0]).toMatchObject({
+      values: { local_date: "2026-10-24" },
+    });
   });
 
   it("records Paid and Received as entries marked with the regular", () => {

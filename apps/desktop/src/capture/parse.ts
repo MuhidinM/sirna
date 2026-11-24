@@ -4,7 +4,7 @@
  * The live chip and the save use this same function.
  */
 import { logicalDate } from "../kernel/dates";
-import { parseAmount, type Santim } from "../kernel/money";
+import { formatAmount, parseAmount, type Santim } from "../kernel/money";
 import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
@@ -184,7 +184,13 @@ export interface ParseOptions {
   /** Your areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3). */
   areas?: { id: string; name: string }[];
   /** People with an open loan, so "abel paid back 400" is read only when Abel owes you. */
-  loanPeople?: { name: string; owedToMe: number; iOwe: number }[];
+  loanPeople?: {
+    name: string;
+    owedToMe: number;
+    iOwe: number;
+    /** Open per currency: a repayment lands in its loan's currency, up to what is owed. */
+    open?: { currency: string; owedToMe: number; iOwe: number }[];
+  }[];
   /** Saved rates (`money.rates`), for transfers and savings across currencies. */
   rates?: Rates;
   /**
@@ -304,6 +310,39 @@ function isPerson(name: string, options: ParseOptions): boolean {
   return true;
 }
 
+type LoanPerson = NonNullable<ParseOptions["loanPeople"]>[number];
+
+/** The currencies a person's loan is open in, the way being paid back. */
+function openCodes(person: LoanPerson, kind: "paid_me" | "i_paid"): string[] {
+  return (person.open ?? [])
+    .filter((line) => (kind === "paid_me" ? line.owedToMe : line.iOwe) > 0)
+    .map((line) => line.currency)
+    .sort();
+}
+
+/**
+ * A repayment that doesn't fit an open loan (F24, F27): in a currency with
+ * nothing open that way, or more than is owed. Balances would otherwise
+ * flip it silently into a new debt the other way.
+ */
+const capitalise = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+
+function repaymentProblem(parsed: LoanItem, code: string, options: ParseOptions): string | null {
+  if (parsed.loanKind !== "paid_me" && parsed.loanKind !== "i_paid") return null;
+  const person = (options.loanPeople ?? []).find((p) => squash(p.name) === squash(parsed.person));
+  if (!person?.open) return null;
+  const line = person.open.find((open) => open.currency === code);
+  const owed = line ? (parsed.loanKind === "paid_me" ? line.owedToMe : line.iOwe) : 0;
+  const name = capitalise(person.name);
+  if (owed <= 0) return `No ${code} loan open with ${name}`;
+  if (parsed.amount <= owed) return null;
+  const said =
+    parsed.loanKind === "paid_me"
+      ? `${name} owes you ${formatAmount(owed, code)}`
+      : `You owe ${name} ${formatAmount(owed, code)}`;
+  return `${said}, not ${formatAmount(parsed.amount, code)}: write the ${formatAmount(owed, code)} paid back, and the rest as a new loan`;
+}
+
 function readLoan(text: string, options: ParseOptions): Parsed | undefined {
   const { rest, account } = readAccount(text, options.accounts ?? []);
   for (const [pattern, loanKind, order] of LOAN_FORMS) {
@@ -315,16 +354,27 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
     if (amount === null || amount <= 0 || !person || !isPerson(person, options)) continue;
     // Being paid back, or paying back, needs a loan that is open that way:
     // "job a paid me 18k" is pay, "returned shoes 500" is a refund.
+    let home: AccountOption | undefined;
     if (loanKind === "paid_me" || loanKind === "i_paid") {
       const open = (options.loanPeople ?? []).find((p) => squash(p.name) === squash(person));
       const owed = open ? (loanKind === "paid_me" ? open.owedToMe : open.iOwe) : 0;
       // Someone who owes you nothing paying you back is still money in, never spending.
       if (owed <= 0 && loanKind === "paid_me")
         return repaidIncome(rest.replace(amountText ?? "", " "), amount, account, options);
-      if (owed <= 0) continue;
+      if (!open || owed <= 0) continue;
+      // With no @account (or currency) typed, pay back in the loan's own
+      // currency (F27): "kebede paid back 10" on a $30 loan is $10 into Wise.
+      const codes = openCodes(open, loanKind);
+      if (!account && codes.length > 1)
+        return looseEnd(
+          text,
+          `${capitalise(open.name)} has loans open in ${codes.join(" and ")}: add the currency or an @account`,
+        );
+      const code = codes[0];
+      if (!account && code && code !== "ETB") home = homeIn(options.accounts ?? [], code);
     }
     const fallback = (options.accounts ?? []).find((a) => a.kind === "cash");
-    const chosen = account ?? fallback;
+    const chosen = account ?? home ?? fallback;
     return {
       kind: "loan",
       loanKind,
@@ -881,6 +931,8 @@ function parsePiece(raw: string, options: ParseOptions): Parsed {
         named ? wrongAccount(account, currency, word, accounts) : noAccountIn(currency),
       );
     const code = currencyOf(account);
+    const problem = parsed.kind === "loan" ? repaymentProblem(parsed, code, options) : null;
+    if (problem) return looseEnd(text, problem);
     if (code === "ETB") return parsed;
     // No currency typed: the number is in the account's, which may not be what was meant.
     if (!currency && parsed.kind === "expense") return { ...parsed, currency: code, bare: true };
