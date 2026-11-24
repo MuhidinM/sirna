@@ -228,6 +228,7 @@ type KeptRow = {
   title: string;
   kind: string;
   area_id?: string | null;
+  light_day?: number;
 };
 
 function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBlock {
@@ -435,8 +436,8 @@ export function ensureDayPlan(
 export const REST_DAY_MIN = 6 * 60;
 
 /** Today's plan blocks Sirna made and you didn't touch. */
-export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id FROM day_blocks
-  WHERE logical_date = ? AND deleted_at IS NULL
+export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id, light_day
+  FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL
   AND source IN ('template', 'generator') AND user_edited_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)`;
 
@@ -488,6 +489,8 @@ export async function replanDay(
   date: string,
   newId: () => string,
   nowMs?: number,
+  /** Write the default top 3 again (unless you chose one): a light day changed. */
+  freshTop = false,
 ): Promise<void> {
   const [exists] = await query<{ n: number }>(PLAN_EXISTS_SQL, [date]);
   if ((exists?.n ?? 0) === 0) return;
@@ -495,8 +498,20 @@ export async function replanDay(
   const plan = generateDay(input);
   await transact([
     ...stale.map(({ id }): Op => ({ op: "delete", table: "day_blocks", id })),
-    ...planOps(plan, date, newId, true),
+    ...planOps(plan, date, newId, !freshTop || input.chosenTop.length > 0),
+    ...(freshTop && input.chosenTop.length === 0 ? await extraTopOps(query, date, plan) : []),
   ]);
+}
+
+/** The day's default top-3 rows past the plan's top (a light day keeps one). */
+async function extraTopOps(query: Query, date: string, plan: DayPlan): Promise<Op[]> {
+  const rows = await query<{ id: string; position: number }>(
+    "SELECT id, position FROM task_daily_top WHERE logical_date = ?",
+    [date],
+  );
+  return rows
+    .filter((row) => row.position > plan.top.length)
+    .map((row): Op => ({ op: "delete", table: "task_daily_top", id: row.id }));
 }
 
 /** Days from today on that have a plan. */
@@ -590,6 +605,12 @@ export async function healDay(
     [date],
   );
   const plan = generateDay(input);
+  // Energy saved after the day was planned (the night review) made it light,
+  // or no longer light: the untouched blocks are planned again (F53).
+  if (stale.some((block) => (block.light_day ?? 0) !== (plan.light ? 1 : 0))) {
+    await replanDay(query, transact, date, newId, nowMs, true);
+    return true;
+  }
   const missing = missingTaskBlocks(plan, input, existing);
   if (missing.length === 0) {
     if (orphans.ops.length === 0) return false;

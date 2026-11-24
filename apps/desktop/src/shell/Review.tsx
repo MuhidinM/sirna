@@ -156,8 +156,9 @@ export function Review({ onClose }: { onClose: () => void }) {
                 <Button
                   key={value}
                   className={`rv-energy-pick tone-${tone}`}
-                  onClick={() => {
-                    void save(today, { energy: value });
+                  onClick={async () => {
+                    // Saved first: the next step plans tomorrow with tonight's energy.
+                    await save(today, { energy: value });
                     setEnergy(value);
                     setStep(4);
                   }}

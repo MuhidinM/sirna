@@ -26,7 +26,10 @@ const NOW = Date.parse("2026-11-11T12:00:00+03:00"); // Wednesday
 function apply(db: DatabaseSync, ops: Op[]) {
   for (const op of ops) {
     if (op.op === "delete") {
-      db.prepare(`UPDATE ${op.table} SET deleted_at = 1 WHERE id = ?`).run(op.id);
+      // The top 3 has no deleted_at: Rust removes its rows.
+      if (op.table === "task_daily_top")
+        db.prepare("DELETE FROM task_daily_top WHERE id = ?").run(op.id);
+      else db.prepare(`UPDATE ${op.table} SET deleted_at = 1 WHERE id = ?`).run(op.id);
       continue;
     }
     const idColumn = op.table === "core_settings" ? "key" : "id";
@@ -217,6 +220,45 @@ describe("ensureDayPlan", () => {
       .all()
       .map((row) => row.kind);
     expect(kinds).not.toContain("area");
+  });
+
+  it("makes an already planned day light when the second drained night is saved (F53)", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES
+       ('a', 'A', 'todo', 'coding', '2026-11-12', 0, 0), ('b', 'B', 'todo', 'jobhunt', '2026-11-12', 1, 1),
+       ('c', 'C', 'todo', 'admin', '2026-11-13', 2, 2)`,
+    );
+    h.db.exec(
+      "INSERT INTO day_reviews (logical_date, status, energy, created_at, updated_at) VALUES ('2026-11-10', 'done', 1, 0, 0)",
+    );
+    // The review opened tomorrow before tonight's energy was saved.
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-12");
+    const top = () =>
+      h.db.prepare("SELECT task_id FROM task_daily_top WHERE logical_date = '2026-11-12'").all();
+    expect(top().length).toBeGreaterThan(1);
+    h.db.exec(
+      "INSERT INTO day_reviews (logical_date, status, energy, created_at, updated_at) VALUES ('2026-11-11', 'done', 1, 0, 0)",
+    );
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-12")).toBe(true);
+    const blocks = h.db
+      .prepare(
+        "SELECT kind, light_day FROM day_blocks WHERE logical_date = '2026-11-12' AND deleted_at IS NULL",
+      )
+      .all() as { kind: string; light_day: number }[];
+    expect(blocks.map((b) => b.kind)).not.toContain("area");
+    expect(blocks.every((b) => b.light_day === 1)).toBe(true);
+    expect(top()).toHaveLength(1);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-12")).toBe(false);
   });
 
   it("counts this week's done minutes per area", async () => {
