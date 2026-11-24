@@ -311,9 +311,6 @@ button.month-day:hover {
   left: 0;
   right: 0;
   border-top: 1px dashed var(--bar);
-  transform: translateY(calc(-26px * 0));
-  bottom: 0;
-  margin-bottom: 26px;
 }
 
 .bars-col {
@@ -390,6 +387,11 @@ button.month-day:hover {
   font-size: var(--text-xs);
   color: var(--ink);
   pointer-events: none;
+}
+
+/* The last bars' tips open to the left, so they stay on the card. */
+.bars-col:nth-last-child(-n + 2) .bars-tip {
+  transform: translateX(-80%);
 }
 
 .bars-tip p {

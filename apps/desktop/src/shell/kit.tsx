@@ -240,7 +240,9 @@ export function BarChart({
   const step = niceStep(max / 4);
   const top = step * 4;
   const ticks = [4, 3, 2, 1].map((n) => n * step);
-  const shown = hover ?? bars.findIndex((bar) => bar.highlight);
+  // Hover only: an always-open tip covered today's bar and ran off the card
+  // late in the week. Today's bar is marked by its stripes and bold label.
+  const shown = hover;
   return (
     <div className="bars" role="img" aria-label={ariaLabel}>
       <div className="bars-axis" aria-hidden="true">
@@ -253,7 +255,12 @@ export function BarChart({
       </div>
       <div className="bars-plot">
         {ticks.map((tick) => (
-          <span key={tick} className="bars-line" style={{ bottom: `${(tick / top) * 100}%` }} />
+          // Measured above the 26px label row, on the same scale as the bars and the axis.
+          <span
+            key={tick}
+            className="bars-line"
+            style={{ bottom: `calc(26px + (100% - 26px) * ${tick / top})` }}
+          />
         ))}
         {bars.map((bar, i) => (
           <div
