@@ -10,6 +10,7 @@ import { ulid } from "../kernel/ulid";
 import {
   addTaskOp,
   checkDraft,
+  closesProject,
   type Column,
   COLUMNS,
   columnOf,
@@ -161,6 +162,7 @@ function ProjectForm({
   const titleId = useId();
   const [draft, setDraft] = useState<ProjectDraft>(project ? draftOf(project) : EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   // A new project's form opens under the board: bring it into view.
   useEffect(() => {
@@ -168,12 +170,41 @@ function ProjectForm({
   }, []);
   const set = (change: Partial<ProjectDraft>) => {
     setError(null);
+    setAsking(false);
     setDraft({ ...draft, ...change });
   };
   const timing =
     plan && !checkDraft(draft)
       ? timingOf(draft, project?.id ?? null, plan.week, plan.projects, plan.today)
       : null;
+  const save = (dropCards: boolean) => {
+    setAsking(false);
+    const selfId = project?.id ?? null;
+    const saving = plan
+      ? savePlan(
+          draft,
+          project ? { draft: draftOf(project), start_date: project.start_date } : null,
+          selfId,
+          timingOf(draft, selfId, plan.week, plan.projects, plan.today),
+          plan.projects,
+          plan.today,
+        )
+      : { values: {}, held: false };
+    const { ops, projectId } = projectOps(
+      draft,
+      project,
+      () => ulid(),
+      openTasks,
+      saving.values,
+      dropCards,
+    );
+    const note = saving.held
+      ? "Two projects are already active, so this one waits in Next up."
+      : undefined;
+    transact("user", ops, `project:${projectId}`)
+      .then(() => onSaved(projectId, note))
+      .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+  };
   return (
     <form
       ref={formRef}
@@ -186,30 +217,12 @@ function ProjectForm({
           setError(problem);
           return;
         }
-        const selfId = project?.id ?? null;
-        const saving = plan
-          ? savePlan(
-              draft,
-              project ? { draft: draftOf(project), start_date: project.start_date } : null,
-              selfId,
-              timingOf(draft, selfId, plan.week, plan.projects, plan.today),
-              plan.projects,
-              plan.today,
-            )
-          : { values: {}, held: false };
-        const { ops, projectId } = projectOps(
-          draft,
-          project,
-          () => ulid(),
-          openTasks,
-          saving.values,
-        );
-        const note = saving.held
-          ? "Two projects are already active, so this one waits in Next up."
-          : undefined;
-        transact("user", ops, `project:${projectId}`)
-          .then(() => onSaved(projectId, note))
-          .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+        // Finishing or dropping with cards still open: ask what happens to them.
+        if (closesProject(draft, project) && openTasks.length > 0) {
+          setAsking(true);
+          return;
+        }
+        save(false);
       }}
     >
       <h2 id={titleId}>{project ? "Edit project" : "New project"}</h2>
@@ -290,6 +303,16 @@ function ProjectForm({
       {error && (
         <p role="alert" className="error">
           {error}
+        </p>
+      )}
+      {asking && (
+        <p role="status" className="row meta notice">
+          {openTasks.length} open card{openTasks.length === 1 ? "" : "s"}. Drop them, or keep them
+          as tasks to plan?
+          <Button primary onClick={() => save(true)}>
+            Drop them
+          </Button>
+          <Button onClick={() => save(false)}>Keep as tasks</Button>
         </p>
       )}
       <div className="proj-actions">

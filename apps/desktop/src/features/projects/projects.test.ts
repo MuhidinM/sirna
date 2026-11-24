@@ -172,7 +172,7 @@ describe("projects", () => {
     expect(draftOf(project).weeklyHours).toBe("2.5");
   });
 
-  it("adds a new card only when the next step changes", () => {
+  it("renames the open next step's card when the step is reworded (F51)", () => {
     const db = openTestDb();
     const newId = ids();
     apply(db, projectOps({ ...EMPTY_DRAFT, title: "P", nextStep: "One" }, null, newId).ops);
@@ -181,15 +181,59 @@ describe("projects", () => {
     const same = projectOps({ ...draftOf(project), goal: "Ship it" }, project, newId).ops;
     expect(same.filter((op) => op.table === "task_items")).toEqual([]);
 
+    const stepId = project.next_step_task_id;
     apply(db, projectOps({ ...draftOf(project), nextStep: "Two" }, project, newId).ops);
     project = first(projects(db));
     expect(project.next_step_title).toBe("Two");
-    expect(project.open_count).toBe(2);
+    expect(project.next_step_task_id).toBe(stepId);
+    expect(project.open_count).toBe(1);
 
     apply(db, projectOps({ ...draftOf(project), nextStep: "" }, project, newId).ops);
     project = first(projects(db));
     expect(project.next_step_task_id).toBeNull();
-    expect(project.open_count).toBe(2);
+    expect(project.open_count).toBe(1);
+  });
+
+  it("adds a new card once the old next step is done (F51)", () => {
+    const db = openTestDb();
+    const newId = ids();
+    apply(db, projectOps({ ...EMPTY_DRAFT, title: "P", nextStep: "One" }, null, newId).ops);
+    let project = first(projects(db));
+    apply(db, moveOps(first(tasks(db, project.id)), "done", NOW));
+    project = first(projects(db));
+    apply(db, projectOps({ ...draftOf(project), nextStep: "Two" }, project, newId).ops);
+    project = first(projects(db));
+    expect(project.next_step_title).toBe("Two");
+    expect(project.open_count).toBe(1);
+    expect(project.done_count).toBe(1);
+  });
+
+  it("drops open cards when a project is finished, only if asked (F90)", () => {
+    const db = openTestDb();
+    const newId = ids();
+    apply(db, projectOps({ ...EMPTY_DRAFT, title: "P", nextStep: "One" }, null, newId).ops);
+    let project = first(projects(db));
+    const open = tasks(db, project.id).filter((task) => task.status !== "done");
+    const keep = projectOps({ ...draftOf(project), status: "done" }, project, newId, open).ops;
+    expect(keep.filter((op) => op.table === "task_items")).toEqual([]);
+
+    const close = projectOps(
+      { ...draftOf(project), status: "dropped" },
+      project,
+      newId,
+      open,
+      {},
+      true,
+    );
+    apply(db, close.ops);
+    project = first(projects(db));
+    expect(project.status).toBe("dropped");
+    expect(project.open_count).toBe(0);
+    expect(tasks(db, project.id)).toEqual([]);
+
+    // Already closed: an edit leaves the cards alone.
+    const again = projectOps({ ...draftOf(project), goal: "x" }, project, newId, open, {}, true);
+    expect(again.ops.filter((op) => op.table === "task_items")).toEqual([]);
   });
 
   it("asks for a new next step once the old one is done", () => {
