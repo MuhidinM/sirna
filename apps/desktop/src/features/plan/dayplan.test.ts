@@ -111,6 +111,29 @@ describe("ensureDayPlan", () => {
     expect(top).toEqual([{ task_id: "cv", chosen_by: "default" }]);
   });
 
+  it("plans no away day, and plans again once you are back (F48, plan §3.11)", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    // `away till mon` on Wednesday 11 Nov: back on Monday 16.
+    h.db
+      .prepare(
+        "INSERT INTO core_settings (key, value_json, updated_at) VALUES ('away.until', '\"2026-11-16\"', 0)",
+      )
+      .run();
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-13")).toBe(false);
+    expect(h.db.prepare("SELECT count(*) AS n FROM day_blocks").get()).toEqual({ n: 0 });
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-16")).toBe(true);
+  });
+
   it("plans once even when asked twice at the same time", async () => {
     const h = harness();
     apply(
