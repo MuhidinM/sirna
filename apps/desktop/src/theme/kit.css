@@ -456,7 +456,14 @@ button.month-day:hover {
   box-shadow: 0 8px 22px rgb(0 0 0 / 10%);
 }
 
+/* A past or finished block fades its fill, not its text: the text keeps the
+   canvas ink so it stays readable (4.5:1) in both themes. */
 .event.faded {
+  --tone-ink: var(--canvas-ink);
+  background: color-mix(in srgb, var(--tone) 35%, var(--canvas));
+}
+
+.event.faded .event-art {
   opacity: 0.5;
 }
 
@@ -478,7 +485,7 @@ button.month-day:hover {
 .event-label {
   font-size: var(--text-xs);
   font-weight: 500;
-  opacity: 0.75;
+  opacity: 0.85;
 }
 
 .event-title {
@@ -500,9 +507,10 @@ button.month-day:hover {
     linear-gradient(160deg, var(--art-2), var(--art-1));
 }
 
+/* Dark ink on orange and pink: white on them is under 3.5:1. */
 .tone-orange {
   --tone: var(--orange);
-  --tone-ink: var(--white);
+  --tone-ink: var(--on-loud);
   --art-1: #ff9a3d;
   --art-2: #ffd0a1;
   --art-3: #ff6a00;
@@ -510,7 +518,7 @@ button.month-day:hover {
 
 .tone-pink {
   --tone: var(--pink);
-  --tone-ink: var(--white);
+  --tone-ink: var(--on-loud);
   --art-1: #ffb3d1;
   --art-2: #ff7fb0;
   --art-3: #fde1ee;
@@ -678,9 +686,11 @@ button.month-day:hover {
   border-top: 1.5px dashed var(--canvas-line);
 }
 
+/* Above the rest band, under the cards (z-index 1, later in the page), so it
+   never runs through a card's text. */
 .day-line.now {
   border-top: 1.5px dashed var(--canvas-ink);
-  z-index: 3;
+  z-index: 1;
 }
 
 .day-lanes .event {
@@ -764,7 +774,7 @@ button.month-day:hover {
 }
 
 .event-due {
-  opacity: 0.75;
+  opacity: 0.85;
   font-weight: 500;
 }
 
@@ -786,8 +796,21 @@ button.month-day:hover {
 }
 
 .day-lanes .event.short .event-more {
+  align-self: center;
   margin: 0 0 0 auto;
   flex: none;
+}
+
+/* A one-line card has no room for the bar under its title: it runs along the
+   card's bottom edge instead, so progress always shows. */
+.day-lanes .event.short .event-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  margin: 0;
+  border-radius: 0;
 }
 
 .day-lanes .event.expanded {

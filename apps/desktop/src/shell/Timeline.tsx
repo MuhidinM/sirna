@@ -51,6 +51,7 @@ import {
 } from "../features/plan/now";
 import { type FocusStatus, startFocus } from "./Focus";
 import { IconPlus } from "./icons";
+import { cardLabel, laneBox, NOW_LABEL_GAP_PX, taskLine } from "./board";
 import { EventCard, NowCard, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -451,11 +452,14 @@ export function Timeline({
         onClick={addAt}
       >
         <div className="day-hours" aria-hidden="true">
-          {hours.map((t) => (
-            <span key={t} className="day-hour" style={{ top: y(t) }}>
-              {dot(t)}
-            </span>
-          ))}
+          {hours.map((t) =>
+            // An hour label right by the now label would print under it.
+            showNow && Math.abs(y(t) - y(nowMs)) < NOW_LABEL_GAP_PX ? null : (
+              <span key={t} className="day-hour" style={{ top: y(t) }}>
+                {dot(t)}
+              </span>
+            ),
+          )}
           {showNow && (
             <span className="day-hour now" style={{ top: y(nowMs) }}>
               {dot(nowMs)}
@@ -517,21 +521,16 @@ export function Timeline({
               height: expanded ? "auto" : height,
               minHeight: expanded ? height : undefined,
               zIndex: expanded || dragging ? 6 : undefined,
-              left: `calc(${(lane.lane / lane.of) * 100}% + ${lane.lane ? 4 : 0}px)`,
-              width: `calc(${100 / lane.of}% - ${lane.of > 1 ? 4 : 0}px)`,
+              ...laneBox(lane),
             };
             const color = block.color ?? "admin";
-            const tail = `${block.kind === "fixed" ? " · fixed" : ""}${skipped ? " · skipped" : ""}${progress.done && !skipped ? " · done" : ""}${short && focusText && !progress.done ? ` · ${progress.focusedMin}/${progress.lengthMin} min` : ""}`;
+            const taskName = taskLine(block);
             const source = original.get(block.id) ?? block;
             return (
               <div role="listitem" key={block.id}>
                 <EventCard
                   tone={toneOf(color)}
-                  label={
-                    short
-                      ? `${range(block)}${block.task_title && block.kind === "area" && block.task_title !== block.title ? ` · ${block.task_title}` : ""}${tail}`
-                      : `${range(block)}${tail}`
-                  }
+                  label={cardLabel(block, range(block), short)}
                   title={block.title}
                   art={!short && block.kind === "fixed" && minutes >= 90}
                   faded={(day === today && block.end_at <= nowMs) || progress.done || skipped}
@@ -560,12 +559,7 @@ export function Timeline({
                       }
                     : {})}
                 >
-                  {!short &&
-                    block.task_title &&
-                    block.kind === "area" &&
-                    block.task_title !== block.title && (
-                      <span className="event-label">{block.task_title}</span>
-                    )}
+                  {!short && taskName && <span className="event-label">{taskName}</span>}
                   {shownTasks.length > 0 && (
                     <ul className="event-check" aria-label={`${block.title} tasks`}>
                       {shownTasks.map((task) => (
@@ -576,22 +570,25 @@ export function Timeline({
                               checked={false}
                               onChange={() => onDone?.(task)}
                             />
-                            {task.due_at !== null && task.due_at !== undefined && (
-                              <span className="event-at">{dot(task.due_at)} </span>
-                            )}
-                            {task.title}
-                            {task.due_date && !(task.due_at && task.due_date === day) && (
-                              <span className="event-due">
-                                {" "}
-                                · due {showDate(task.due_date, today)}
-                              </span>
-                            )}
+                            {/* One span, so the time and due date wrap with the title, not as columns. */}
+                            <span>
+                              {task.due_at !== null && task.due_at !== undefined && (
+                                <span className="event-at">{dot(task.due_at)} </span>
+                              )}
+                              {task.title}
+                              {task.due_date && !(task.due_at && task.due_date === day) && (
+                                <span className="event-due">
+                                  {" "}
+                                  · due {showDate(task.due_date, today)}
+                                </span>
+                              )}
+                            </span>
                           </label>
                         </li>
                       ))}
                     </ul>
                   )}
-                  {!short && focusText && (
+                  {focusText && (
                     <div
                       className="event-progress"
                       role="progressbar"
