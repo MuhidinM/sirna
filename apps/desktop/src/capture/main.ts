@@ -12,7 +12,7 @@ import { readings } from "./alternatives";
 import { CAPTURE_MADE_SQL, fixBlocked, fixReading, madeKind, type MadeRow } from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
-import { loadSavingsContext, matchGoal, type SavingsContext } from "../features/savings/savings";
+import { goalFinder, loadSavingsContext, type SavingsContext } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
 import { affordState, echo as echoLine, ideaInput, type SavingGoal, toOps } from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
@@ -274,33 +274,41 @@ form.addEventListener("submit", (event) => {
     savesSomething(parsed) || (parsed.kind === "money" && parsed.items.some(savesSomething));
   // What the goals and savings accounts hold, so a take-out keeps the goal
   // card's limits (F8) and a saving knows what an account holds unclaimed.
-  const empty: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null };
+  const empty: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null, unset: [] };
   const goalRows: Promise<SavingsContext> = hasSaving
     ? loadSavingsContext(query as Query, moneyContext.rates ?? {}).catch(() => empty)
     : Promise.resolve(empty);
-  const goalOf = (context: SavingsContext) => (words: string | undefined, minor?: number) => {
-    const id =
-      words === undefined && minor !== undefined
-        ? context.ripe(minor)
-        : matchGoal(context.goals, words);
-    return context.goals.find((row) => row.id === id) ?? null;
-  };
   const goalFor: Promise<SavingGoal | null | undefined> =
     parsed.kind === "saving"
-      ? goalRows.then((context) => goalOf(context)(parsed.goal))
+      ? goalRows.then((context) => goalFinder(context)(parsed.goal, parsed.amount))
       : Promise.resolve(undefined);
   // A fix undoes the old capture and saves the new one in one transaction.
   const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, context]) => {
     idea = placement;
     savingGoal = goal;
-    const ops = toOps(parsed, {
-      nowMs,
-      newId: () => ulid(),
-      goalOf: goalOf(context),
-      unclaimed: context.unclaimed,
-      ...(placement ? { idea: placement } : {}),
-      ...(goal !== undefined ? { savingGoal: goal } : {}),
-    });
+    let ops: ReturnType<typeof toOps>;
+    try {
+      ops = toOps(parsed, {
+        nowMs,
+        newId: () => ulid(),
+        goalOf: goalFinder(context),
+        unclaimed: context.unclaimed,
+        unset: context.unset,
+        ...(placement ? { idea: placement } : {}),
+        ...(goal !== undefined ? { savingGoal: goal } : {}),
+      });
+    } catch (refusal) {
+      // A refused take-out or saving (F8): the line is still kept as typed
+      // (store first, parse second) with nothing made from it, and the box
+      // stays open on it so Enter after a correction fixes that capture.
+      // A fix that is refused leaves the capture it was fixing alone.
+      if (typeof refusal !== "string" || fixing) throw refusal;
+      return commitCapture(rawText, [], parser).then((rawId) => {
+        editing = { id: rawId, body: rawText };
+        fixKind = undefined;
+        throw refusal;
+      });
+    }
     return fixing
       ? replaceCapture(fixing.id, rawText, ops, parser)
       : commitCapture(rawText, ops, parser);

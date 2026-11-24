@@ -24,6 +24,7 @@ import {
   goalPace,
   type GoalRow,
   GOALS_SQL,
+  goalFinder,
   goalStatusOps,
   HELD_BY_ACCOUNT_SQL,
   loadSavingsContext,
@@ -150,19 +151,14 @@ async function capture(db: DatabaseSync, text: string) {
   };
   const parsed = parseCapture(text, options);
   const context = await loadSavingsContext(read(db), rates);
-  const goalOf: OpsContext["goalOf"] = (words, minor) => {
-    const id =
-      words === undefined && minor !== undefined
-        ? context.ripe(minor)
-        : matchGoal(context.goals, words);
-    return context.goals.find((row) => row.id === id) ?? null;
-  };
-  const savingGoalNow = parsed.kind === "saving" ? goalOf(parsed.goal) : undefined;
+  const goalOf: OpsContext["goalOf"] = goalFinder(context);
+  const savingGoalNow = parsed.kind === "saving" ? goalOf(parsed.goal, parsed.amount) : undefined;
   const ops = toOps(parsed, {
     nowMs: NOW,
     newId: () => `c${++n}`,
     goalOf,
     unclaimed: context.unclaimed,
+    unset: context.unset,
     ...(savingGoalNow !== undefined ? { savingGoal: savingGoalNow } : {}),
   });
   apply(db, ops);
@@ -194,10 +190,39 @@ describe("F8: took X from a goal in the capture box", () => {
     expect(goal(db, "laptop")).toMatchObject({ saved_minor: 5_450_000, held_minor: 0 });
   });
 
-  it("asks for the goal when none is matched", () => {
-    const parsed = parseCapture("took 100 from laptop", { nowMs: NOW, goals: ["laptop"] });
-    expect(() => toOps(parsed, { nowMs: NOW, newId: () => "x", savingGoal: null })).toThrow(
-      /Name the goal/,
+  it("asks for the goal when none is matched", async () => {
+    const db = fresh();
+    // Test is the only active goal: a misspelt name must not take from it.
+    apply(db, goalStatusOps("laptop", "paused"));
+    apply(db, entryOps("test", 50_000, NOW, "2026-11-01", "old", "dashboard"));
+    await expect(capture(db, "took 500 from lapptop")).rejects.toMatch(/Name the goal/);
+    expect(goal(db, "test").saved_minor).toBe(50_000);
+  });
+
+  it("takes from the paused or planted goal named, not the only active one", async () => {
+    const db = fresh();
+    apply(db, entryOps("laptop", 100_000, NOW, "2026-11-01", "old1", "dashboard"));
+    apply(db, entryOps("test", 100_000, NOW, "2026-11-01", "old2", "dashboard"));
+    apply(db, goalStatusOps("laptop", "paused"));
+    await capture(db, "took 500 from laptop");
+    expect(goal(db, "laptop").saved_minor).toBe(50_000);
+    expect(goal(db, "test").saved_minor).toBe(100_000);
+    apply(db, goalStatusOps("laptop", "active"));
+    apply(db, goalStatusOps("test", "done"));
+    await capture(db, "took 1000 from test");
+    expect(goal(db, "test").saved_minor).toBe(0);
+    expect(goal(db, "laptop").saved_minor).toBe(50_000);
+  });
+
+  it("says which part of a take-out moved out of savings", async () => {
+    const db = fresh();
+    apply(db, entryOps("laptop", 5_600_000, NOW, "2026-11-01", "old", "dashboard"));
+    await capture(db, "saved 500 laptop");
+    expect(await capture(db, "took 2000 from laptop")).toBe(
+      "Took out 2,000 ETB · Laptop · 500 ETB CBO savings → CBO; 1,500 ETB was already in your spending accounts",
+    );
+    expect(await capture(db, "took 1000 from laptop")).toBe(
+      "Took out 1,000 ETB · Laptop · it was already in your spending accounts, so only the goal went down",
     );
   });
 });
@@ -432,6 +457,14 @@ describe("F36: dollars already in a dollar savings account", () => {
     expect(db.prepare("SELECT count(*) AS n FROM money_txns").get()).toEqual({ n: 0 });
   });
 
+  it("asks for Wise's balance when it has none yet, instead of saying it holds 0", async () => {
+    const db = fresh();
+    db.exec("UPDATE money_accounts SET is_savings = 1 WHERE id = 'wise'");
+    await expect(capture(db, "saved $50 laptop")).rejects.toBe(
+      "Wise has no balance yet: set it in Money → Accounts first",
+    );
+  });
+
   it("refuses more than Wise holds unclaimed", async () => {
     const db = wise();
     await expect(capture(db, "saved $150 laptop")).rejects.toMatch(/Wise holds 13,000 ETB/);
@@ -517,6 +550,17 @@ describe("F110: two goals with one name", () => {
     ];
     expect(matchGoal(list, "laptop")).toBe("a");
     expect(matchGoal(list, "lap")).toBeNull();
+    // Words that fit nothing never fall back to the only active goal (F8).
+    const one = [
+      { id: "a", title: "Laptop", status: "paused" as const },
+      { id: "b", title: "Test", status: "active" as const },
+      { id: "c", title: "Bike", status: "done" as const },
+    ];
+    expect(matchGoal(one, "laptop")).toBeNull();
+    expect(matchGoal(one, "laptop", true)).toBe("a");
+    expect(matchGoal(one, "bike", true)).toBe("c");
+    expect(matchGoal(one, "lapptop", true)).toBeNull();
+    expect(matchGoal(one, undefined)).toBe("b");
     expect(
       matchGoal(
         [

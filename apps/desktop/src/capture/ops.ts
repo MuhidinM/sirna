@@ -52,6 +52,25 @@ export interface OpsContext {
   goalOf?: (words: string | undefined, minor?: number) => SavingGoal | null;
   /** ETB worth in each savings account that no goal holds yet (by account id). */
   unclaimed?: Record<string, number>;
+  /** Savings accounts with no balance set yet (by id). */
+  unset?: string[];
+}
+
+/**
+ * How a take-out through a savings account splits, as takeOutOps does it:
+ * `moved` leaves the account, `plain` only lowers the goal's number (it was
+ * put aside inside a spending account). ETB worth; null when nothing moves
+ * through an account.
+ */
+export function takeOutSplit(
+  parsed: Pick<SavingItem, "amount" | "worth" | "spend" | "savings">,
+  goal: SavingGoal | null | undefined,
+): { moved: number; plain: number } | null {
+  if (parsed.amount >= 0 || !goal || !parsed.spend || !parsed.savings) return null;
+  const worth = -(parsed.worth ?? parsed.amount);
+  const room = goal.room?.[parsed.savings.id] ?? 0;
+  const moved = Math.max(0, Math.min(worth, goal.held_minor ?? 0, room));
+  return { moved, plain: worth - moved };
 }
 
 /** Sets `currency` on the money rows of some ops, when it isn't birr. */
@@ -224,6 +243,9 @@ function savingOps(
   // Dollars already in a dollar savings account, with no dollar account to
   // move them from: the goal is given what the account holds (F36).
   if (parsed.amount > 0 && parsed.savings && !parsed.spend) {
+    // No balance set: what it holds is unknown, not nothing (F36).
+    if (context.unset?.includes(parsed.savings.id))
+      throw `${parsed.savings.name} has no balance yet: set it in Money → Accounts first`;
     const free = context.unclaimed?.[parsed.savings.id] ?? 0;
     if (worth > free)
       throw `${parsed.savings.name} holds ${formatAmount(free)} no goal has yet: save that much or less`;
@@ -274,7 +296,7 @@ function pieceOps(piece: MoneyPiece, context: OpsContext): Op[] {
     case "transfer":
       return transferPieceOps(piece, context);
     case "saving":
-      return savingOps(piece, context, goalOf ? goalOf(piece.goal) : null);
+      return savingOps(piece, context, goalOf ? goalOf(piece.goal, piece.amount) : null);
   }
 }
 
@@ -447,7 +469,7 @@ export function echo(
   parsed: Parsed,
   nowMs: number,
   idea?: Placement,
-  savingGoal?: { id: string; title: string } | null,
+  savingGoal?: SavingGoal | null,
 ): string {
   const area = "area" in parsed && parsed.area ? ` · #${parsed.area}` : "";
   switch (parsed.kind) {
@@ -523,16 +545,25 @@ export function echo(
         : savingGoal === null
           ? " · no goal yet: add one on the Dashboard"
           : "";
+      // A take-out that is only partly in the savings account says which
+      // part moved, like the goal card (F75).
+      const split = takeOutSplit(parsed, savingGoal);
+      const route =
+        parsed.spend && parsed.savings ? `${parsed.savings.name} → ${parsed.spend.name}` : "";
       const moved =
-        parsed.spend && parsed.savings
-          ? parsed.amount > 0
-            ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
-            : ` · ${parsed.savings.name} → ${parsed.spend.name}`
-          : parsed.savings
-            ? ` · from what ${parsed.savings.name} already holds`
-            : parsed.unbacked
-              ? ` · ${parsed.unbacked}, so the money stays where it is`
-              : "";
+        split && split.plain > 0
+          ? split.moved > 0
+            ? ` · ${formatAmount(split.moved)} ${route}; ${formatAmount(split.plain)} was already in your spending accounts`
+            : " · it was already in your spending accounts, so only the goal went down"
+          : parsed.spend && parsed.savings
+            ? parsed.amount > 0
+              ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
+              : ` · ${parsed.savings.name} → ${parsed.spend.name}`
+            : parsed.savings
+              ? ` · from what ${parsed.savings.name} already holds`
+              : parsed.unbacked
+                ? ` · ${parsed.unbacked}, so the money stays where it is`
+                : "";
       return `${what} ${formatAmount(Math.abs(parsed.amount), parsed.currency)}${where}${moved}`;
     }
   }

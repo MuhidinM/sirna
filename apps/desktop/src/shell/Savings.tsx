@@ -300,6 +300,11 @@ function GoalCard({
         setNote(`No ${code} account to move it to; the money stays in ${savings.name}.`);
         return;
       }
+      // No balance set: what it holds is unknown, not nothing.
+      if (savings.opening_date === null) {
+        setNote(`${savings.name} has no balance yet: set it in Accounts first.`);
+        return;
+      }
       const room = free[savings.id] ?? 0;
       if (worth > room) {
         setNote(
@@ -784,7 +789,7 @@ export function Savings() {
                 Capture <code>saved 500 laptop</code> or <code>took 2000 from laptop</code>.
               </>
             )}{" "}
-            Plants never wilt; taking money out moves the plant back a stage or two.
+            Plants never wilt; taking money out moves the plant back.
           </>
         }
         action={
@@ -798,7 +803,7 @@ export function Savings() {
       {adding && <NewGoal goals={goals.rows} onDone={() => setAdding(false)} />}
       {unset.map((row) => (
         <p key={row.id} className="meta">
-          {row.name} has no balance yet: set it in Accounts so totals count what you put aside.
+          {row.name} has no balance yet: set it in Accounts.
         </p>
       ))}
       {split.saved.ids.length > 0 && (

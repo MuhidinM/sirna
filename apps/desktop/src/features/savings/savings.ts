@@ -557,24 +557,29 @@ export function goalStatusOps(id: string, status: GoalRow["status"]): Op[] {
 
 /**
  * Which goal a capture means: one whose name contains the word(s) given
- * (`saved 500 laptop`), else the only active goal, else none (the entry
- * waits for a goal).
+ * (`saved 500 laptop`); with no words, the only active goal; else none (the
+ * entry waits for a goal). Words that fit no goal never fall back to the only
+ * active one: a misspelt or paused name must not move another goal's money.
+ * A take-out (`out`) may also name a paused or finished goal.
  */
 export function matchGoal(
   goals: Pick<GoalRow, "id" | "title" | "status">[],
   words: string | undefined,
+  out = false,
 ): string | null {
   const active = goals.filter((goal) => goal.status === "active");
   const text = (words ?? "").trim().toLowerCase();
-  if (text) {
+  if (!text) return active.length === 1 ? (active[0]?.id ?? null) : null;
+  const fits = (list: typeof goals) => {
     // The exact name first; two goals that fit equally wait for "Give it to…" (F110).
-    const exact = active.filter((goal) => goal.title.trim().toLowerCase() === text);
-    const within = active.filter((goal) => goal.title.toLowerCase().includes(text));
-    const around = active.filter((goal) => text.includes(goal.title.toLowerCase()));
-    const hits = [exact, within, around].find((list) => list.length > 0);
-    if (hits) return hits.length === 1 ? (hits[0]?.id ?? null) : null;
-  }
-  return active.length === 1 ? (active[0]?.id ?? null) : null;
+    const exact = list.filter((goal) => goal.title.trim().toLowerCase() === text);
+    const within = list.filter((goal) => goal.title.toLowerCase().includes(text));
+    const around = list.filter((goal) => text.includes(goal.title.toLowerCase()));
+    return [exact, within, around].find((hits) => hits.length > 0);
+  };
+  const hits =
+    fits(active) ?? (out ? fits(goals.filter((goal) => goal.status !== "active")) : undefined);
+  return hits?.length === 1 ? (hits[0]?.id ?? null) : null;
 }
 
 /** This week's saving, for the Sunday question. ?1 = this Monday, ?2 = next Monday. */
@@ -789,6 +794,22 @@ export interface SavingsContext {
   unclaimed: Record<string, Santim>;
   /** The goal money taken out of savings with no goal named comes from. */
   ripe: (minor: number) => string | null;
+  /** Savings accounts with no balance set yet (by id): what they hold is unknown. */
+  unset: string[];
+}
+
+/**
+ * The goal a saving goes to or comes from: by the words given, else by the
+ * sign of `minor` (see savingGoal). A take-out may name any goal.
+ */
+export function goalFinder(context: SavingsContext) {
+  return (words: string | undefined, minor?: number) => {
+    const id =
+      words === undefined && minor !== undefined
+        ? context.ripe(minor)
+        : matchGoal(context.goals, words, (minor ?? 0) < 0);
+    return context.goals.find((row) => row.id === id) ?? null;
+  };
 }
 
 export async function loadSavingsContext(read: Query, rates: Rates): Promise<SavingsContext> {
@@ -810,6 +831,7 @@ export async function loadSavingsContext(read: Query, rates: Rates): Promise<Sav
       unclaimed(accounts, held, rates).map((row) => [row.account.id, row.minor]),
     ),
     ripe: (minor) => savingGoal(goals, minor),
+    unset: savings.filter((account) => account.opening_date === null).map((row) => row.id),
   };
 }
 
