@@ -408,6 +408,16 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
     case "away":
     case "focus":
       return [];
+    case "block":
+      // Only the status changes, logged under the capture so Ctrl+Z puts it back.
+      return [
+        {
+          op: "update",
+          table: "day_blocks",
+          id: parsed.blockId,
+          values: { status: parsed.status },
+        },
+      ];
   }
 }
 
@@ -619,6 +629,8 @@ export function echo(
       return `Away until ${midLine(parsed.until ? dayLabel(parsed.until, nowMs) : "Tomorrow")}`;
     case "focus":
       return "Focus";
+    case "block":
+      return parsed.status === "done" ? `${parsed.title} ✓` : `${parsed.title} skipped`;
     case "saving": {
       const what = parsed.amount > 0 ? "Saved" : "Took out";
       const where = savingGoal

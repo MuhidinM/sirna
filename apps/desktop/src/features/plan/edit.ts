@@ -231,15 +231,23 @@ export function changeOps(
   ];
 }
 
-/** Mark done / Not done: the block, and the task too when it is the task's own block. */
-export function markDoneOps(block: EditBlock, nowMs: number): Op[] {
-  const done = block.status === "done";
+/**
+ * Mark done / Not done: the block, and the task too when it is the task's own block.
+ * `next` is the block's new status; a block done by focus alone un-does to
+ * "skipped" (see `doneToggle`), and its task goes back to to-do all the same.
+ */
+export function markDoneOps(
+  block: EditBlock,
+  nowMs: number,
+  next: "done" | "planned" | "skipped" = block.status === "done" ? "planned" : "done",
+): Op[] {
+  const done = next !== "done";
   const ops: Op[] = [
     {
       op: "update",
       table: "day_blocks",
       id: block.id,
-      values: { status: done ? "planned" : "done" },
+      values: { status: next },
     },
   ];
   if (block.task_id && isOwnBlock(block) && block.task_status === (done ? "done" : "todo"))

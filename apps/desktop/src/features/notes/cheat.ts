@@ -72,6 +72,77 @@ export function search(
   return hits;
 }
 
+// --- Notes and search (plan §3.5: `n:` notes, `? kifiya`) ----------------------
+
+/** Notes kept from `n:`, `fb:` or a loose end sorted as Note: newest first. */
+export const NOTES_SQL = `
+  SELECT n.id, n.body, n.area_id, a.name AS area_name, n.kind
+  FROM note_items AS n
+  LEFT JOIN area_items AS a ON a.id = n.area_id AND a.deleted_at IS NULL
+  WHERE n.kind IN ('note', 'feedback') AND n.status = 'kept' AND n.deleted_at IS NULL
+  ORDER BY n.created_at DESC, n.id DESC`;
+
+export type FoundKind = "cheat" | "note" | "task";
+
+export interface FoundRow extends CheatRow {
+  kind: FoundKind;
+}
+
+/** What `?` searches: kept cheat lines and notes, and open tasks. */
+export const FIND_SQL = `
+  SELECT id, body, area_id, area_name, kind FROM (
+    SELECT n.id, n.body, n.area_id, a.name AS area_name,
+           CASE WHEN n.kind = 'cheat' THEN 'cheat' ELSE 'note' END AS kind,
+           a.priority_rank AS rank, n.sort_order AS sort_order, n.created_at AS created_at
+    FROM note_items AS n
+    LEFT JOIN area_items AS a ON a.id = n.area_id AND a.deleted_at IS NULL
+    WHERE n.kind IN ('cheat', 'note', 'feedback') AND n.status = 'kept' AND n.deleted_at IS NULL
+    UNION ALL
+    SELECT t.id, t.title, t.area_id, a.name, 'task', a.priority_rank, NULL, t.created_at
+    FROM task_items AS t
+    LEFT JOIN area_items AS a ON a.id = t.area_id AND a.deleted_at IS NULL
+    WHERE t.deleted_at IS NULL AND t.status IN ('todo', 'waiting', 'someday'))
+  -- The cards' order (CHEAT_SQL): by area priority, General last, then as kept.
+  ORDER BY area_id IS NULL, rank IS NULL, rank, area_id,
+           sort_order IS NULL, sort_order, created_at, id`;
+
+export interface Found {
+  id: string;
+  body: string;
+  kind: FoundKind;
+  /** "Cheat · Coding", "Note", "Task · Job hunt". */
+  label: string;
+  /** The area id, or "" (for its colour). */
+  key: string;
+}
+
+const KIND_WORD: Record<FoundKind, string> = { cheat: "Cheat", note: "Note", task: "Task" };
+
+/** Rows matching every word of the query (any order, any case): cheat lines, then notes, then tasks. */
+export function find(rows: FoundRow[], query: string): Found[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const order: FoundKind[] = ["cheat", "note", "task"];
+  return rows
+    .map((row) => {
+      // An area-less cheat line is on the General card, so "general" finds it.
+      const area = row.area_id || row.kind === "cheat" ? cardTitle(row) : "";
+      return { row, area };
+    })
+    .filter(({ row, area }) => {
+      const haystack = `${row.body} ${area}`.toLowerCase();
+      return words.every((word) => haystack.includes(word));
+    })
+    .sort((a, b) => order.indexOf(a.row.kind) - order.indexOf(b.row.kind))
+    .map(({ row, area }) => ({
+      id: row.id,
+      body: row.body,
+      kind: row.kind,
+      label: area ? `${KIND_WORD[row.kind]} · ${area}` : KIND_WORD[row.kind],
+      key: row.area_id ?? "",
+    }));
+}
+
 /** The card as editable text, one line per row. */
 export function cardText(card: Card): string {
   return card.lines.map((line) => line.body).join("\n");

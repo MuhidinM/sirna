@@ -151,12 +151,15 @@ export function WeekPreview({
         {preview.days.map((day) => {
           const ms = Date.parse(`${day.date}T00:00:00Z`);
           const isToday = day.date === today;
-          const blocks = weekColumn(
-            day.date,
-            planned.rows.filter((row) => row.logical_date === day.date),
-            routine.rows.filter((row) => row.weekday === isoWeekday(day.date)),
-            day.blocks,
-          );
+          // Away (plan §3.11): no plan to show, whatever was planned before.
+          const blocks = day.away
+            ? []
+            : weekColumn(
+                day.date,
+                planned.rows.filter((row) => row.logical_date === day.date),
+                routine.rows.filter((row) => row.weekday === isoWeekday(day.date)),
+                day.blocks,
+              );
           const shown = blocks.slice(0, COLUMN_CARDS);
           const more = blocks.length - shown.length;
           const open = onOpenDay ? () => onOpenDay(day.date) : undefined;
@@ -183,7 +186,9 @@ export function WeekPreview({
                 </>
               )}
               {blocks.length === 0 ? (
-                <p className="pw-day-empty">{day.light ? "Light day" : "Free time kept open"}</p>
+                <p className="pw-day-empty">
+                  {day.away ? "Away" : day.light ? "Light day" : "Free time kept open"}
+                </p>
               ) : (
                 <div className="pw-day-cards">
                   {shown.map((block, index) => (

@@ -17,21 +17,33 @@ import {
 } from "../features/money/currency";
 import { loadMoneyContext } from "../features/money/parseContext";
 import { ensureDayPlan, replanAround, replanUndoOps } from "../features/plan/dayplan";
-import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import {
+  type BlockRow,
+  blockProgress,
+  doneToggle,
+  skipToggle,
+  TODAY_BLOCKS_SQL,
+} from "../features/plan/now";
 import {
   asksToShrink,
   carryOps,
   CHIPS_SQL,
   chipOps,
   chipsSince,
+  finishOps,
+  INBOX_COUNT_SQL,
   INBOX_TWO_SQL,
+  inboxBadge,
+  isReviewBlock,
   nextDate,
   OPEN_DUE_SQL,
   readSpending,
   REVIEW_PARSER,
   REVIEW_SQL,
   reviewOps,
-  sortInboxOps,
+  sortInbox,
+  type SortChoice,
+  SORTED,
   SPENT_LIST_SQL,
 } from "../features/review/review";
 import {
@@ -97,7 +109,9 @@ export function Review({ onClose }: { onClose: () => void }) {
   // Unknown counts as strict: nothing is sent until the setting has loaded.
   const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL)) ?? true;
   const finish = async (status: "done" | "skipped", values: Row = {}) => {
-    await save(today, { ...values, status });
+    // A finished review also ticks tonight's Night review block, in one write.
+    const blocks = await query<BlockRow & Row>(TODAY_BLOCKS_SQL, [today]);
+    await transact("user", finishOps(today, { ...values, status }, blocks), "review");
     // Something on your mind gets a short reply before the review closes (§7.3).
     // Strict mode sends no free text.
     if (status === "done" && typeof values.mind === "string" && values.mind && !strict)
@@ -194,19 +208,65 @@ const ENERGY: [number, string, string, Tone][] = [
   [3, "3", "good", "leaf"],
 ];
 
-/** A block of the day as a small event card. */
-function BlockCard({ block, label }: { block: BlockRow; label: string }) {
-  const done = block.status === "done";
+/** Where a block of today got to, as Today's board counts it. */
+function blockState(block: BlockRow): string {
+  const progress = blockProgress(block);
+  if (progress.done) return "done";
+  if (block.status === "skipped") return "skipped";
+  if (progress.focusedMin > 0) return `${progress.focusedMin} of ${progress.lengthMin} min focused`;
+  return "planned";
+}
+
+/** Writes a tick on a block; ticking again takes it back. */
+function setBlockStatus(block: BlockRow, status: string) {
+  void transact(
+    "user",
+    [{ op: "update", table: "day_blocks", id: block.id, values: { status } }],
+    `review:block:${block.id}`,
+  );
+}
+
+/**
+ * A block of the day as a small event card. With `tick`, it can be marked
+ * done or skipped (plan §3.9 step 1); done counts focus the way Today does.
+ */
+function BlockCard({ block, label, tick }: { block: BlockRow; label: string; tick?: boolean }) {
+  const progress = blockProgress(block);
+  const done = progress.done;
+  const skipped = block.status === "skipped";
   return (
     <li>
       <EventCard
         tone={toneOf(block.color ?? "admin")}
         label={label}
-        title={<span className={done ? "done" : undefined}>{block.title}</span>}
+        title={<span className={done || skipped ? "done" : undefined}>{block.title}</span>}
+        faded={skipped}
       >
         {done && (
           <span className="rv-done-mark" aria-hidden="true">
             <IconCheck size={14} />
+          </span>
+        )}
+        {tick && (
+          <span className="rv-block-ticks">
+            <Button
+              className="rv-pill"
+              aria-pressed={done}
+              aria-label={`${block.title}: ${done ? "not done" : "done"}`}
+              onClick={() => setBlockStatus(block, doneToggle(block))}
+            >
+              {done ? "Not done" : "Done"}
+            </Button>
+            {!done && (
+              <Button
+                className="rv-pill"
+                aria-pressed={skipped}
+                aria-label={`${block.title}: ${skipped ? "unskip" : "skip"}`}
+                onClick={() => setBlockStatus(block, skipToggle(block))}
+              >
+                {skipped ? "Unskip" : "Skip"}
+              </Button>
+            )}
           </span>
         )}
       </EventCard>
@@ -226,11 +286,26 @@ function TodayStep({
   next: () => void;
 }) {
   const blocks = useLiveQuery<BlockRow & Row>(TODAY_BLOCKS_SQL, [today]);
-  const open = useLiveQuery<{ id: string; title: string; carries: number; due_date: string }>(
-    OPEN_DUE_SQL,
-    [today],
-  );
+  const open = useLiveQuery<{
+    id: string;
+    title: string;
+    carries: number;
+    due_date: string;
+    due_at: number | null;
+  }>(OPEN_DUE_SQL, [today]);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_TWO_SQL);
+  const inboxTotal = useLiveQuery<{ n: number }>(INBOX_COUNT_SQL).rows[0]?.n ?? 0;
+  const [lastSort, setLastSort] = useState<{ body: string; choice: SortChoice; undo: Op[] }>();
+  const sort = (note: { id: string; body: string }, choice: SortChoice) => {
+    const sorted = sortInbox(note, choice, () => ulid());
+    void transact("user", sorted.ops, `review:sort:${note.id}`).then(() =>
+      setLastSort({ body: note.body, choice, undo: sorted.undo }),
+    );
+  };
+  const undoSort = () => {
+    if (!lastSort) return;
+    void transact("user", lastSort.undo, "review:sort:undo").then(() => setLastSort(undefined));
+  };
   const areas = useLiveQuery<{ id: string; name: string }>(
     "SELECT id, name FROM area_items WHERE deleted_at IS NULL AND active = 1",
   );
@@ -287,7 +362,8 @@ function TodayStep({
                 <BlockCard
                   key={block.id}
                   block={block}
-                  label={`${time.format(block.start_at)} · ${block.status}`}
+                  label={`${time.format(block.start_at)} · ${blockState(block)}`}
+                  tick={block.kind !== "fixed" && !isReviewBlock(block)}
                 />
               ))}
             </ul>
@@ -379,14 +455,26 @@ function TodayStep({
           </section>
         )}
 
-        {inbox.rows.length > 0 && (
+        {(inbox.rows.length > 0 || lastSort) && (
           <section className="card rv-card" aria-labelledby="loose-ends">
             <PanelHead
               id="loose-ends"
               title="Loose ends"
               sub="Make each one a task, a note, or drop it"
-              action={<span className="badge">{inbox.rows.length}</span>}
+              action={
+                inbox.rows.length > 0 ? (
+                  <span className="badge">{inboxBadge(inbox.rows.length, inboxTotal)}</span>
+                ) : undefined
+              }
             />
+            {lastSort && (
+              <p className="meta rv-sorted" role="status">
+                {SORTED[lastSort.choice]}: {lastSort.body}{" "}
+                <button type="button" className="link-btn" onClick={undoSort}>
+                  Undo
+                </button>
+              </p>
+            )}
             {(!strict && guesses === null) || guesses === "asking" || guessNote ? (
               <p className="rv-ai">
                 {!strict && guesses === null && (
@@ -414,12 +502,7 @@ function TodayStep({
                       <Button
                         key={choice}
                         className={`rv-pick rv-pick-${choice}${choice === "drop" ? " btn-ghost btn-danger" : ""}`}
-                        onClick={() =>
-                          void transact(
-                            "user",
-                            sortInboxOps(note, choice, () => ulid()),
-                          )
-                        }
+                        onClick={() => sort(note, choice)}
                       >
                         {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
                       </Button>

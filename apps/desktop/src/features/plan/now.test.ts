@@ -4,7 +4,9 @@ import { openTestDb } from "../../test/sqlite";
 import {
   type BlockRow,
   blockProgress,
+  doneToggle,
   firstStep,
+  skipToggle,
   focusOffer,
   formatMinutes,
   nowAndNext,
@@ -105,6 +107,39 @@ describe("when a block counts as done (focus)", () => {
     });
     expect(blockProgress({ ...hour, focused_min: 48 }).done).toBe(true);
     expect(blockProgress({ ...hour, status: "done", focused_min: null }).done).toBe(true);
+  });
+
+  it("is not done once skipped, whatever the focus says (Not done on a focused block)", () => {
+    expect(blockProgress({ ...hour, status: "skipped", focused_min: 55 }).done).toBe(false);
+  });
+});
+
+describe("ticking a block (review, block editor)", () => {
+  const hour = { start_at: 0, end_at: 60 * 60_000, status: "planned", focused_min: 0 };
+  it("marks an open block done, and a marked one back to planned", () => {
+    expect(doneToggle(hour)).toBe("done");
+    expect(doneToggle({ ...hour, status: "done" })).toBe("planned");
+  });
+
+  it("un-ticks a block done by focus as skipped, so the 80% rule can't tick it again", () => {
+    const focused = { ...hour, focused_min: 55 };
+    expect(doneToggle(focused)).toBe("skipped");
+    expect(blockProgress({ ...focused, status: doneToggle(focused) }).done).toBe(false);
+    expect(doneToggle({ ...focused, status: "skipped" })).toBe("done");
+  });
+
+  it("skips and unskips", () => {
+    expect(skipToggle(hour)).toBe("skipped");
+    expect(skipToggle({ ...hour, status: "skipped" })).toBe("planned");
+  });
+});
+
+describe("a block finished or skipped is not Now", () => {
+  it("moves on from a block marked done or skipped", () => {
+    const review = { ...block("review", "21:00", "21:15", "routine"), status: "done" };
+    expect(nowAndNext([review], at("21:05")).now).toBeUndefined();
+    const gym = { ...block("gym", "17:30", "18:15", "routine"), status: "skipped" };
+    expect(nowAndNext([gym], at("17:00")).next).toBeUndefined();
   });
 });
 

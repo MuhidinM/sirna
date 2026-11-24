@@ -72,7 +72,9 @@ export type Parsed =
   | { kind: "search"; query: string }
   | { kind: "away"; until?: string }
   | SavingItem
-  | { kind: "focus" };
+  | { kind: "focus" }
+  /** `gym done`, `skipped gym` (plan §3.5): one of today's blocks, ticked or skipped. */
+  | { kind: "block"; blockId: string; title: string; status: "done" | "skipped" };
 
 /** Money lent or owed (T-061): `lent 1000 abel`, `abel paid back 400`. */
 export interface LoanItem {
@@ -200,6 +202,8 @@ export interface ParseOptions {
    * the amount is plainly money, so `$15 netflix` needs no spending word.
    */
   moneyMarked?: boolean;
+  /** Today's blocks (not rest), so `gym done` and `skipped gym` record one. */
+  blocks?: { id: string; title: string }[];
 }
 
 type AccountOption = NonNullable<ParseOptions["accounts"]>[number];
@@ -223,6 +227,19 @@ function readAccount(text: string, accounts: AccountOption[]) {
     .replace(/\s+/g, " ")
     .trim();
   return { rest, account };
+}
+
+/**
+ * A known account as the line's last word, without `@` (`paid rent 8000 cash`,
+ * `lunch 300 telebirr`): the word comes out of the line. Only the last word,
+ * and only after something else, so `cash 500` stays as typed.
+ */
+function trailingAccount(text: string, accounts: AccountOption[]) {
+  const match = /\s([\p{L}][\p{L}\p{N}_-]*)$/u.exec(text.trim());
+  const account = match?.[1] ? findAccount(match[1], accounts) : undefined;
+  if (!match || !account) return undefined;
+  const rest = text.trim().slice(0, match.index).trim();
+  return rest ? { rest, account } : undefined;
 }
 
 /** `afford 4500 shoes`, `can i afford 2k?` */
@@ -346,7 +363,22 @@ function repaymentProblem(parsed: LoanItem, code: string, options: ParseOptions)
 }
 
 function readLoan(text: string, options: ParseOptions): Parsed | undefined {
-  const { rest, account } = readAccount(text, options.accounts ?? []);
+  const accounts = options.accounts ?? [];
+  const named = readAccount(text, accounts);
+  // `lent abel 500 telebirr`: a bare account word at the end names the account.
+  const bare = named.account ? undefined : trailingAccount(named.rest, accounts);
+  return (
+    (bare && loanIn(bare.rest, bare.account, options, text)) ??
+    loanIn(named.rest, named.account, options, text)
+  );
+}
+
+function loanIn(
+  rest: string,
+  account: AccountOption | undefined,
+  options: ParseOptions,
+  text: string,
+): Parsed | undefined {
   for (const [pattern, loanKind, order] of LOAN_FORMS) {
     const match = pattern.exec(rest);
     if (!match) continue;
@@ -904,7 +936,7 @@ function parsePiece(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
   const text = raw.trim().replace(/\s+/g, " ");
   const { rest, currency, word } = readCurrency(text);
-  const named = readAccount(rest, accounts).account;
+  const named = readAccount(rest, accounts).account ?? trailingAccount(rest, accounts)?.account;
   // "$15 netflix": a currency says it is money, whatever the order.
   const marked = currency ? { ...options, moneyMarked: true } : options;
   let parsed = parsePlain(rest, marked);
@@ -1050,8 +1082,20 @@ function parsePlain(raw: string, options: ParseOptions): Parsed {
 /** One line, with its `@account` taken out first and money settled after. */
 function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
-  const { rest, account } = readAccount(raw, accounts);
+  const named = readAccount(raw, accounts);
+  const { rest } = named;
+  let { account } = named;
   let parsed = parseOne(rest, options);
+  // `paid rent 8000 cash`, `lunch 300 telebirr`: a bare account word at the
+  // end names the account and leaves the description (F118).
+  if (!account) {
+    const bare = trailingAccount(rest, accounts);
+    const plain = bare ? parseOne(bare.rest, options) : undefined;
+    if (bare && plain && isMoney(plain)) {
+      parsed = plain;
+      account = bare.account;
+    }
+  }
   // `saved 500 laptop @telebirr`: the money comes from Telebirr.
   if (parsed.kind === "saving" && account) return { ...parsed, account: account.id };
   // "got 5000 @telebirr": without the account nothing names the money, so
@@ -1123,6 +1167,8 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   // Prefixes win (plan §3.5).
   if (text.startsWith("?")) return { kind: "search", query: text.slice(1).trim() };
   if (lower === "focus" || lower === "start focus") return { kind: "focus" };
+  const block = readBlock(text, options.blocks ?? []);
+  if (block) return block;
   if (/^away\b/.test(lower)) return readAway(text, nowMs, clockStyle);
 
   // Savings (plan §3.13). Kept narrow so ordinary lines stay what they were:
@@ -1280,6 +1326,45 @@ const NO_TITLE: Stuck = { kind: "inbox", body: "", why: "Type what to do" };
 /** Time words that should have given a day: left in a title, they were not read. */
 const UNREAD_WHEN =
   /\b(?:in\s+(?:\d+|an?)\s*(?:mins?|minutes?|hrs?|hours?)|(?:this|next)\s+weekend|next\s+week|(?:on|by)\s+the\s+\d{1,2}(?:st|nd|rd|th)?|at\s+\d{3,4})\b/i;
+
+/** `skipped gym`, `skip the gym`, `missed quran`. */
+const BLOCK_SKIPPED_FIRST = /^(?:skip(?:ped)?|missed)\s+(?:the\s+|my\s+)?(.+?)(?:\s+today)?$/i;
+/** `gym done`, `gym ✓`, `quran finished`, `gym skipped`. */
+const BLOCK_STATUS_LAST =
+  /^(?:the\s+|my\s+)?(.+?)\s+(done|✓|✔|finished|complete|completed|skipped|missed)(?:\s+today)?$/i;
+/** `did gym`, `done with quran`, `finished the reading`. */
+const BLOCK_DONE_FIRST = /^(?:did|done with|finished)\s+(?:the\s+|my\s+)?(.+?)(?:\s+today)?$/i;
+
+/**
+ * `gym done` / `skipped gym` (plan §3.5): only when the words name one of
+ * today's blocks, so `report done` stays an ordinary capture. Exact title
+ * first, then one that contains the words, then one the words contain.
+ */
+function readBlock(
+  text: string,
+  blocks: NonNullable<ParseOptions["blocks"]>,
+): Extract<Parsed, { kind: "block" }> | undefined {
+  // A prefixed line (`n: gym done`) is what its prefix says.
+  if (blocks.length === 0 || /^[a-z]+\s*:/i.test(text)) return undefined;
+  let target: string | undefined;
+  let status: "done" | "skipped" | undefined;
+  const first = BLOCK_SKIPPED_FIRST.exec(text);
+  const last = BLOCK_STATUS_LAST.exec(text);
+  const did = BLOCK_DONE_FIRST.exec(text);
+  if (first?.[1]) [target, status] = [first[1], "skipped"];
+  else if (last?.[1] && last[2])
+    [target, status] = [last[1], /^(?:skipped|missed)$/i.test(last[2]) ? "skipped" : "done"];
+  else if (did?.[1]) [target, status] = [did[1], "done"];
+  const key = target?.trim().toLowerCase();
+  if (!key || !status || key.split(" ").length > 4) return undefined;
+  const titles = blocks.map((block) => ({ block, name: block.title.trim().toLowerCase() }));
+  const found =
+    titles.find((t) => t.name === key) ??
+    (key.length >= 3 ? titles.find((t) => t.name.includes(key)) : undefined) ??
+    titles.find((t) => t.name.length >= 3 && ` ${key} `.includes(` ${t.name} `));
+  if (!found) return undefined;
+  return { kind: "block", blockId: found.block.id, title: found.block.title, status };
+}
 
 /** A repeat at the end of a task: `every fri`, `monthly 1`, `every weekday`, `daily`. */
 const REPEAT_TAIL =

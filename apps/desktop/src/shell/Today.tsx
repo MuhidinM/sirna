@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
-import { localDate, showDate } from "../kernel/dates";
+import { showDate } from "../kernel/dates";
 import { commitCapture, query, transact } from "../kernel/db";
 import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
@@ -22,11 +22,13 @@ import {
   DUE_SQL,
   INBOX_SQL,
   SPENT_TODAY_SQL,
+  taskMeta,
   todayParams,
   todayTopSql,
   WAITING_SQL,
 } from "../features/tasks/today";
 import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { INBOX_COUNT_SQL, inboxBadge } from "../features/review/review";
 import { Brief } from "./Brief";
 import { Missed } from "./Missed";
 import { TodayMoney } from "./Money";
@@ -161,12 +163,6 @@ const longWeekday = new Intl.DateTimeFormat("en-GB", {
   weekday: "long",
   timeZone: "Africa/Addis_Ababa",
 });
-const time = new Intl.DateTimeFormat("en-GB", {
-  hour: "2-digit",
-  minute: "2-digit",
-  timeZone: "Africa/Addis_Ababa",
-});
-
 function toggle(task: TaskRow) {
   const done = task.status !== "done";
   void transact("user", [
@@ -180,7 +176,6 @@ function toggle(task: TaskRow) {
 }
 
 function TaskLine({ task, today }: { task: TaskRow; today: string }) {
-  const overdue = task.due_date !== null && task.due_date < today;
   const [splitting, setSplitting] = useState(false);
   const big =
     task.status === "todo" &&
@@ -198,12 +193,7 @@ function TaskLine({ task, today }: { task: TaskRow; today: string }) {
         </span>
       </label>
       <span className="meta">
-        {task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h · ` : ""}
-        {overdue
-          ? `since ${showDate(task.due_date ?? "", today)}${task.due_at !== null ? ` ${time.format(task.due_at)}` : ""}`
-          : task.due_at !== null
-            ? time.format(task.due_at)
-            : ""}
+        {taskMeta(task, today)}
         {big && !splitting && (
           <Button className="split-button" onClick={() => setSplitting(true)}>
             Split
@@ -280,6 +270,7 @@ export function Today({
     follow_up_date: string | null;
   }>(WAITING_SQL);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_SQL);
+  const inboxTotal = useLiveQuery<{ n: number }>(INBOX_COUNT_SQL).rows[0]?.n ?? 0;
   const spent = useLiveQuery<{ currency: string; spent: number }>(SPENT_TODAY_SQL, [today]);
   const blocks = useLiveQuery<BlockRow & Record<string, string | number | null>>(TODAY_BLOCKS_SQL, [
     today,
@@ -296,9 +287,10 @@ export function Today({
   const error =
     top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error ?? blocks.error;
 
-  const weekday = longWeekday.format(nowMs);
-  // The calendar day, like the weekday beside it; never a year for "today".
-  const dayMonth = showDate(localDate(nowMs));
+  // The logical day (D22: it starts at 03:00), as the board and the brief
+  // count it: at 00:30 it is still the evening before. Never a year for "today".
+  const weekday = longWeekday.format(Date.parse(`${today}T12:00:00+03:00`));
+  const dayMonth = showDate(today);
 
   return (
     <main className="page today">
@@ -307,7 +299,7 @@ export function Today({
           <MonthPanel today={today} onOpen={onOpenPlan} />
           <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
           {focus && focus.kind !== null && <FocusPanel status={focus} />}
-          <LooseEnds inbox={inbox.rows} waiting={waiting.rows} today={today} />
+          <LooseEnds inbox={inbox.rows} total={inboxTotal} waiting={waiting.rows} today={today} />
         </aside>
 
         <div className="main">
@@ -337,7 +329,8 @@ export function Today({
               </p>
             )}
 
-            {!top.loading && !blocks.loading && (
+            {/* Away mode pauses the brief (plan §3.11), as the banner says. */}
+            {!backOn && !top.loading && !blocks.loading && (
               <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={top.rows} />
             )}
 
@@ -469,11 +462,14 @@ function AddForToday({ today }: { today: string }) {
 /** Loose ends from captures and who you are waiting on, in the side column. */
 function LooseEnds({
   inbox,
+  total,
   waiting,
   today,
 }: {
   today: string;
   inbox: { id: string; body: string }[];
+  /** Every loose end, while the list shows the newest 10. */
+  total: number;
   waiting: {
     id: string;
     title: string;
@@ -487,7 +483,11 @@ function LooseEnds({
         id="loose"
         title="Loose ends"
         sub="Sorted in tonight's review"
-        action={inbox.length > 0 ? <span className="badge">{inbox.length}</span> : undefined}
+        action={
+          inbox.length > 0 ? (
+            <span className="badge">{inboxBadge(inbox.length, total)}</span>
+          ) : undefined
+        }
       />
       {inbox.length === 0 && waiting.length === 0 ? (
         <p className="empty">Captures without a date and tasks you wait on show up here.</p>

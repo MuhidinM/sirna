@@ -7,6 +7,7 @@ import {
   type BriefChecks,
   type BriefTask,
   buildBrief,
+  moneyLines,
   WEEK_SQL,
   weekStart,
   type BriefArea,
@@ -133,7 +134,7 @@ export function Brief({
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
     outcomes,
-    due: [...dueLines(due.items, today), ...followUpLines(loans.people, today)],
+    due: moneyLines(dueLines(due.items, today), followUpLines(loans.people, today)),
     calendar: calendarCheck(
       readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),
     ),

@@ -7,7 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { systemClock } from "../kernel/clock";
 import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
-import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
+import { find, FIND_SQL, type Found, type FoundRow } from "../features/notes/cheat";
 import { readings } from "./alternatives";
 import {
   actionable,
@@ -79,6 +79,10 @@ let moneyContext: Pick<
 > = {};
 /** Each account's balance (null until typed), so `1200 @wise` past Wise's dollars is flagged. */
 let accountBalances: Record<string, number | null> = {};
+/** Today's blocks, so `gym done` and `skipped gym` record one (plan §3.5). */
+let todayBlocks: NonNullable<ParseOptions["blocks"]> = [];
+const TODAY_BLOCKS_SQL = `SELECT id, title FROM day_blocks
+  WHERE logical_date = ? AND deleted_at IS NULL AND kind != 'rest' ORDER BY start_at`;
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
@@ -120,6 +124,12 @@ function loadContext() {
   ])
     .then(([row]) => {
       if (row && JSON.parse(row.value_json) === "ethiopian") clockStyle = "ethiopian";
+    })
+    .catch(() => undefined);
+
+  void query<{ id: string; title: string }>(TODAY_BLOCKS_SQL, [logicalDate(systemClock.now())])
+    .then((rows) => {
+      todayBlocks = rows;
     })
     .catch(() => undefined);
 
@@ -180,7 +190,13 @@ function refresh() {
   const nowMs = systemClock.now();
   options = text
     ? readings(
-        parseCapture(text, { nowMs, clockStyle, goals: goalNames, ...moneyContext }),
+        parseCapture(text, {
+          nowMs,
+          clockStyle,
+          goals: goalNames,
+          blocks: todayBlocks,
+          ...moneyContext,
+        }),
         text,
         nowMs,
       )
@@ -190,21 +206,19 @@ function refresh() {
   showChip();
 }
 
-/** Cheat lines, loaded once per capture box, for `? query` (plan §3.15). */
-let cheatCards: Promise<Card[]> | undefined;
+/** Cheat lines, notes and open tasks, loaded once per capture box, for `? query` (plan §3.5). */
+let searchable: Promise<FoundRow[]> | undefined;
 
 function showSearch(text: string) {
-  cheatCards ??= query<CheatRow & Record<string, string | null>>(CHEAT_SQL)
-    .then(groupCards)
-    .catch(() => []);
-  void cheatCards.then((cards) => {
+  searchable ??= query<FoundRow & Record<string, string | null>>(FIND_SQL).catch(() => []);
+  void searchable.then((rows) => {
     // Typed on meanwhile: a newer refresh owns the chip.
     if (input.value.trim().slice(1).trim() !== text) return;
-    const hits = search(cards, text);
+    const hits: Found[] = find(rows, text);
     const first = hits[0];
     output.textContent = first
-      ? `${first.line.body} · ${first.card.title}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
-      : "No cheat line matches  ·  Enter: open Notes";
+      ? `${first.body} · ${first.label}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
+      : "Nothing matches  ·  Enter: open Notes";
   });
 }
 
@@ -242,7 +256,13 @@ form.addEventListener("submit", (event) => {
   const nowMs = systemClock.now();
   const parsed =
     options[picked] ??
-    parseCapture(rawText, { nowMs, clockStyle, goals: goalNames, ...moneyContext });
+    parseCapture(rawText, {
+      nowMs,
+      clockStyle,
+      goals: goalNames,
+      blocks: todayBlocks,
+      ...moneyContext,
+    });
   // "idea:" or "#jobhunt" alone: nothing to save, so say what's missing and keep the box open.
   if (parsed.kind === "inbox" && parsed.body === "" && parsed.why) {
     output.textContent = parsed.why;

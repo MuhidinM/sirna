@@ -313,10 +313,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         if let Err(error) = undo_capture(app, raw_id) {
             log::warn!("could not undo the capture: {error}");
         }
-        changed(
-            app,
-            &["core_raw_items", "task_items", "note_items", "money_txns"],
-        );
+        changed(app, &crate::commands::CAPTURE_TABLES);
         return;
     }
     match id {

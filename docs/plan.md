@@ -295,7 +295,9 @@ Without AI (no key, offline, quota): the same card with numbers and a template r
 | 3 Energy | "How was your energy?" [1 drained] [2 okay] [3 good] | Not recorded |
 | 4 Tomorrow | Tomorrow's blocks and top 3 [Looks good] [Swap one]; "Anything on your mind?" (optional) | The app's plan |
 
-At most 7 taps on a normal night. **Skip tonight** counts against nothing. Up to 2 inbox notes appear in step 1 as [Task] [Note] [Drop].
+At most 7 taps on a normal night. **Skip tonight** counts against nothing. Up to 2 inbox notes appear in step 1 as [Task] [Note] [Drop], with the total waiting beside them ("2 of 5") and Undo on the last sort.
+
+**Block ticks.** A block counts as done when marked done or when focus covered 80% of it, the same rule as Today's board. [Done] / [Not done] and [Skip] / [Unskip] write the block's status. A block done by focus alone is un-ticked as *skipped*, since a skipped block is never done; *planned* would still count it done. Fixed blocks and the Night review block itself get no ticks: finishing the review marks its own block done. A carried task with a time today (an appointment, time-first rule 1) moves whole to the same time tomorrow; other carries keep their deadline (T-050).
 
 ### 3.10 Sunday week card (M5)
 

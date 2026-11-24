@@ -150,21 +150,34 @@ export function insights(sessions: SessionRow[], range?: { from: string; to: str
 // --- The week in plain words, when the AI isn't there ---------------------------
 
 export interface WeekNumbers {
-  areas: { name: string; done_min: number; target_min: number }[];
+  /** `capped`: the target is also a ceiling (Experiments), so past it is over, not met. */
+  areas: { name: string; done_min: number; target_min: number; capped?: boolean | number }[];
   sessions: number;
   overrunDays: number;
   nextWeekPercent: number | null;
 }
 
+/** A capped area past its cap (at the cap is still on target). */
+export function overCap(area: { done_min: number; target_min: number; capped?: boolean | number }) {
+  return Boolean(area.capped) && area.target_min > 0 && area.done_min > area.target_min;
+}
+
 /** A short template paragraph from the week's numbers (the AI's fallback). */
 export function weekSummary(week: WeekNumbers): string {
-  const met = week.areas.filter((a) => a.target_min > 0 && a.done_min >= a.target_min);
+  const met = week.areas.filter(
+    (a) => a.target_min > 0 && a.done_min >= a.target_min && !overCap(a),
+  );
+  const over = week.areas.filter(overCap);
   const behind = week.areas
     .filter((a) => a.target_min > 0 && a.done_min < a.target_min)
     .sort((a, b) => a.done_min / a.target_min - b.done_min / b.target_min);
   const parts: string[] = [];
   parts.push(`${week.sessions} focus session${week.sessions === 1 ? "" : "s"} this week.`);
   if (met.length) parts.push(`On target: ${met.map((a) => a.name).join(", ")}.`);
+  if (over.length)
+    parts.push(
+      `Over its cap: ${over.map((a) => `${a.name} (${hoursLabel(a.done_min)} of ${hoursLabel(a.target_min)})`).join(", ")}.`,
+    );
   const most = behind[0];
   if (most)
     parts.push(

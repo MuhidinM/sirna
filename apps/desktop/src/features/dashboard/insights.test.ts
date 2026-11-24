@@ -114,6 +114,23 @@ describe("the week in plain words", () => {
       "9 focus sessions this week. On target: Quran. Furthest behind: Job hunt (50 min of 4 h). 1 day past the focus cap. Next week is at 22% of your free time.",
     );
   });
+
+  it("calls time past a cap over it, not on target", () => {
+    expect(
+      weekSummary({
+        areas: [
+          { name: "Experiments", done_min: 270, target_min: 180, capped: true },
+          { name: "Quran", done_min: 140, target_min: 140 },
+          { name: "Reading", done_min: 60, target_min: 60, capped: true },
+        ],
+        sessions: 1,
+        overrunDays: 0,
+        nextWeekPercent: null,
+      }),
+    ).toBe(
+      "1 focus session this week. On target: Quran, Reading. Over its cap: Experiments (4 h 30 of 3 h).",
+    );
+  });
 });
 
 describe("review fixes", () => {

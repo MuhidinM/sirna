@@ -24,7 +24,8 @@ export const FOCUS_DONE_SHARE = 0.8;
 
 /**
  * How far a block has got: focus minutes against its length, and whether it
- * counts as done (marked done, or focused for 80% of its length).
+ * counts as done (marked done, or focused for 80% of its length). A skipped
+ * block is never done: that is how "Not done" sticks on a focused block.
  */
 export function blockProgress(
   block: Pick<BlockRow, "start_at" | "end_at" | "status" | "focused_min">,
@@ -38,9 +39,31 @@ export function blockProgress(
   return {
     focusedMin,
     lengthMin,
-    done: block.status === "done" || focusedMin >= Math.ceil(lengthMin * FOCUS_DONE_SHARE),
+    done:
+      block.status === "done" ||
+      (block.status !== "skipped" && focusedMin >= Math.ceil(lengthMin * FOCUS_DONE_SHARE)),
   };
 }
+
+type Tickable = Pick<BlockRow, "start_at" | "end_at" | "status" | "focused_min">;
+
+/**
+ * The status a tick on a block writes (review step 1, the block editor): an
+ * open block becomes done; a marked one goes back to planned; one done by
+ * focus alone becomes skipped, since planned would still count it done.
+ */
+export function doneToggle(block: Tickable): "done" | "planned" | "skipped" {
+  if (!blockProgress(block).done) return "done";
+  return blockProgress({ ...block, status: "planned" }).done ? "skipped" : "planned";
+}
+
+/** Skip, or take a skip back. */
+export function skipToggle(block: Pick<BlockRow, "status">): "planned" | "skipped" {
+  return block.status === "skipped" ? "planned" : "skipped";
+}
+
+/** Marked done or skipped: over, so never Now or Next. */
+const settled = (block: BlockRow) => block.status === "done" || block.status === "skipped";
 
 export const TODAY_BLOCKS_SQL = `
   SELECT b.id, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title, b.status,
@@ -62,8 +85,12 @@ export interface NowAndNext {
   minutesToNext: number | undefined;
 }
 
-/** The block covering `nowMs` (the shortest one when they overlap), and the next to start. */
-export function nowAndNext(blocks: BlockRow[], nowMs: number): NowAndNext {
+/**
+ * The block covering `nowMs` (the shortest one when they overlap), and the
+ * next to start. Blocks marked done or skipped are left out.
+ */
+export function nowAndNext(all: BlockRow[], nowMs: number): NowAndNext {
+  const blocks = all.filter((block) => !settled(block));
   const covering = blocks
     .filter((block) => block.start_at <= nowMs && nowMs < block.end_at && block.kind !== "rest")
     .sort((a, b) => a.end_at - a.start_at - (b.end_at - b.start_at));

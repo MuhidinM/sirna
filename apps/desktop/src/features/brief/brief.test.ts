@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
 import { type BlockRow } from "../plan/now";
-import { type BriefInput, buildBrief, loadLabel, MAX_LINES, WEEK_SQL, weekStart } from "./brief";
+import {
+  type BriefInput,
+  buildBrief,
+  loadLabel,
+  MAX_LINES,
+  moneyLines,
+  WEEK_SQL,
+  weekStart,
+} from "./brief";
 
 const at = (hhmm: string, date = "2026-11-11") => Date.parse(`${date}T${hhmm}:00+03:00`);
 
@@ -113,9 +121,23 @@ describe("buildBrief", () => {
     });
     expect(render(lines).filter((line) => /Rent|Job A pay|Third/.test(line))).toEqual([
       "MONEY | Rent 6,000 ETB due today",
-      "Job A pay is late: 18,000 ETB expected on 10 Nov",
+      "Job A pay is late: 18,000 ETB expected on 10 Nov | +1 more",
     ]);
     expect(lines.length).toBeLessThanOrEqual(MAX_LINES);
+  });
+
+  it("says how many money lines didn't fit", () => {
+    const lines = buildBrief({ ...input, due: ["A", "B", "C", "D"] });
+    expect(render(lines).filter((line) => /^(MONEY \| )?[ABCD]\b/.test(line))).toEqual([
+      "MONEY | A",
+      "B | +2 more",
+    ]);
+  });
+
+  it("dates the day it is, not the calendar: 00:30 is still the evening before", () => {
+    const late = Date.parse("2026-11-25T00:30:00+03:00");
+    const [first] = buildBrief({ ...input, nowMs: late, today: "2026-11-24" });
+    expect(first).toEqual({ label: "", text: "Tue 24 Nov", meta: "00:30" });
   });
 
   it("leaves skipped blocks out", () => {
@@ -141,6 +163,19 @@ describe("buildBrief", () => {
 
   it("is just the date on an empty day", () => {
     expect(buildBrief({ ...input, blocks: [], top: [], week: [] })).toHaveLength(1);
+  });
+});
+
+describe("moneyLines", () => {
+  it("gives a loan follow-up a slot beside the bills", () => {
+    expect(moneyLines(["Iddir 1", "Iddir 2"], ["Ask Hana", "Ask Dawit"])).toEqual([
+      "Iddir 1",
+      "Ask Hana",
+      "Iddir 2",
+      "Ask Dawit",
+    ]);
+    expect(moneyLines(["Iddir 1", "Iddir 2"], [])).toEqual(["Iddir 1", "Iddir 2"]);
+    expect(moneyLines([], ["Ask Hana", "Ask Dawit"])).toEqual(["Ask Hana", "Ask Dawit"]);
   });
 });
 
@@ -249,5 +284,19 @@ describe("WEEK_SQL", () => {
     const done = Object.fromEntries(rows.map((r) => [r.id, r.done_min]));
     expect(done).toMatchObject({ coding: 45, gym: 45, quran: 0, jobhunt: 0 });
     expect(done).not.toHaveProperty("joba");
+  });
+
+  it("counts a habit block focused and marked done once", () => {
+    const db = openTestDb();
+    db.prepare(
+      `INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, status, created_at, updated_at)
+       VALUES ('qb', '2026-11-10', ?, ?, 'routine', 'quran', 'Quran', 'done', 0, 0)`,
+    ).run(at("06:00", "2026-11-10"), at("06:20", "2026-11-10"));
+    db.prepare(
+      `INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, paused_ms, ended_at)
+       VALUES ('s', 'qb', 'focus', ?, 20, 0, ?)`,
+    ).run(at("06:00", "2026-11-10"), at("06:20", "2026-11-10"));
+    const rows = db.prepare(WEEK_SQL).all(weekStart(at("12:00")), at("12:00"));
+    expect(rows.find((r) => r.id === "quran")?.done_min).toBe(20);
   });
 });

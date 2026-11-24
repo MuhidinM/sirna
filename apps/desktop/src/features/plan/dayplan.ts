@@ -6,6 +6,7 @@ import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
 import { localToEpoch } from "../../capture/when";
 import { type PlannedProject, runsIn } from "../projects/capacity";
+import { AWAY_SQL, awayUntil } from "./away";
 import {
   type AreaInput,
   cut,
@@ -486,6 +487,12 @@ export function ensureDayPlan(
   return run;
 }
 
+/** True when `date` falls before the away return day (`away till mon`). */
+export async function isAwayOn(query: Query, date: string): Promise<boolean> {
+  const [row] = await query<{ value_json: string }>(AWAY_SQL).catch(() => []);
+  return awayUntil(row?.value_json, date) !== undefined;
+}
+
 /** A Rest block this long makes a rest day; a shorter one is just time off. */
 export const REST_DAY_MIN = 6 * 60;
 
@@ -962,6 +969,9 @@ async function planOnce(
   newId: () => string,
   nowMs: number,
 ): Promise<boolean> {
+  // Away days get no plan, and a plan made before stays as it was (plan
+  // §3.11): you come back to a fresh plan, not one made while you were gone.
+  if (await isAwayOn(query, date)) return false;
   const [exists] = await query<{ n: number }>(PLAN_EXISTS_SQL, [date]);
   // A day already gone stays as it was.
   if ((exists?.n ?? 0) > 0)

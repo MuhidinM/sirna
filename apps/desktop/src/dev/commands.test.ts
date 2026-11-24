@@ -42,6 +42,17 @@ describe("captures", () => {
     expect(captureOpsAllowed([{ op: "update", table: "task_items", id: "x", values: {} }])).toBe(
       false,
     );
+    // `gym done`: a block's status, and nothing else about it.
+    const block = (values: Record<string, string>): Op => ({
+      op: "update",
+      table: "day_blocks",
+      id: "b",
+      values,
+    });
+    expect(captureOpsAllowed([block({ status: "done" })])).toBe(true);
+    expect(captureOpsAllowed([block({ status: "skipped" })])).toBe(true);
+    expect(captureOpsAllowed([block({ status: "planned" })])).toBe(false);
+    expect(captureOpsAllowed([block({ title: "x" })])).toBe(false);
   });
 
   it("stores the line, its records and the parser, and reports the tables", () => {

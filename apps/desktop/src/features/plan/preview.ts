@@ -14,7 +14,7 @@ import {
   TASK_BLOCK_MIN,
   type TaskInput,
 } from "./generate";
-import { loadPlanInput, type Query, shiftDate, weekStart } from "./dayplan";
+import { isAwayOn, loadPlanInput, type Query, shiftDate, weekStart } from "./dayplan";
 
 export const PREVIEW_DAYS = 7;
 
@@ -29,6 +29,8 @@ export interface PreviewBlock {
 export interface PreviewDay {
   date: string;
   light: boolean;
+  /** Before the away return day: no plan and no time for tasks (plan §3.11). */
+  away?: boolean;
   /** Focus blocks only: what the planner fills free time with. */
   blocks: PreviewBlock[];
 }
@@ -53,7 +55,10 @@ export interface WeekPreview {
  * it still needs the next; a task without an estimate is done after its first
  * block. Area minutes planned earlier in the same week count toward its target.
  */
-export function previewWeek(inputs: PlanInput[]): WeekPreview {
+export function previewWeek(
+  inputs: PlanInput[],
+  awayDates: ReadonlySet<string> = new Set(),
+): WeekPreview {
   const left = new Map<string, number | null>(); // task id → minutes still needed (null: one block)
   const finished = new Map<string, string>(); // task id → day the plan finishes it
   const plannedByWeek = new Map<string, Record<string, number>>(); // monday → area → minutes
@@ -64,6 +69,12 @@ export function previewWeek(inputs: PlanInput[]): WeekPreview {
 
   for (const input of inputs) {
     for (const task of input.tasks) if (!allTasks.has(task.id)) allTasks.set(task.id, task);
+    // Away: nothing planned, so tasks carry over to the days you are back.
+    if (awayDates.has(input.date)) {
+      leftAtEnd.set(input.date, new Map(left));
+      days.push({ date: input.date, light: false, away: true, blocks: [] });
+      continue;
+    }
     const monday = weekStart(input.date);
     const already = plannedByWeek.get(monday) ?? {};
     const tasks = input.tasks
@@ -173,11 +184,15 @@ export async function loadPreview(
   nowMs: number,
 ): Promise<WeekPreview> {
   const inputs: PlanInput[] = [];
-  for (let i = 0; i < PREVIEW_DAYS; i++)
-    inputs.push(await loadPlanInput(query, shiftDate(today, i)));
+  const away = new Set<string>();
+  for (let i = 0; i < PREVIEW_DAYS; i++) {
+    const date = shiftDate(today, i);
+    inputs.push(await loadPlanInput(query, date));
+    if (await isAwayOn(query, date)) away.add(date);
+  }
   const first = inputs[0];
   if (first) inputs[0] = fromNow(first, Math.round((nowMs - localToEpoch(today, 0)) / 60_000));
-  return previewWeek(inputs);
+  return previewWeek(inputs, away);
 }
 
 /** Move earlier: plan the task for today, so it gets the first free time. */

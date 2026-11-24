@@ -48,7 +48,7 @@ export function FocusWeek({ today }: { today: string }) {
       highlight: day === today,
       tipTitle: day === today ? "Today" : showDate(day, today, { weekday: true }),
       tip: [
-        { label: "Planned", value: hours(plan), tone: "yellow" },
+        { label: "Focus planned", value: hours(plan), tone: "yellow" },
         { label: "Focused", value: hours(done), tone: "cream" },
       ],
     };
