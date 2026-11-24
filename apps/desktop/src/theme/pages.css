@@ -107,6 +107,28 @@
 
 /* --- Today ---------------------------------------------------------------------------------- */
 
+/* The Now card (and the focus timer) sit in the side column on a wide window.
+   Below 1200px that column drops under the board, so they move to the top of
+   the main column: Start focus stays on the first screen. */
+.today-now.in-side {
+  display: contents;
+}
+
+.today-now.in-main {
+  display: none;
+}
+
+@media (max-width: 1199px) {
+  .today-now.in-side {
+    display: none;
+  }
+
+  .today-now.in-main {
+    display: grid;
+    gap: var(--frame-gap);
+  }
+}
+
 .today-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
