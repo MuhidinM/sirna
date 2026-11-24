@@ -124,7 +124,7 @@ export const CHOSEN_TOP_SQL =
  * focus session ran in (a capture heals today's plan mid-session).
  */
 export const KEPT_BLOCKS_SQL = `
-  SELECT id, start_at, end_at, task_id, title, kind, area_id FROM day_blocks
+  SELECT id, start_at, end_at, task_id, title, kind, area_id, project_id FROM day_blocks
   WHERE logical_date = ? AND deleted_at IS NULL
     AND (source = 'user' OR user_edited_at IS NOT NULL
       OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`;
@@ -243,6 +243,7 @@ function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBloc
     title: block.title,
     kind: block.kind as TemplateBlock["kind"],
     areaId: block.area_id ?? null,
+    ...(block.project_id ? { projectId: block.project_id } : {}),
   };
 }
 
@@ -568,9 +569,14 @@ export async function replanAround(
   const live = await query<LiveRow>(LIVE_BLOCKS_SQL, [date]);
   const moved = live.find((row) => row.id === blockId);
   if (!moved) return null;
+  // A task's own block holds the task's time or window (time first, rule 1):
+  // it stays put, like a block you placed.
+  const own = new Set(
+    (await query<{ id: string }>(OWN_TASK_BLOCKS_SQL, [date])).map((row) => row.id),
+  );
   const untouched = new Set(
     (await query<KeptRow>(STALE_BLOCKS_SQL, [date]))
-      .filter((block) => block.end_at > nowMs)
+      .filter((block) => block.end_at > nowMs && !own.has(block.id))
       .map((block) => block.id),
   );
   const slots = (
@@ -588,6 +594,12 @@ export async function replanAround(
   await transact(bump.ops);
   return bump.undo;
 }
+
+/** A day's live blocks that are a task's own block (its title is the task's). */
+export const OWN_TASK_BLOCKS_SQL = `
+  SELECT b.id FROM day_blocks b
+  JOIN task_items t ON t.id = b.task_id AND t.title = b.title
+  WHERE b.logical_date = ? AND b.deleted_at IS NULL`;
 
 const QUARTER_MS = 15 * 60_000;
 
@@ -682,24 +694,51 @@ export function bumpOps(
 
 /**
  * The undo `replanAround` gave, as it stands now: a block it moved that you
- * have since moved or focused in is yours and stays. Run the result as the
- * system, not as you, so the blocks it puts back stay untouched planner
- * blocks that heals and replans may still change.
+ * have since moved or focused in is yours and stays; one a heal or replan
+ * has deleted since stays gone (the day was planned again without it), and
+ * none comes back onto a live block of the same name and start. Run the
+ * result as the system, not as you, so the blocks it puts back stay
+ * untouched planner blocks that heals and replans may still change.
  */
 export async function replanUndoOps(query: Query, undo: Op[]): Promise<Op[]> {
   const ids = undo.map((op) => op.id);
   if (ids.length === 0) return undo;
-  const kept = new Set(
-    (
-      await query<{ id: string }>(
-        `SELECT id FROM day_blocks WHERE id IN (${ids.map(() => "?").join(", ")})
-          AND (user_edited_at IS NOT NULL
-            OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`,
-        ids,
-      )
-    ).map((row) => row.id),
+  const rows = await query<{
+    id: string;
+    logical_date: string;
+    start_at: number;
+    deleted: number;
+    yours: number;
+  }>(
+    `SELECT id, logical_date, start_at, deleted_at IS NOT NULL AS deleted,
+       (user_edited_at IS NOT NULL
+         OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)) AS yours
+     FROM day_blocks WHERE id IN (${ids.map(() => "?").join(", ")})`,
+    ids,
   );
-  return undo.filter((op) => !kept.has(op.id));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const dates = [...new Set(rows.map((row) => row.logical_date))];
+  const live =
+    dates.length === 0
+      ? []
+      : await query<{ id: string; start_at: number; title: string }>(
+          `SELECT id, start_at, title FROM day_blocks WHERE deleted_at IS NULL
+             AND logical_date IN (${dates.map(() => "?").join(", ")})`,
+          dates,
+        );
+  return undo.filter((op) => {
+    const row = byId.get(op.id);
+    if (!row) return false;
+    if (row.yours === 1) return false;
+    const values = ("values" in op ? op.values : {}) as { start_at?: number; title?: string };
+    // The replan's own delete leaves the block where it was; a block moved
+    // and then deleted was deleted since.
+    if (row.deleted === 1 && row.start_at !== values.start_at) return false;
+    return !live.some(
+      (other) =>
+        other.id !== op.id && other.start_at === values.start_at && other.title === values.title,
+    );
+  });
 }
 
 /** Days from today on that have a plan. */
@@ -1014,11 +1053,38 @@ export async function healPlans(
     today,
     shiftDate(today, 7),
   ]);
+  // Each day's heal loads the chain of the days before it: one run reads the
+  // same rows again and again. They are read once until something is written.
+  const memo = memoQuery(query);
+  const write = (ops: Op[]) => {
+    memo.clear();
+    return transact(ops);
+  };
   const healed: string[] = [];
   for (const { logical_date: date } of days) {
-    if (await ensureDayPlan(query, transact, nowMs, newId, date)) healed.push(date);
+    if (await ensureDayPlan(memo.query, write, nowMs, newId, date)) healed.push(date);
   }
   return healed;
+}
+
+/**
+ * `query` with each answer kept by its SQL and parameters until `clear` (a
+ * write). Callers get their own copy of the list.
+ */
+export function memoQuery(query: Query): { query: Query; clear: () => void } {
+  const seen = new Map<string, Promise<Row[]>>();
+  const cached: Query = <T extends Row>(sql: string, params: SqlValue[] = []) => {
+    const key = JSON.stringify([sql, params]);
+    let answer = seen.get(key);
+    if (!answer) {
+      answer = query<Row>(sql, params);
+      seen.set(key, answer);
+      // A failed read is tried again next time.
+      answer.catch(() => seen.delete(key));
+    }
+    return answer.then((rows) => rows.map((row) => ({ ...row })) as T[]);
+  };
+  return { query: cached, clear: () => seen.clear() };
 }
 
 async function planOnce(

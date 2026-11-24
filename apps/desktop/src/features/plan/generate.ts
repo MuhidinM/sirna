@@ -109,6 +109,8 @@ export interface KeptBlock {
   kind?: TemplateBlock["kind"];
   /** Its area: a timed task of that area inside it is listed there (rule 1). */
   areaId?: string | null;
+  /** Its project: a kept project block is the project's time, not its area's. */
+  projectId?: string | null;
 }
 
 export interface PlanInput {
@@ -351,9 +353,12 @@ export function generateDay(input: PlanInput): DayPlan {
   // A focus block kept from earlier today (over, edited or focused in) is
   // today's time for its area: a replan doesn't give that area a second slot
   // ahead of an area with a task due (F12).
-  for (const block of input.kept)
-    if (block.kind === "area" && block.areaId)
-      planned[block.areaId] = (planned[block.areaId] ?? 0) + block.durationMin;
+  for (const block of input.kept) {
+    if (block.kind !== "area") continue;
+    const key =
+      block.projectId && running.has(block.projectId) ? projectKey(block.projectId) : block.areaId;
+    if (key) planned[key] = (planned[key] ?? 0) + block.durationMin;
+  }
   /** Time tasks took for themselves: it comes out of the focus slots. */
   const taken: { startMin: number; durationMin: number }[] = [];
   const addTaskBlock = (task: TaskInput, startMin: number, durationMin: number) => {

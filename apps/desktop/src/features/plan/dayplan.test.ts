@@ -9,6 +9,7 @@ import {
   healPlans,
   isoWeekday,
   loadPlanInput,
+  memoQuery,
   type OpenTaskRow,
   replanAround,
   replanDay,
@@ -381,6 +382,16 @@ describe("ensureDayPlan", () => {
     // The project's task isn't put in the area's own slot too.
     expect(rows.filter((r) => r.task_id === "tour")).toHaveLength(1);
     expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
+  });
+
+  it("keeps a kept project block's project (F50)", async () => {
+    const h = harness();
+    h.db.exec(
+      `INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, project_id, title, source, user_edited_at, created_at, updated_at) VALUES
+       ('p', '2026-11-11', 0, 3600000, 'area', 'coding', 'go', 'learn Go: Go tour', 'generator', 5, 0, 0)`,
+    );
+    const input = await loadPlanInput(h.query, "2026-11-11");
+    expect(input.kept).toEqual([expect.objectContaining({ areaId: "coding", projectId: "go" })]);
   });
 
   it("counts focus started for an area with no block, this week only (F21)", async () => {
@@ -1398,5 +1409,90 @@ describe("a block moved by a command onto a planner block (F15)", () => {
     expect(others(after)).toEqual(others(before));
     apply(h.db, undo ?? []);
     expect(rows().find((b) => b.id === evening.id)).toEqual(evening);
+  });
+
+  /** Wed planned with a timed task, "move gym to 6pm" applied (reg1-4). */
+  async function gymOnTimedTask() {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    const WED = "2026-11-18";
+    const at = (time: string) => Date.parse(`${WED}T${time}:00+03:00`);
+    h.db
+      .prepare(
+        `INSERT INTO task_items (id, title, status, area_id, due_date, due_at, estimate_min, created_at, updated_at)
+         VALUES ('bank', 'Call bank', 'todo', 'admin', ?, ?, 30, 0, 0)`,
+      )
+      .run(WED, at("18:00"));
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, WED);
+    const rows = () =>
+      h.db
+        .prepare(
+          `SELECT id, start_at, end_at, title FROM day_blocks
+           WHERE logical_date = ? AND deleted_at IS NULL ORDER BY start_at`,
+        )
+        .all(WED) as { id: string; start_at: number; end_at: number; title: string }[];
+    const before = rows();
+    const gym = before.find((b) => b.title === "Gym");
+    const bank = before.find((b) => b.title === "Call bank");
+    if (!gym || !bank) throw new Error("expected Gym and Call bank");
+    expect(bank.start_at).toBe(at("18:00"));
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
+      .run(at("18:00"), at("18:45"), gym.id);
+    const undo = (await replanAround(h.query, h.transact, WED, gym.id, h.newId, LATE)) ?? [];
+    return { h, WED, at, rows, bank, undo };
+  }
+
+  it("leaves a timed task's own block at its time (reg1-4)", async () => {
+    const { h, WED, rows, bank, undo } = await gymOnTimedTask();
+    expect(rows().find((b) => b.id === bank.id)).toEqual(bank);
+    expect(undo.some((op) => op.id === bank.id)).toBe(false);
+    // Nothing for a heal to fix afterwards.
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).not.toContain(WED);
+  });
+
+  it("undo leaves out a moved block deleted since (reg1-4)", async () => {
+    const { h, rows, undo } = await gymOnTimedTask();
+    const moved = undo.find((op) => op.op === "upsert");
+    if (!moved || moved.op !== "upsert") throw new Error("expected a block that made room");
+    const block = rows().find((b) => b.id === moved.id);
+    if (!block) throw new Error("expected the moved block");
+    // A heal deleted it and made a fresh block at its old time.
+    const v = moved.values;
+    h.db.prepare("UPDATE day_blocks SET deleted_at = 9 WHERE id = ?").run(moved.id);
+    h.db
+      .prepare(
+        `INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, title, source, created_at, updated_at)
+         VALUES ('fresh', ?, ?, ?, 'area', ?, 'generator', 0, 0)`,
+      )
+      .run(...([v.logical_date, v.start_at, v.end_at, v.title] as never[]));
+    const now = await replanUndoOps(h.query, undo);
+    expect(now.some((op) => op.id === moved.id)).toBe(false);
+    expect(() => apply(h.db, now)).not.toThrow();
+  });
+});
+
+describe("memoQuery", () => {
+  it("reads each query once until a write clears it", async () => {
+    let reads = 0;
+    const memo = memoQuery(<T extends Row>() => {
+      reads += 1;
+      return Promise.resolve([{ n: reads }] as unknown as T[]);
+    });
+    const first = await memo.query<{ n: number }>("SELECT ?", [1]);
+    const [row] = first;
+    if (row) row.n = 99;
+    expect(await memo.query("SELECT ?", [1])).toEqual([{ n: 1 }]);
+    expect(await memo.query("SELECT ?", [2])).toEqual([{ n: 2 }]);
+    memo.clear();
+    expect(await memo.query("SELECT ?", [1])).toEqual([{ n: 3 }]);
   });
 });
