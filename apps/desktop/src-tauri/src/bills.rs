@@ -16,7 +16,7 @@ const REMINDED_KEY: &str = "bills.reminded";
 /// Money that goes up to this many days early still counts for the date.
 const EARLY_DAYS: i64 = 7;
 /// As LATE_KEEP_DAYS in regulars.ts: how far back an unpaid date is still worked out.
-const LATE_KEEP_DAYS: i64 = 31;
+const LATE_KEEP_DAYS: i64 = 366;
 
 // --- Dates ------------------------------------------------------------------------
 
@@ -722,8 +722,8 @@ mod tests {
         assert_eq!(
             window("2026-12-01"),
             (
-                "2026-10-01".into(),
-                "2026-09-24".into(),
+                "2025-11-29".into(),
+                "2025-11-22".into(),
                 "2026-12-01".into()
             )
         );

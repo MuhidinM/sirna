@@ -200,10 +200,12 @@ export const PAY_GRACE_DAYS = 3;
 /** Money that comes or goes up to this many days early still counts for the date. */
 export const EARLY_DAYS = 7;
 /**
- * An unpaid bill or pay stays on the list this many days after its date,
- * whatever its day of the month (F84), until you pay it or skip it.
+ * An unpaid bill or pay stays on the list until you pay it or skip it,
+ * whatever its day of the month (F84): dates are worked out this far back,
+ * a year, and never before you added the regular. A month was too short:
+ * an unpaid bill went with no notice.
  */
-export const LATE_KEEP_DAYS = 31;
+export const LATE_KEEP_DAYS = 366;
 
 /**
  * The dates to work out a month: occurrences from the start of last month

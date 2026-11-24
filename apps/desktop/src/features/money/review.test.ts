@@ -18,7 +18,8 @@ const regular = (over: Partial<RegularRow>): RegularRow => ({
   area_id: "joba",
   active: 1,
   job: "Job A",
-  created_at: 0,
+  // Added mid-October: earlier dates were never yours to pay (F84 keeps a year).
+  created_at: Date.parse("2026-10-15T12:00:00+03:00"),
   ...over,
 });
 const txn = (over: Partial<RegularTxn>): RegularTxn => ({
@@ -37,7 +38,7 @@ const view = (items: ReturnType<typeof dueItems>) =>
 describe("pay that comes after its month ends", () => {
   it("settles last month's date, not this month's", () => {
     const { from, txnFrom, to, shownFrom } = dueWindow("2026-11-14");
-    expect([from, txnFrom, shownFrom]).toEqual(["2026-10-01", "2026-09-24", "2026-11-01"]);
+    expect([from, txnFrom, shownFrom]).toEqual(["2025-11-13", "2025-11-06", "2026-11-01"]);
     const items = dueItems(
       [regular({})],
       [txn({ area_id: "joba", amount_minor: 1_800_000, local_date: "2026-11-02" })],
@@ -68,6 +69,7 @@ describe("pay that comes after its month ends", () => {
       rule_json: JSON.stringify({ every: "month", day: 25 }),
       category_id: "cat_phone",
       area_id: null,
+      created_at: Date.parse("2026-11-01T12:00:00+03:00"),
     });
     const paid = (date: string, what: string, minor: number) =>
       txn({ amount_minor: -minor, local_date: date, description: what });
@@ -118,12 +120,13 @@ describe("pay that comes after its month ends", () => {
     expect(
       on("2026-12-02", [paid("2026-12-01", "rent", 600_000), paid("2026-12-01", "rent", 600_000)]),
     ).toEqual([["rent", "2026-12-01", "paid", 0]]);
-    // One payment pays December; the missed November stays late for 31 days (F84).
+    // One payment pays December; the missed November stays late until paid or skipped (F84).
     expect(on("2026-12-02", [paid("2026-12-01", "rent", 600_000)])).toEqual([
       ["rent", "2026-11-01", "late", 600_000],
       ["rent", "2026-12-01", "paid", 0],
     ]);
-    expect(on("2026-12-03", [paid("2026-12-01", "rent", 600_000)])).toEqual([
+    expect(on("2026-12-20", [paid("2026-12-01", "rent", 600_000)])).toEqual([
+      ["rent", "2026-11-01", "late", 600_000],
       ["rent", "2026-12-01", "paid", 0],
     ]);
   });
