@@ -6,6 +6,7 @@
 import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
+import { SAVING_FLOW } from "../savings/savings";
 import {
   type Conversion,
   convert,
@@ -72,9 +73,13 @@ export const TXNS_SQL = `
   WHERE m.deleted_at IS NULL AND m.local_date >= ?1 AND m.local_date <= ?2
   ORDER BY m.local_date DESC, m.occurred_at DESC`;
 
-/** Money put aside (+) or taken out (−) of goals between ?1 and ?2. */
+/**
+ * Money put aside (+) or taken out (−) of goals between ?1 and ?2. Giving a
+ * goal money already in a savings account moves nothing, so it isn't
+ * saving; nor is a Check correction (SAVING_FLOW, F31).
+ */
 export const SAVED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor FROM savings_entries
-  WHERE deleted_at IS NULL AND local_date >= ?1 AND local_date <= ?2`;
+  WHERE deleted_at IS NULL AND local_date >= ?1 AND local_date <= ?2 AND ${SAVING_FLOW}`;
 
 /**
  * Spending per category per month for the 3 months before this one, and
