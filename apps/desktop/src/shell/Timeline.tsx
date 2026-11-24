@@ -43,11 +43,13 @@ import { systemClock } from "../kernel/clock";
 import {
   type BlockRow,
   blockProgress,
+  doneToggle,
   FOCUS_DONE_SHARE,
   firstStep,
   focusOffer,
   formatMinutes,
   nowAndNext,
+  skipToggle,
 } from "../features/plan/now";
 import { type FocusStatus, startFocus } from "./Focus";
 import { IconPlus } from "./icons";
@@ -822,14 +824,15 @@ function BlockEditor({
         {block && (
           <Button
             onClick={() => {
-              const done = block.status === "done";
+              // Done counts focus too (80%), so "Not done" on a focused block skips it.
+              const done = blockProgress(block).done;
               onSave(
                 [
                   {
                     op: "update",
                     table: "day_blocks",
                     id: block.id,
-                    values: { status: done ? "planned" : "done" },
+                    values: { status: doneToggle(block) },
                   },
                 ],
                 done ? `${block.title}: not done.` : `${block.title}: done.`,
@@ -837,7 +840,21 @@ function BlockEditor({
               );
             }}
           >
-            {block.status === "done" ? "Not done" : "Mark done"}
+            {blockProgress(block).done ? "Not done" : "Mark done"}
+          </Button>
+        )}
+        {block && !blockProgress(block).done && (
+          <Button
+            onClick={() => {
+              const status = skipToggle(block);
+              onSave(
+                [{ op: "update", table: "day_blocks", id: block.id, values: { status } }],
+                status === "skipped" ? `${block.title}: skipped.` : `${block.title}: back on.`,
+                { [block.id]: blockBefore(block) },
+              );
+            }}
+          >
+            {block.status === "skipped" ? "Unskip" : "Skip"}
           </Button>
         )}
         {block && (
