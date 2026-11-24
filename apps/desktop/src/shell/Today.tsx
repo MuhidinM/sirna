@@ -406,14 +406,23 @@ export function Today({
   );
 }
 
+const ADD_AREAS_SQL = "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL";
+const ADD_CLOCK_SQL = "SELECT value_json FROM core_settings WHERE key = 'capture.clock_style'";
+
 /** "Add for today" (§5): a capture dated today, saved as typed first. */
 function AddForToday({ today }: { today: string }) {
+  // The capture bar's areas and clock, so a line reads the same here (F83).
+  const areas = useLiveQuery<{ id: string; name: string }>(ADD_AREAS_SQL);
+  const clock = useLiveQuery<{ value_json: string }>(ADD_CLOCK_SQL);
   const [text, setText] = useState("");
   const [said, setSaid] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const add = () => {
     const nowMs = systemClock.now();
-    const parsed = todayTask(text, today, nowMs);
+    const parsed = todayTask(text, today, nowMs, {
+      areas: areas.rows,
+      clockStyle: clock.rows[0]?.value_json === '"ethiopian"' ? "ethiopian" : "western",
+    });
     if (!parsed || parsed.kind !== "task" || saving) return;
     setSaving(true);
     void commitCapture(text.trim(), toOps(parsed, { nowMs, newId: () => ulid() }), PARSER_ID)

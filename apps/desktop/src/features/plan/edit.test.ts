@@ -318,6 +318,41 @@ describe("Add for today", () => {
       dueDate: DATE,
     });
   });
+
+  // F83: the same reading as the capture bar.
+  const areas = [
+    { id: "joba", name: "Job A" },
+    { id: "jobb", name: "Job B" },
+  ];
+
+  it("reads `for job a` as the area", () => {
+    expect(todayTask("update cv for job a", DATE, now, { areas })).toMatchObject({
+      kind: "task",
+      title: "update cv",
+      area: "joba",
+      dueDate: DATE,
+    });
+  });
+
+  it("drops a capture prefix from the title", () => {
+    expect(todayTask("idea: learn go", DATE, now, { areas })).toMatchObject({
+      kind: "task",
+      title: "learn go",
+      dueDate: DATE,
+    });
+    expect(todayTask("n: send CV for job b", DATE, now, { areas })).toMatchObject({
+      kind: "task",
+      title: "send CV",
+      area: "jobb",
+      dueDate: DATE,
+    });
+  });
+
+  it("reads Ethiopian times when that is your clock", () => {
+    // `at 9` in Ethiopian time is 15:00.
+    const task = todayTask("call bank at 9", DATE, now, { clockStyle: "ethiopian" });
+    expect(task).toMatchObject({ kind: "task", dueDate: DATE, dueAt: at(15 * 60) });
+  });
 });
 
 describe("Next 7 days columns", () => {
