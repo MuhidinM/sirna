@@ -35,7 +35,7 @@ export function localMinutes(nowMs: number): number {
   return ((minutes % 1440) + 1440) % 1440;
 }
 
-/** session::parse_hhmm: "06:30" â†’ 390. */
+/** session::parse_hhmm: "06:30" → 390. */
 export function parseHhmm(text: string): number | undefined {
   const at = text.indexOf(":");
   if (at < 0) return undefined;

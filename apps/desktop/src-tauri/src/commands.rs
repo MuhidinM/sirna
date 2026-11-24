@@ -678,9 +678,26 @@ mod tests {
         let txn = conn.transaction().unwrap();
         let raw =
             super::store_capture(&txn, "read ch 5", &task_op("t5", "read ch 5"), None, 1).unwrap();
+        // Put into a project and under a parent the way Plan > Tasks does it:
+        // a logged update. Links alone don't count as changing the task.
+        let mut links = Map::new();
+        links.insert("project_id".into(), "p1".into());
+        links.insert("parent_id".into(), "big".into());
+        links.insert("step_no".into(), 2.into());
+        crate::tx::apply_ops(
+            &txn,
+            "user",
+            None,
+            &[Op::Update {
+                table: "task_items".into(),
+                id: "t5".into(),
+                values: links,
+            }],
+            1,
+        )
+        .unwrap();
         txn.execute_batch(
-            "UPDATE task_items SET project_id = 'p1', parent_id = 'big', step_no = 2 WHERE id = 't5';
-             INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+            "INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
                VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
         )
         .unwrap();

@@ -18,6 +18,8 @@ describe("away (F41)", () => {
     expect(read("away for 3 days")).toEqual({ kind: "away", until: "2026-11-27" });
     expect(read("away for a week")).toEqual({ kind: "away", until: "2026-12-01" });
     expect(read("away for 2 weeks")).toEqual({ kind: "away", until: "2026-12-08" });
+    expect(read("away for eight days")).toEqual({ kind: "away", until: "2026-12-02" });
+    expect(read("away for twelve days")).toEqual({ kind: "away", until: "2026-12-06" });
   });
 
   it("never promises a day that is already here", () => {

@@ -128,6 +128,20 @@ describe("undoing or fixing a capture you changed since (F2, F65)", () => {
     ]);
   });
 
+  it("still fixes a task you only put into a project or under a parent", () => {
+    const { c, blocked, edit } = setup();
+    c.run(
+      "INSERT INTO project_items (id, title, status, created_at, updated_at) VALUES ('p1', 'cv', 'active', 0, 0)",
+    );
+    const { result: raw } = captureCommit(c, { rawText: "buy stamps", ops: task("t1", "x") }, T);
+    edit([{ op: "update", table: "task_items", id: "t1", values: { project_id: "p1" } }]);
+    expect(blocked(raw, "fix")).toBeNull();
+    captureReplace(c, { rawId: raw, rawText: "buy stamps 5pm", ops: task("t2", "y") }, T + 2);
+    expect(c.all("SELECT id, project_id FROM task_items WHERE deleted_at IS NULL")).toEqual([
+      { id: "t2", project_id: "p1" },
+    ]);
+  });
+
   it("refuses an entry you edited on Money, and says when it is deleted", () => {
     const { c, blocked, edit } = setup();
     const lunch = captureCommit(c, { rawText: "lunch 120", ops: [spend("m1", -12000)] }, T).result;
@@ -160,6 +174,16 @@ describe("undoing or fixing a capture you changed since (F2, F65)", () => {
       T + 2,
     );
     expect(blocked(other.result)).toBeNull();
+  });
+
+  it("refuses an entry whose account was checked since, even when it matched", () => {
+    const { c, blocked, edit } = setup();
+    const raw = captureCommit(c, { rawText: "lunch 120", ops: [spend("m", -12000)] }, T).result;
+    // A matching check books no gap, only notes when it was done.
+    edit([{ op: "update", table: "money_accounts", id: "cash", values: { checked_at: T + 1 } }]);
+    expect(blocked(raw)).toBe(
+      "You checked Cash since. Undo it on Money > Ledger, then check Cash again.",
+    );
   });
 });
 

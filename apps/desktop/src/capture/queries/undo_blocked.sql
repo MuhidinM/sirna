@@ -2,9 +2,11 @@
 -- record the capture added (and the away setting it wrote), with
 --   inserted: 1 when the capture added the record,
 --   gone:     1 when that record has been deleted since,
---   changed:  1 when anything else has changed it since (an edit, a tick, a delete),
+--   changed:  1 when anything else has changed it since (an edit, a tick, a delete;
+--             not a task only put into a project or under a parent),
 --   checked:  the name of an account it moved that has been checked since
---             (a balance check booked a gap, or set the opening balance).
+--             (any balance check sets checked_at, a matching one too; older
+--             checks show as a booked gap or a changed opening balance).
 -- Undoing a record you have changed would throw your change away; undoing an
 -- entry after a check would move the balance off the number you typed.
 -- Rust reads the columns by position: keep this order.
@@ -25,7 +27,14 @@ SELECT a.entity_type,
        EXISTS (SELECT 1 FROM core_activity b
                WHERE b.entity_type = a.entity_type AND b.entity_id = a.entity_id
                  AND b.id > a.id AND (b.context IS NULL OR b.context != a.context)
-                 AND b.action != 'undo') AS changed,
+                 AND b.action != 'undo'
+                 -- Putting a task into a project or under a parent only
+                 -- links it: a fix carries those links over, so they don't count.
+                 AND NOT (a.entity_type = 'task_items' AND b.action = 'update'
+                          AND json_remove(b.before_json, '$.project_id', '$.parent_id', '$.step_no',
+                                          '$.updated_at', '$.user_edited_at')
+                           IS json_remove(b.after_json, '$.project_id', '$.parent_id', '$.step_no',
+                                          '$.updated_at', '$.user_edited_at'))) AS changed,
        (SELECT m.name FROM money_accounts m
         WHERE a.entity_type = 'money_txns' AND m.id = json_extract(a.after_json, '$.account')
           AND (EXISTS (SELECT 1 FROM money_txns r
@@ -35,8 +44,10 @@ SELECT a.entity_type,
                OR EXISTS (SELECT 1 FROM core_activity c
                           WHERE c.entity_type = 'money_accounts' AND c.entity_id = m.id
                             AND c.id > a.id AND c.action = 'update'
-                            AND json_extract(c.after_json, '$.opening_minor')
-                                IS NOT json_extract(c.before_json, '$.opening_minor')))) AS checked
+                            AND (json_extract(c.after_json, '$.checked_at')
+                                   IS NOT json_extract(c.before_json, '$.checked_at')
+                                 OR json_extract(c.after_json, '$.opening_minor')
+                                   IS NOT json_extract(c.before_json, '$.opening_minor'))))) AS checked
 FROM core_activity a
 WHERE a.context = ?1 AND a.action != 'undo'
   AND (a.action = 'insert' OR a.entity_type = 'core_settings')

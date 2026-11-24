@@ -338,7 +338,7 @@ export function todayTask(
   let parsed = parseCapture(raw, options);
   // An idea, note or money line is still a task here: read it as one, without its prefix.
   if (parsed.kind !== "task") {
-    parsed = parseCapture(`t: ${raw.replace(/^(?:t|n|idea|pin|fb)\s*:\s*/i, "")}`, options);
+    parsed = parseCapture(`t: ${raw.replace(/^(?:t|n|idea|pin|wait|fb)\s*:\s*/i, "")}`, options);
   }
   if (parsed.kind !== "task") return { kind: "task", title: raw, dueDate: today };
   return { ...parsed, dueDate: parsed.dueDate ?? today };

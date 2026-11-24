@@ -334,6 +334,12 @@ describe("Add for today", () => {
     });
   });
 
+  it("reads a wait: line as a task without its prefix", () => {
+    const task = todayTask("wait: recruiter reply", DATE, now, { areas });
+    expect(task).toMatchObject({ kind: "task", dueDate: DATE });
+    expect(task?.kind === "task" && task.title).not.toMatch(/^wait\s*:/i);
+  });
+
   it("drops a capture prefix from the title", () => {
     expect(todayTask("idea: learn go", DATE, now, { areas })).toMatchObject({
       kind: "task",
