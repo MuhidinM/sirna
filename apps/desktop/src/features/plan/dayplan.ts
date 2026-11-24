@@ -10,6 +10,7 @@ import {
   type DayPlan,
   type DayWindow,
   generateDay,
+  hasEstimate,
   type KeptBlock,
   type PlannedBlock,
   type PlanInput,
@@ -522,25 +523,86 @@ export async function healDay(
 ): Promise<boolean> {
   const { input, stale } = await replanInput(query, date, nowMs);
   if (input.template.length === 0) return false;
+  const orphans = orphanOps(input, stale);
+  if (orphans.refill) {
+    await replanDay(query, transact, date, newId, nowMs);
+    return true;
+  }
   const existing = await query<{ task_id: string; start_at: number; title: string }>(
     DAY_TASK_BLOCKS_SQL,
     [date],
   );
   const plan = generateDay(input);
   const missing = missingTaskBlocks(plan, input, existing);
-  if (missing.length === 0) return false;
-  const quick = healOps(
-    plan,
-    input,
-    missing,
-    date,
-    newId,
-    await query<LiveRow>(LIVE_BLOCKS_SQL, [date]),
-    stale,
+  if (missing.length === 0) {
+    if (orphans.ops.length === 0) return false;
+    await transact(orphans.ops);
+    return true;
+  }
+  const live = (await query<LiveRow>(LIVE_BLOCKS_SQL, [date])).filter(
+    (row) => !orphans.dropped.has(row.id),
   );
-  if (quick) await transact(quick);
+  const quick = healOps(plan, input, missing, date, newId, live, stale);
+  if (quick) await transact([...orphans.ops, ...quick]);
   else await replanDay(query, transact, date, newId, nowMs);
   return true;
+}
+
+/**
+ * Untouched blocks whose task changed since the day was planned (finished,
+ * dropped, deleted, moved to another day or area, renamed, lost its time):
+ * a task's own block that the planner wouldn't make any more goes; a renamed
+ * task's block takes the new name; a focus slot that lost its task makes the
+ * day planned again (`refill`), so the slot gets the area's next task. Pure;
+ * a day already in step gives nothing, so healing twice writes once.
+ */
+export function orphanOps(
+  input: PlanInput,
+  stale: {
+    id: string;
+    task_id: string | null;
+    title: string;
+    kind: string;
+    area_id?: string | null;
+  }[],
+): { ops: Op[]; dropped: Set<string>; refill: boolean } {
+  const tasks = new Map(input.tasks.map((task) => [task.id, task]));
+  const areas = new Map(input.areas.map((area) => [area.id, area]));
+  const ops: Op[] = [];
+  const dropped = new Set<string>();
+  let refill = false;
+  const drop = (id: string) => {
+    ops.push({ op: "delete", table: "day_blocks", id });
+    dropped.add(id);
+  };
+  const retitle = (id: string, title: string) =>
+    ops.push({ op: "update", table: "day_blocks", id, values: { title } });
+  for (const block of stale) {
+    if (block.task_id === null) continue;
+    const task = tasks.get(block.task_id);
+    const area = block.area_id ? areas.get(block.area_id) : undefined;
+    const timed = task !== undefined && ((task.atMin ?? null) !== null || !!task.window);
+    // A focus slot ("Coding skills: …") that holds a task, not the task's own block.
+    const slot =
+      block.kind === "area" &&
+      area !== undefined &&
+      block.title.startsWith(`${area.name}: `) &&
+      block.title !== task?.title;
+    if (slot) {
+      if (!task || timed || task.areaId !== block.area_id) {
+        drop(block.id);
+        refill = true;
+      } else if (block.title !== `${area.name}: ${task.title}`)
+        retitle(block.id, `${area.name}: ${task.title}`);
+      continue;
+    }
+    if (!task) drop(block.id);
+    else if (timed)
+      continue; // `missingTaskBlocks` moves it
+    else if (task.areaId !== null || !hasEstimate(task)) drop(block.id);
+    else if (block.title !== task.title) retitle(block.id, task.title);
+  }
+  return { ops, dropped, refill };
 }
 
 /** A day's live blocks, for `healOps`. */

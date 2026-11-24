@@ -733,3 +733,113 @@ describe("review fixes: replans keep what you moved and what is over", () => {
     expect(live(h, "Call bank").map((b) => b.start_at)).toContain(at("2026-11-11T17:00:00+03:00"));
   });
 });
+
+describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
+  const at = (iso: string) => Date.parse(iso);
+  const DAY = "2026-11-11";
+  const TOMORROW = "2026-11-12";
+  function planned() {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    return h;
+  }
+  const addTimed = (h: ReturnType<typeof harness>, id: string, title: string, dueAt: number) =>
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, due_at, due_date, created_at, updated_at) VALUES (?, ?, 'todo', ?, ?, 5, 5)",
+      )
+      .run(id, title, dueAt, DAY);
+  const liveOf = (h: ReturnType<typeof harness>, taskId: string, date = DAY) =>
+    h.db
+      .prepare(
+        "SELECT id, start_at, title, area_id FROM day_blocks WHERE task_id = ? AND logical_date = ? AND deleted_at IS NULL ORDER BY start_at",
+      )
+      .all(taskId, date) as { id: string; start_at: number; title: string; area_id: string }[];
+
+  it("drops a deleted task's block, once", async () => {
+    const h = planned();
+    addTimed(h, "bank", "call bank", at("2026-11-11T14:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    expect(liveOf(h, "bank")).toHaveLength(1);
+    h.db.prepare("UPDATE task_items SET deleted_at = 9 WHERE id = 'bank'").run();
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(liveOf(h, "bank")).toEqual([]);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+  });
+
+  it("a fixed capture keeps only the new time's block", async () => {
+    const h = planned();
+    addTimed(h, "a", "call bank", at("2026-11-11T14:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    // The fix deletes the old task and saves a new one at 16:00.
+    h.db.prepare("UPDATE task_items SET deleted_at = 9 WHERE id = 'a'").run();
+    addTimed(h, "b", "call bank", at("2026-11-11T16:00:00+03:00"));
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(liveOf(h, "a")).toEqual([]);
+    expect(liveOf(h, "b").map((b) => b.start_at)).toEqual([at("2026-11-11T16:00:00+03:00")]);
+    // Undo deletes the new one too: nothing is left.
+    h.db.prepare("UPDATE task_items SET deleted_at = 9 WHERE id = 'b'").run();
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(liveOf(h, "b")).toEqual([]);
+  });
+
+  it("drops the block of a task done or moved to another day", async () => {
+    const h = planned();
+    addTimed(h, "bank", "call bank", at("2026-11-11T14:00:00+03:00"));
+    addTimed(h, "rent", "pay rent", at("2026-11-11T19:00:00+03:00"));
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    h.db.prepare("UPDATE task_items SET status = 'done' WHERE id = 'bank'").run();
+    // The editor moved it to tomorrow and the time went with the old date.
+    h.db
+      .prepare("UPDATE task_items SET due_at = NULL, due_date = ? WHERE id = 'rent'")
+      .run(TOMORROW);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    expect(liveOf(h, "bank")).toEqual([]);
+    expect(liveOf(h, "rent")).toEqual([]);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+  });
+
+  it("gives a later day's focus slot another task when its task is done", async () => {
+    const h = planned();
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('cv', 'Update CV', 'todo', 'jobhunt', ?, 0, 0), ('apply', 'Apply to Kifiya', 'todo', 'jobhunt', NULL, 1, 1)",
+      )
+      .run(TOMORROW);
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    const [slot] = liveOf(h, "cv", TOMORROW);
+    expect(slot?.title).toBe("Job hunt: Update CV");
+    h.db.prepare("UPDATE task_items SET status = 'done' WHERE id = 'cv'").run();
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(liveOf(h, "cv", TOMORROW)).toEqual([]);
+    expect(liveOf(h, "apply", TOMORROW).map((b) => b.title)).toContain("Job hunt: Apply to Kifiya");
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+  });
+
+  it("renames a slot's task in place, and replans when it moves to another area", async () => {
+    const h = planned();
+    h.db
+      .prepare(
+        "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('cv', 'Update CV', 'todo', 'jobhunt', ?, 0, 0)",
+      )
+      .run(TOMORROW);
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    const [slot] = liveOf(h, "cv", TOMORROW);
+    h.db.prepare("UPDATE task_items SET title = 'Update my CV' WHERE id = 'cv'").run();
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(liveOf(h, "cv", TOMORROW)).toEqual([{ ...slot, title: "Job hunt: Update my CV" }]);
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+    h.db.prepare("UPDATE task_items SET area_id = 'coding' WHERE id = 'cv'").run();
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(liveOf(h, "cv", TOMORROW).map((b) => b.title)).toEqual(["Coding skills: Update my CV"]);
+    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+  });
+});
