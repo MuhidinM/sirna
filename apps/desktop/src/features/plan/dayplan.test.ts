@@ -764,6 +764,34 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
       )
       .all(taskId, date) as { id: string; start_at: number; title: string; area_id: string }[];
 
+  it("a capture takes only its own time out of a focus slot; nothing else moves (F12)", async () => {
+    const h = planned();
+    await ensureDayPlan(h.query, h.transact, NOW, h.newId);
+    const liveIds = () =>
+      (
+        h.db
+          .prepare(`SELECT id FROM day_blocks WHERE logical_date = '${DAY}' AND deleted_at IS NULL`)
+          .all() as { id: string }[]
+      ).map((row) => row.id);
+    const before = liveIds();
+    const slot = h.db
+      .prepare(
+        `SELECT id, start_at, end_at, title FROM day_blocks WHERE logical_date = '${DAY}' AND kind = 'area' AND start_at > ? AND end_at - start_at >= ? AND deleted_at IS NULL ORDER BY start_at LIMIT 1`,
+      )
+      .get(NOW, 50 * 60_000) as { id: string; start_at: number; end_at: number; title: string };
+    // "read a book" lands 25 minutes into the slot, for 30 minutes.
+    const startsAt = slot.start_at + 25 * 60_000;
+    addTimed(h, "book", "read a book", startsAt);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(true);
+    const after = new Set(liveIds());
+    for (const id of before) expect(after.has(id)).toBe(true);
+    expect(
+      h.db.prepare("SELECT start_at, end_at FROM day_blocks WHERE id = ?").get(slot.id),
+    ).toEqual({ start_at: slot.start_at, end_at: startsAt });
+    expect(liveOf(h, "book").map((b) => b.start_at)).toEqual([startsAt]);
+    expect(await ensureDayPlan(h.query, h.transact, NOW, h.newId)).toBe(false);
+  });
+
   it("drops a deleted task's block, once", async () => {
     const h = planned();
     addTimed(h, "bank", "call bank", at("2026-11-11T14:00:00+03:00"));

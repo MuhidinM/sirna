@@ -244,6 +244,25 @@ describe("generateDay", () => {
     expect(areaBlocks(plan).some((b) => b.areaId === "coding")).toBe(false);
   });
 
+  it("counts a focus block kept from earlier today as that area's time (F12)", () => {
+    const slot = {
+      startMin: 17 * 60,
+      durationMin: 60,
+      kind: "area" as const,
+      areaId: null,
+      title: "Focus block",
+    };
+    const plan = generateDay(
+      input({
+        template: [...templateFor(3).filter((b) => b.kind !== "area"), slot],
+        // The morning coding block is over; its overdue task is still open.
+        kept: [{ startMin: 6 * 60 + 30, durationMin: 75, kind: "area", areaId: "coding" }],
+        tasks: [task("about", "coding", "2026-11-10"), task("apply", "jobhunt", "2026-11-11")],
+      }),
+    );
+    expect(areaBlocks(plan).map((b) => b.taskId)).toEqual(["apply"]);
+  });
+
   it("gives a free Saturday three area blocks across different areas", () => {
     const plan = generateDay(input({ date: "2026-11-14", template: templateFor(6) }));
     const areas = areaBlocks(plan).map((b) => b.areaId);

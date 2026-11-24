@@ -319,6 +319,12 @@ export function generateDay(input: PlanInput): DayPlan {
   ]);
   const tasksLeft = input.tasks.filter((task) => !keptTasks.has(task.id));
   const planned: Record<string, number> = {};
+  // A focus block kept from earlier today (over, edited or focused in) is
+  // today's time for its area: a replan doesn't give that area a second slot
+  // ahead of an area with a task due (F12).
+  for (const block of input.kept)
+    if (block.kind === "area" && block.areaId)
+      planned[block.areaId] = (planned[block.areaId] ?? 0) + block.durationMin;
   /** Time tasks took for themselves: it comes out of the focus slots. */
   const taken: { startMin: number; durationMin: number }[] = [];
   const addTaskBlock = (task: TaskInput, startMin: number, durationMin: number) => {

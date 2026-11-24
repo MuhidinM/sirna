@@ -7,11 +7,13 @@ import { logicalDate } from "../../kernel/dates";
 import { localToEpoch } from "../../capture/when";
 import {
   type AreaInput,
+  cut,
   type DayPlan,
   type DayWindow,
   generateDay,
   hasEstimate,
   type KeptBlock,
+  MIN_BLOCK_MIN,
   type PlannedBlock,
   type PlanInput,
   type TaskInput,
@@ -606,8 +608,8 @@ export function orphanOps(
 }
 
 /** A day's live blocks, for `healOps`. */
-export const LIVE_BLOCKS_SQL = `SELECT id, start_at, end_at, kind, task_id, title FROM day_blocks
-  WHERE logical_date = ? AND deleted_at IS NULL`;
+export const LIVE_BLOCKS_SQL = `SELECT id, start_at, end_at, kind, task_id, title, area_id, light_day
+  FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL`;
 
 type LiveRow = {
   id: string;
@@ -616,12 +618,17 @@ type LiveRow = {
   kind: string;
   task_id: string | null;
   title: string;
+  area_id?: string | null;
+  light_day?: number;
 };
 
 /**
- * The writes that add only the missing tasks' own blocks, or null when one of
- * them would land on a focus block (a full replan then cuts that slot). A
- * task's old own block that the planner made and you didn't touch is removed.
+ * The writes that add only the missing tasks' own blocks. A focus slot the
+ * planner made and you didn't touch gives up the new block's time and keeps
+ * the rest (time first, rule 1: a task takes its time out of focus slots), so
+ * nothing else on the day moves. Null when a slot you edited or focused in is
+ * in the way (a full replan then plans around it). A task's old own block
+ * that the planner made and you didn't touch is removed.
  */
 export function healOps(
   plan: DayPlan,
@@ -641,21 +648,73 @@ export function healOps(
     (row) => row.task_id !== null && wanted.has(row.task_id) && untouched.has(row.id),
   );
   const gone = new Set(replaced.map((row) => row.id));
+  const dayStart = localToEpoch(input.date, 0);
   const at = (minutes: number) => localToEpoch(input.date, minutes);
+  const minuteOf = (ms: number) => Math.round((ms - dayStart) / 60000);
+  const titles = new Map(input.tasks.map((task) => [task.id, task.title]));
+  // A task's own block may sit beside another one; only focus slots give way.
+  const ownBlock = (row: LiveRow) => row.task_id !== null && titles.get(row.task_id) === row.title;
+  /** What is left of each focus slot a new block cuts into. */
+  const cuts = new Map<
+    string,
+    { row: LiveRow; pieces: { startMin: number; durationMin: number }[] }
+  >();
   for (const block of adds) {
     const start = at(block.startMin);
     const end = at(block.startMin + block.durationMin);
-    const inTheWay = live.some(
-      (row) => !gone.has(row.id) && row.kind === "area" && row.start_at < end && start < row.end_at,
-    );
     // The same title at the same minute is one block (the database allows one).
     const clash = live.some(
       (row) => !gone.has(row.id) && row.title === block.title && row.start_at === start,
     );
-    if (inTheWay || clash) return null;
+    if (clash) return null;
+    for (const row of live) {
+      if (gone.has(row.id) || row.kind !== "area" || ownBlock(row)) continue;
+      if (!(row.start_at < end && start < row.end_at)) continue;
+      if (!untouched.has(row.id)) return null;
+      const entry = cuts.get(row.id) ?? {
+        row,
+        pieces: [
+          {
+            startMin: minuteOf(row.start_at),
+            durationMin: minuteOf(row.end_at) - minuteOf(row.start_at),
+          },
+        ],
+      };
+      entry.pieces = entry.pieces.flatMap((piece) => cut(piece, [block]));
+      cuts.set(row.id, entry);
+    }
   }
+  const trims: Op[] = [...cuts.values()].flatMap(({ row, pieces }): Op[] => {
+    const [first, ...rest] = pieces.filter((piece) => piece.durationMin >= MIN_BLOCK_MIN);
+    if (!first) return [{ op: "delete", table: "day_blocks", id: row.id }];
+    return [
+      {
+        op: "update",
+        table: "day_blocks",
+        id: row.id,
+        values: { start_at: at(first.startMin), end_at: at(first.startMin + first.durationMin) },
+      },
+      ...rest.map((piece): Op => ({
+        op: "insert",
+        table: "day_blocks",
+        id: newId(),
+        values: {
+          logical_date: date,
+          start_at: at(piece.startMin),
+          end_at: at(piece.startMin + piece.durationMin),
+          kind: row.kind,
+          area_id: row.area_id ?? null,
+          task_id: row.task_id,
+          title: row.title,
+          source: "generator",
+          light_day: row.light_day ?? 0,
+        },
+      })),
+    ];
+  });
   return [
     ...replaced.map(({ id }): Op => ({ op: "delete", table: "day_blocks", id })),
+    ...trims,
     ...planOps({ ...plan, blocks: adds }, date, newId, true),
   ];
 }
