@@ -111,6 +111,11 @@ export function formatMinutes(minutes: number): string {
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
+/** "~1 h 30 min": an estimate, to 5 minutes, in the app's one hour format (F96). */
+export function formatEstimate(minutes: number): string {
+  return `~${formatMinutes(Math.max(5, Math.round(minutes / 5) * 5))}`;
+}
+
 /** The first step to show for a block: its task, else the block's own title. */
 export function firstStep(block: BlockRow): string {
   return block.task_title ?? block.title;

@@ -8,6 +8,7 @@ import {
   firstStep,
   skipToggle,
   focusOffer,
+  formatEstimate,
   formatMinutes,
   nowAndNext,
   TODAY_BLOCKS_SQL,
@@ -152,5 +153,15 @@ describe("the focus time on a block (TODAY_BLOCKS_SQL)", () => {
       VALUES ('f1', 'b', 'focus', 0, 25, 300000, 1800000), ('f2', 'b', 'focus', 0, 25, 0, NULL)`);
     const [row] = db.prepare(TODAY_BLOCKS_SQL).all("2026-11-24") as { focused_min: number }[];
     expect(row?.focused_min).toBe(25);
+  });
+});
+
+describe("an estimate (formatEstimate, F96)", () => {
+  it("uses minutes and hours, never decimal hours", () => {
+    expect(formatEstimate(30)).toBe("~30 min");
+    expect(formatEstimate(45)).toBe("~45 min");
+    expect(formatEstimate(90)).toBe("~1 h 30 min");
+    expect(formatEstimate(120)).toBe("~2 h");
+    expect(formatEstimate(2)).toBe("~5 min");
   });
 });
