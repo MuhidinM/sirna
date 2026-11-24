@@ -406,6 +406,7 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
       return savingOps(parsed, context, savingGoal);
     case "search":
     case "away":
+    case "back":
     case "focus":
       return [];
     case "block":
@@ -442,8 +443,14 @@ function dayLabel(date: string, nowMs: number): string {
     "Nov",
     "Dec",
   ];
-  return `${weekdayName(date)} ${Number(day)} ${months[Number(month) - 1] ?? ""}`;
+  // Another year says which (F42): "Sat 25 Dec 2027".
+  const year = date.slice(0, 4) === today.slice(0, 4) ? "" : ` ${date.slice(0, 4)}`;
+  return `${weekdayName(date)} ${Number(day)} ${months[Number(month) - 1] ?? ""}${year}`;
 }
+
+/** "tomorrow" mid-line; a dated day ("Fri 27 Nov") keeps its capitals. */
+const midLine = (label: string) =>
+  label === "Today" || label === "Tomorrow" || label === "Yesterday" ? label.toLowerCase() : label;
 
 function timeLabel(epochMs: number): string {
   // Local Addis time, 24-hour (plan §3.5: the chip always shows a 24-hour time).
@@ -477,13 +484,22 @@ const pieceAccount = (item: MoneyItem) =>
 const bookedOn = (item: MoneyItem, nowMs: number) =>
   item.date && item.date !== logicalDate(nowMs) ? ` · ${dayLabel(item.date, nowMs)}` : "";
 
-/** One record of a several-item line, short: `lunch 120`, `lent Abel 1,500`. */
-export function pieceText(piece: MoneyPiece): string {
+/** " yesterday", " Mon 23 Nov": a piece booked on another day than today (reg2-9). */
+const pieceDay = (item: MoneyItem, nowMs: number | undefined) =>
+  nowMs !== undefined && item.date && item.date !== logicalDate(nowMs)
+    ? ` ${midLine(dayLabel(item.date, nowMs))}`
+    : "";
+
+/**
+ * One record of a several-item line, short: `lunch 120`, `lent Abel 1,500`.
+ * With `nowMs`, a piece on another day says which (`taxi 40 yesterday`).
+ */
+export function pieceText(piece: MoneyPiece, nowMs?: number): string {
   switch (piece.kind) {
     case "expense":
-      return `${piece.description} ${listAmount(piece.amount, piece.currency)}${pieceAccount(piece)}`;
+      return `${piece.description} ${listAmount(piece.amount, piece.currency)}${pieceDay(piece, nowMs)}${pieceAccount(piece)}`;
     case "income":
-      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}${pieceAccount(piece)}`;
+      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}${pieceDay(piece, nowMs)}${pieceAccount(piece)}`;
     case "saving":
       return `${piece.amount > 0 ? "saved" : "took out"} ${listAmount(Math.abs(piece.amount), piece.currency)}${piece.goal ? ` ${piece.goal}` : ""}${piece.unbacked ? ` (${piece.unbacked}, money stays put)` : ""}`;
     case "transfer":
@@ -534,20 +550,22 @@ export function balanceNote(
     : `${held}; ${formatNumber(parsed.amount)} birr would be ≈ ${formatAmount(birr, parsed.currency)}`;
 }
 
-/** "tomorrow" mid-line; a dated day ("Fri 27 Nov") keeps its capitals. */
-const midLine = (label: string) =>
-  label === "Today" || label === "Tomorrow" || label === "Yesterday" ? label.toLowerCase() : label;
-
 /** The short confirmation shown in the capture box. */
 export function echo(
   parsed: Parsed,
   nowMs: number,
   idea?: Placement,
   savingGoal?: SavingGoal | null,
-  /** Whether you have an active savings goal: "no goal yet" or "no goal named" (F76). */
-  goals: { hasGoals?: boolean } = {},
+  known: {
+    /** Whether you have an active savings goal: "no goal yet" or "no goal named" (F76). */
+    hasGoals?: boolean;
+    /** Your areas, so the echo names one ("Job A") rather than its id (F78). */
+    areas?: { id: string; name: string }[];
+  } = {},
 ): string {
-  const area = "area" in parsed && parsed.area ? ` · #${parsed.area}` : "";
+  const areaId = "area" in parsed ? parsed.area : undefined;
+  const areaName = areaId ? known.areas?.find((row) => row.id === areaId)?.name : undefined;
+  const area = areaName ? ` · ${areaName}` : areaId ? ` · #${areaId}` : "";
   switch (parsed.kind) {
     case "task": {
       if (parsed.waitingOn) {
@@ -564,13 +582,14 @@ export function echo(
               ? ` ${parsed.plannedWindow}`
               : "";
       // "tonight" typed after midnight is the calendar evening: say Tonight, not Tomorrow.
+      // With a time ("tonight 9pm") too, as typed (F86).
       const tonight =
-        parsed.plannedWindow === "evening" &&
-        parsed.dueAt === undefined &&
+        (parsed.tonight === true ||
+          (parsed.plannedWindow === "evening" && parsed.dueAt === undefined)) &&
         parsed.dueDate === localDate(nowMs) &&
         parsed.dueDate !== logicalDate(nowMs);
       const when = tonight
-        ? " · Tonight"
+        ? ` · Tonight${parsed.dueAt !== undefined ? span : ""}`
         : parsed.dueDate
           ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
           : parsed.estimateMin
@@ -608,7 +627,7 @@ export function echo(
         (item): item is MoneyItem => item.kind === "expense" && (item.currency ?? "ETB") === "ETB",
       );
       const total = out.reduce((sum, item) => sum + item.amount, 0);
-      const parts = parsed.items.map(pieceText);
+      const parts = parsed.items.map((item) => pieceText(item, nowMs));
       return `${parsed.items.length} entries · ${parts.join(", ")}${out.length ? ` · ${formatAmount(total)} out` : ""}`;
     }
     case "note":
@@ -627,6 +646,8 @@ export function echo(
     case "away":
       // With no day, set_away keeps you away until tomorrow (F41).
       return `Away until ${midLine(parsed.until ? dayLabel(parsed.until, nowMs) : "Tomorrow")}`;
+    case "back":
+      return "Back · away is off";
     case "focus":
       return "Focus";
     case "block":
@@ -636,7 +657,7 @@ export function echo(
       const where = savingGoal
         ? ` · ${savingGoal.title}`
         : savingGoal === null
-          ? goals.hasGoals
+          ? known.hasGoals
             ? " · no goal named: give it one on the Dashboard"
             : " · no goal yet: add one on the Dashboard"
           : "";

@@ -22,9 +22,14 @@ describe("away (F41)", () => {
     expect(read("away for twelve days")).toEqual({ kind: "away", until: "2026-12-06" });
   });
 
-  it("never promises a day that is already here", () => {
-    expect(read("away till today")).toEqual({ kind: "away" });
-    expect(read("away till yesterday")).toEqual({ kind: "away" });
+  it("refuses a day that is already here, saving nothing", () => {
+    const refused = {
+      kind: "inbox",
+      body: "",
+      why: "That day is already here: say the day you're back",
+    };
+    expect(read("away till today")).toEqual(refused);
+    expect(read("away till yesterday")).toEqual(refused);
     expect(read("away till fri")).toEqual({ kind: "away", until: "2026-11-27" });
   });
 

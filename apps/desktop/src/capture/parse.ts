@@ -4,7 +4,7 @@
  * The live chip and the save use this same function.
  */
 import { logicalDate } from "../kernel/dates";
-import { formatAmount, parseAmount, type Santim } from "../kernel/money";
+import { formatAmount, formatNumber, parseAmount, type Santim } from "../kernel/money";
 import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
@@ -28,6 +28,8 @@ export type Parsed =
       /** The area is one of yours (not just any `#tag`): the task goes on its list. */
       areaKnown?: boolean;
       waitingOn?: string;
+      /** `tonight` said after midnight: the echo says Tonight, not Tomorrow (F86). */
+      tonight?: boolean;
       /** `every fri`: a new copy comes once this one is done (T-068). */
       repeat?: Rule;
     }
@@ -71,6 +73,8 @@ export type Parsed =
   | { kind: "cheat"; body: string; area?: string }
   | { kind: "search"; query: string }
   | { kind: "away"; until?: string }
+  /** `back`, `i'm back`: away ends now (F41). */
+  | { kind: "back" }
   | SavingItem
   | { kind: "focus" }
   /** `gym done`, `skipped gym` (plan §3.5): one of today's blocks, ticked or skipped. */
@@ -362,7 +366,49 @@ function repaymentProblem(parsed: LoanItem, code: string, options: ParseOptions)
   return `${said}, not ${formatAmount(parsed.amount, code)}: write the ${formatAmount(owed, code)} paid back, and the rest as a new loan`;
 }
 
+/** `abel owes me 1000`, `i owe kebede 200`, `i owe 200 to kebede`: a debt said, not a payment. */
+const OWES_FORMS: [RegExp, "lent" | "borrowed", "amount-first" | "person-first"][] = [
+  [
+    new RegExp(String.raw`^${LOAN_PERSON}\s+owes\s+me\s+${LOAN_AMOUNT}$`, "iu"),
+    "lent",
+    "person-first",
+  ],
+  [
+    new RegExp(String.raw`^i\s+owe\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`, "iu"),
+    "borrowed",
+    "amount-first",
+  ],
+  [
+    new RegExp(String.raw`^i\s+owe\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    "borrowed",
+    "person-first",
+  ],
+];
+
+/**
+ * "abel owes me 1000" is a loan, never spending (reg2-3). It says nothing
+ * about money moving today, so it is kept for tonight with the line that
+ * records it as a loan.
+ */
+function readOwes(text: string, options: ParseOptions): Stuck | undefined {
+  for (const [pattern, kind, order] of OWES_FORMS) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const [amountText, person] =
+      order === "amount-first" ? [match[1], match[2]] : [match[2], match[1]];
+    const amount = parseAmount(amountText ?? "");
+    if (amount === null || amount <= 0 || !person || !isPerson(person, options)) continue;
+    const name = person.trim().toLowerCase();
+    const said = formatNumber(amount);
+    const line = kind === "lent" ? `lent ${name} ${said}` : `borrowed ${said} from ${name}`;
+    return looseEnd(text, `Kept for tonight · for a loan, write “${line}”`);
+  }
+  return undefined;
+}
+
 function readLoan(text: string, options: ParseOptions): Parsed | undefined {
+  const owes = readOwes(text, options);
+  if (owes) return owes;
   const accounts = options.accounts ?? [];
   const named = readAccount(text, accounts);
   // `lent abel 500 telebirr`: a bare account word at the end names the account.
@@ -395,6 +441,10 @@ function loanIn(
       // Someone who owes you nothing paying you back is still money in, never spending.
       if (owed <= 0 && loanKind === "paid_me")
         return repaidIncome(rest.replace(amountText ?? "", " "), amount, account, options);
+      // "paid back dawit 300" with nothing borrowed from Dawit is no spending
+      // either (F5): kept for tonight. "returned shoes 500" stays a refund.
+      if (owed <= 0 && !/^returned\s/i.test(rest))
+        return looseEnd(text, `You owe ${capitalise(person.trim())} nothing · will ask tonight`);
       if (!open || owed <= 0) continue;
       // With no @account (or currency) typed, pay back in the loan's own
       // currency (F27): "kebede paid back 10" on a $30 loan is $10 into Wise.
@@ -807,6 +857,25 @@ function splitOnAnd(piece: string, options: ParseOptions): string[] {
   return out;
 }
 
+/**
+ * "lunch 120 and call mom": a money half, then a half that is a task
+ * (reg2-4). Read whole, the task's words would sit in the entry's
+ * description. "buy bread and milk 60" (the amount at the end) and "salt and
+ * pepper 50" stay one entry.
+ */
+function foldsTask(raw: string, options: ParseOptions): boolean {
+  return raw
+    .split(COMMA_SPLIT)
+    .map((piece) => piece.split(/\s+and\s+/i).filter((half) => half.trim()))
+    .some((halves) =>
+      halves.some((half, index) => {
+        if (index === 0) return false;
+        const before = parsePiece(halves.slice(0, index).join(" and "), options);
+        return isPiece(before) && parsePiece(half, options).kind === "task";
+      }),
+    );
+}
+
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const parsed = parsePiece(raw, options);
   const prefixed = /^\s*(?:\?|[a-z]+\s*:)/i.test(raw);
@@ -826,6 +895,8 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
       if (money.some(Boolean) && !money.every(Boolean))
         return looseEnd(raw, "Part of this line isn't money: put each thing on its own line");
     }
+    if (isMoney(parsed) && foldsTask(raw, options))
+      return looseEnd(raw, "Part of this line isn't money: put each thing on its own line");
   }
   if (isMoney(parsed) || parsed.kind === "afford" || parsed.kind === "transfer") return parsed;
   // `lunch 120, taxi 40`, `+25000 salary, saved 500 laptop and lent abel 1500`:
@@ -1102,7 +1173,10 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   // read the whole line and keep the account.
   if (!isMoney(parsed) && account) {
     const whole = parseOne(raw, options);
-    if (!isMoney(whole)) return whole;
+    // "pay rent 5000 @cbo": a task, titled without the account that ends it
+    // (reg2-10). "call @cbo about the loan" keeps its words.
+    const last = /@[\p{L}\p{N}_-]+\s*$/u.test(raw);
+    if (!isMoney(whole)) return parsed.kind === "task" && last ? parsed : whole;
     parsed = {
       ...whole,
       description:
@@ -1140,8 +1214,8 @@ const COUNT_WORDS: Record<string, number> = {
 
 /**
  * `away till mon`, `away for 3 days` (plan §3.11): the day you are back.
- * A day that is already here (`away till today`) is left out, so the chip
- * says the real default (tomorrow) instead of a day set_away won't keep (F41).
+ * A day that is already here (`away till today`) is refused rather than
+ * quietly turned into tomorrow (F41).
  */
 function readAway(text: string, nowMs: number, clockStyle: ClockStyle): Parsed {
   const rest = text.replace(/^away\s*/i, "").trim();
@@ -1154,9 +1228,12 @@ function readAway(text: string, nowMs: number, clockStyle: ClockStyle): Parsed {
     }
   }
   const when = readWhen(rest.replace(/^(?:till|until|to)\b/i, ""), nowMs, clockStyle);
-  return when.date && when.date > logicalDate(nowMs)
-    ? { kind: "away", until: when.date }
-    : { kind: "away" };
+  if (!when.date) return { kind: "away" };
+  // `away till today` / `till yesterday`: no day to be away till. Nothing is
+  // saved; the box says so and keeps the line (F41).
+  if (when.date <= logicalDate(nowMs))
+    return { kind: "inbox", body: "", why: "That day is already here: say the day you're back" };
+  return { kind: "away", until: when.date };
 }
 
 function parseOne(raw: string, options: ParseOptions): Parsed {
@@ -1170,6 +1247,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   const block = readBlock(text, options.blocks ?? []);
   if (block) return block;
   if (/^away\b/.test(lower)) return readAway(text, nowMs, clockStyle);
+  if (/^(?:i'?m |i am )?back(?: now)?[.!]?$/.test(lower)) return { kind: "back" };
 
   // Savings (plan §3.13). Kept narrow so ordinary lines stay what they were:
   // `saved 500` / `put aside 2k`  — nothing after the amount;
@@ -1179,7 +1257,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   const saving = readSaving(text, options.goals ?? []);
   if (saving) return saving;
 
-  const prefix = /^(t|n|idea|pin|wait|fb)\s*:\s*/i.exec(text);
+  const prefix = /^(t|n|note|idea|pin|wait|fb)\s*:\s*/i.exec(text);
   const body = prefix ? text.slice(prefix[0].length) : text;
   const { rest: untagged, area: tag } = readTag(body);
   // "idea:", "#jobhunt": nothing to save. The capture box says so and keeps the line.
@@ -1207,6 +1285,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
 
   switch (prefix?.[1]?.toLowerCase()) {
     case "n":
+    case "note":
       return withArea({ kind: "note", body: plain }, area);
     case "idea":
       return withArea(readIdea(plain, nowMs, clockStyle), area);
@@ -1309,6 +1388,12 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   // instead of a silent Someday with the words left in the title.
   const unread = task.dueDate ? null : UNREAD_WHEN.exec(task.title);
   if (unread) return looseEnd(raw, `Couldn't read "${unread[0]}" · will ask tonight`);
+  // "pay iddir every month 200": a month with no day can't repeat (F82). Say how.
+  if (!task.repeat && /\b(?:every month|monthly)\b/i.test(task.title))
+    return looseEnd(
+      raw,
+      `Say which day, as in “monthly ${Number(logicalDate(nowMs).slice(8))}” · will ask tonight`,
+    );
   // The verb after an unknown `#tag` still counts: "#urgent call mom" is a task.
   const firstWord = untagged.trim().split(" ")[0]?.toLowerCase() ?? "";
   // A length ("walk for 45 min") is planned into free time, so it makes a task too.
@@ -1371,6 +1456,9 @@ function readBlock(
 const REPEAT_TAIL =
   /\s+((?:every|weekly|monthly|daily)\b(?:\s+(?:on\s+)?(?:the\s+)?[\w,]+(?:\s*(?:,|and)\s*\w+)*)?)$/i;
 
+const AMOUNT_AFTER_REPEAT =
+  /^(.*\s(?:every|weekly|monthly|daily)\b.*?)\s+((?:etb\s*)?\d[\d,]*(?:\.\d{1,2})?k?(?:\s?(?:etb|birr|br))?)$/i;
+
 type AreaOption = NonNullable<ParseOptions["areas"]>[number];
 
 /**
@@ -1408,6 +1496,14 @@ function readTask(
   clockStyle: ClockStyle,
   areas: AreaOption[] = [],
 ): Extract<Parsed, { kind: "task" }> {
+  // "pay iddir every month 200": an amount after the repeat stays in the title
+  // (F82). A small bare number ("every month 5") is left alone.
+  const paid = AMOUNT_AFTER_REPEAT.exec(raw);
+  const paidAmount = paid?.[2] ? parseAmount(paid[2]) : null;
+  if (paid?.[1] && paidAmount !== null && (paidAmount > 3100 || /\D/.test(paid[2] ?? ""))) {
+    const task = readTask(paid[1], nowMs, clockStyle, areas);
+    if (task.repeat) return { ...task, title: `${task.title} ${paid[2]}` };
+  }
   // `t: timesheet every fri`: the repeat comes off before the date words.
   const tail = REPEAT_TAIL.exec(raw);
   const rule = tail?.[1] ? parseRule(tail[1]) : null;
@@ -1442,6 +1538,7 @@ function readTask(
   if (when.date) task.dueDate = when.date;
   if (when.date && when.minutes !== undefined) task.dueAt = localToEpoch(when.date, when.minutes);
   if (when.window) task.plannedWindow = when.window;
+  if (when.tonight) task.tonight = true;
   if (named.area) task.area = named.area;
   return task;
 }

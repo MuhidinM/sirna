@@ -22,6 +22,8 @@ export interface When {
   durationMin?: number;
   /** A part of the day instead of a time: `tomorrow morning`, `tonight`. */
   window?: DayWindow;
+  /** `tonight` said after midnight: the calendar day's evening, not the logical tomorrow (F86). */
+  tonight?: boolean;
   /** The text with the date and time words removed. */
   rest: string;
 }
@@ -600,6 +602,7 @@ export function readWhen(
   if (minutes !== undefined) result.minutes = minutes;
   if (durationMin !== undefined) result.durationMin = durationMin;
   if (window !== undefined) result.window = window;
+  if (calendarEvening) result.tonight = true;
   return result;
 }
 
