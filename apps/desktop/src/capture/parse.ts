@@ -1016,6 +1016,46 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   return chosen ? { ...item, account: chosen.id, accountName: chosen.name } : item;
 }
 
+const COUNT_WORDS: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+};
+
+/**
+ * `away till mon`, `away for 3 days` (plan §3.11): the day you are back.
+ * A day that is already here (`away till today`) is left out, so the chip
+ * says the real default (tomorrow) instead of a day set_away won't keep (F41).
+ */
+function readAway(text: string, nowMs: number, clockStyle: ClockStyle): Parsed {
+  const rest = text.replace(/^away\s*/i, "").trim();
+  const span = /^for\s+(\d+|[a-z]+)\s+(day|week)s?$/i.exec(rest);
+  if (span?.[1] && span[2]) {
+    const count = /^\d+$/.test(span[1]) ? Number(span[1]) : COUNT_WORDS[span[1].toLowerCase()];
+    if (count && count > 0 && count <= 365) {
+      const days = count * (span[2].toLowerCase() === "week" ? 7 : 1);
+      return { kind: "away", until: logicalDate(nowMs + days * 24 * 60 * 60 * 1000) };
+    }
+  }
+  const when = readWhen(rest.replace(/^(?:till|until|to)\b/i, ""), nowMs, clockStyle);
+  return when.date && when.date > logicalDate(nowMs)
+    ? { kind: "away", until: when.date }
+    : { kind: "away" };
+}
+
 function parseOne(raw: string, options: ParseOptions): Parsed {
   const { nowMs, clockStyle = "western" } = options;
   const text = raw.trim().replace(/\s+/g, " ");
@@ -1024,10 +1064,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   // Prefixes win (plan §3.5).
   if (text.startsWith("?")) return { kind: "search", query: text.slice(1).trim() };
   if (lower === "focus" || lower === "start focus") return { kind: "focus" };
-  if (/^away\b/.test(lower)) {
-    const when = readWhen(text.replace(/^away\s*(?:till|until|to)?/i, ""), nowMs, clockStyle);
-    return when.date ? { kind: "away", until: when.date } : { kind: "away" };
-  }
+  if (/^away\b/.test(lower)) return readAway(text, nowMs, clockStyle);
 
   // Savings (plan §3.13). Kept narrow so ordinary lines stay what they were:
   // `saved 500` / `put aside 2k`  — nothing after the amount;

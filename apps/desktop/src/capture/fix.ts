@@ -1,10 +1,12 @@
 /**
  * Fixing the last capture with Up arrow (time-first §2, r2-7). The box opens
  * on the reading that matches what the capture made (an idea stays an idea),
- * and a record you have changed since (a project you edited) isn't replaced:
- * undoing the capture would throw those changes away.
+ * and a record you have changed since (a project you edited, a task you
+ * ticked, an entry you edited on Money) isn't replaced or undone: undoing the
+ * capture would throw those changes away.
  */
 import { type Parsed } from "./parse";
+import undoBlockedSql from "./queries/undo_blocked.sql?raw";
 
 /**
  * The records a capture inserted (?1 = `capture:<raw id>`), each with its
@@ -48,11 +50,59 @@ export function fixReading(options: Parsed[], kind: Parsed["kind"] | undefined):
   return index < 0 ? 0 : index;
 }
 
+/** What undoing the capture would throw away (queries/undo_blocked.sql). */
+export const UNDO_BLOCKED_SQL = undoBlockedSql;
+
+export type BlockRow = {
+  entity_type: string;
+  inserted: number;
+  gone: number;
+  changed: number;
+  checked: string | null;
+};
+
+/** Where a record you changed since is edited instead. */
+const CHANGED: Record<string, string> = {
+  project_items: "You've changed this project since. Edit it on Projects.",
+  task_items: "You've changed this task since. Edit it on Plan > Tasks.",
+  money_txns: "You've changed this entry since. Edit it on Money.",
+  money_loans: "You've changed this loan since. Edit it on Money.",
+  note_items: "You've changed this note since. Edit it in Sirna.",
+  savings_entries: "You've changed this saving since. Edit it on Money.",
+  core_settings: "Away has changed since. Set it on Today.",
+};
+
 /**
- * Why the capture can't be fixed here, or null. A project you changed since
- * (cards, dates, its title) is edited on Projects, not by retyping the idea.
+ * Why the capture can't be undone or fixed, or null (F2, F65). Undoing a
+ * record you have changed since (ticked, edited, deleted) would throw your
+ * change away, and undoing an entry after a balance check would move the
+ * balance off the number you typed. capture_undo and capture_replace in Rust
+ * refuse with the same words, so the tray's Undo is covered too.
  */
-export function fixBlocked(rows: MadeRow[]): string | null {
-  const project = rows.find((row) => row.entity_type === "project_items" && row.touched === 1);
-  return project ? "You've changed this project since. Edit it on Projects." : null;
+export function undoBlocked(rows: BlockRow[], verb: "undo" | "fix"): string | null {
+  const inserted = rows.filter((row) => row.inserted === 1);
+  if (inserted.length > 0 && inserted.every((row) => row.gone === 1))
+    return `Nothing to ${verb}: you've deleted it since.`;
+  const changed = rows.find((row) => row.changed === 1);
+  if (changed) return CHANGED[changed.entity_type] ?? "You've changed this since.";
+  const checked = rows.find((row) => row.checked !== null)?.checked;
+  if (checked)
+    return `You checked ${checked} since. ${verb === "undo" ? "Undo" : "Fix"} it on Money > Ledger, then check ${checked} again.`;
+  return null;
+}
+
+/**
+ * The newest capture that hasn't been undone (?1 none). A line that made
+ * nothing (`afford …`, `? search`) is still the newest: Ctrl+Z and Up say
+ * there is nothing to undo rather than reaching past it to an older one (F38).
+ * Rust's tray reads the same rule (tasks.rs).
+ */
+export const LAST_CAPTURE_SQL =
+  "SELECT id, body, parse_status FROM core_raw_items WHERE source = 'capture' AND parse_status != 'ignored' ORDER BY id DESC LIMIT 1";
+
+export type LastCapture = { id: number; body: string; parse_status: string };
+
+/** The capture Ctrl+Z or Up acts on: none when the newest one made nothing. */
+export function actionable(last: LastCapture | undefined): LastCapture | undefined {
+  return last && last.parse_status !== "new" ? last : undefined;
 }

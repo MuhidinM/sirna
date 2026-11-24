@@ -108,12 +108,21 @@ export function reconcileOps(
         op: "update",
         table: "money_accounts",
         id: account.id,
-        values: { opening_minor: typed - todayMoved, opening_date: today },
+        values: { opening_minor: typed - todayMoved, opening_date: today, checked_at: nowMs },
       },
     ];
+  // Every check is noted, a matching one too: undoing a capture from before
+  // it would move the balance off the number you typed (F65).
+  const checked: Op = {
+    op: "update",
+    table: "money_accounts",
+    id: account.id,
+    values: { checked_at: nowMs },
+  };
   const gap = typed - balance;
-  if (gap === 0) return [];
+  if (gap === 0) return [checked];
   return [
+    checked,
     {
       op: "insert",
       table: "money_txns",

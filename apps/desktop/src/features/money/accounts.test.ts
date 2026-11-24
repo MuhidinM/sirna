@@ -107,7 +107,10 @@ describe("your accounts (T-058)", () => {
     expect(monthSummary({ txns: gap ? [gap] : [], saved: 0, history: [], today: TODAY }).out).toBe(
       60_000,
     );
-    expect(reconcileOps(account(db, "cbo"), 940_000, TODAY, 0, nowMs, "none")).toEqual([]);
+    // A match books nothing but notes the check.
+    expect(reconcileOps(account(db, "cbo"), 940_000, TODAY, 0, nowMs, "none")).toEqual([
+      { op: "update", table: "money_accounts", id: "cbo", values: { checked_at: nowMs } },
+    ]);
     expect(reconcileText(account(db, "cbo"), 1_000_000)).toMatch(/more in CBO/);
   });
 
