@@ -30,7 +30,9 @@ import {
   filterTasks,
   LATER_STEPS_SQL,
   repeatText,
+  SPLIT_STEPS_SQL,
   statusOps,
+  undoSplitOps,
   stepLabel,
   type TaskDraft,
   taskDraftOf,
@@ -443,7 +445,23 @@ function TaskItem({
     void transact("user", statusOps(row, to, systemClock.now()), `task:${row.id}`).catch(
       (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
     );
+  const undoSplit = () =>
+    void query<{ id: string }>(SPLIT_STEPS_SQL, [row.id])
+      .then((steps) =>
+        transact(
+          "user",
+          undoSplitOps(
+            row,
+            steps.map((step) => step.id),
+            systemClock.now(),
+          ),
+          `task:${row.id}`,
+        ),
+      )
+      .catch((failure: unknown) => setError(`Couldn't undo the split: ${message(failure)}`));
   const splittable = canSplit(row);
+  // A split task sits in Dropped; its steps carry the work (F61).
+  const split = view === "dropped" && row.split_steps > 0;
   if (editing)
     return (
       <li className="task-edit-row">
@@ -454,6 +472,11 @@ function TaskItem({
   const step = stepLabel(row.step_no, row.step_total);
   const late = !done && row.due_date !== null && row.due_date <= today;
   const facts = [
+    split && (
+      <span key="split">
+        split into {row.split_steps} step{row.split_steps === 1 ? "" : "s"}
+      </span>
+    ),
     row.project_title && <span key="project">{row.project_title}</span>,
     row.estimate_min && <span key="estimate">{hours(row.estimate_min)}</span>,
     row.planned_date && row.planned_date !== row.due_date && (
@@ -506,7 +529,13 @@ function TaskItem({
           </span>
         )}
         <span className="task-actions">
-          {view === "dropped" ? (
+          {split ? (
+            row.split_settled === 0 && (
+              <Button className="btn-ghost" onClick={undoSplit}>
+                Undo split
+              </Button>
+            )
+          ) : view === "dropped" ? (
             <Button className="btn-ghost" onClick={() => move("todo")}>
               Restore
             </Button>

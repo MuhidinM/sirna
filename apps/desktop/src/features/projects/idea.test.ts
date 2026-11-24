@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseCapture } from "../../capture/parse";
 import { echo, ideaInput, toOps } from "../../capture/ops";
 import { type PlannedProject } from "./capacity";
-import { ideaActionValues, placeIdea, shortDay } from "./idea";
+import { ideaAction, ideaActionValues, placeIdea, shortDay } from "./idea";
 
 const TODAY = "2026-11-11";
 const NOW = Date.parse("2026-11-11T09:00:00Z");
@@ -93,7 +93,7 @@ describe("placing an idea", () => {
     const full = { ...PLAN, week: { capacity: 1000, areaCommitted: 900 } };
     const placed = placeIdea(ideaInput(idea("idea: learn Go ~10h")), full);
     expect(placed.values.status).toBe("idea");
-    expect(placed.echo).toBe("Idea · no room in the next year at 85% load");
+    expect(placed.echo).toBe("Idea · saved · no room in the next year at 85% load");
   });
 
   it("still saves when the week can't be read", () => {
@@ -211,5 +211,37 @@ describe("review fixes", () => {
              (0, 'user', 'capture:7', 'task_items', 't1', 'insert'),
              (0, 'user', 'capture:8', 'project_items', 'p2', 'insert')`);
     expect(db.prepare(REPLACED_PROJECTS_SQL).all("capture:7")).toEqual([{ entity_id: "p1" }]);
+  });
+});
+
+describe("user-test fixes", () => {
+  it("F43: blames the project limit, not load, when it blocks every week", () => {
+    const projects = [active("a"), active("b"), active("c")];
+    const placed = placeIdea(ideaInput(idea("idea: learn Go ~2h")), { ...PLAN, projects });
+    expect(placed.values.status).toBe("idea");
+    expect(placed.echo).toBe(
+      "Idea · saved · 3 projects run every week for the next year (limit 2); finish, pause or date one to place it",
+    );
+    const undated = { id: "me", estimate_min: 120, deadline: null };
+    expect(ideaAction(undated, { kind: "place" }, { ...PLAN, projects })).toEqual({
+      reason: expect.stringMatching(/^3 projects run every week .* limit is 2/) as string,
+    });
+  });
+
+  it("F43: places an idea after active projects' deadlines", () => {
+    const projects = [
+      { ...active("a"), deadline: "2026-12-03" },
+      { ...active("b"), deadline: "2026-12-17" },
+    ];
+    const placed = placeIdea(ideaInput(idea("idea: learn Go ~2h")), { ...PLAN, projects });
+    expect(placed.values).toMatchObject({ status: "next_up", start_date: "2026-12-07" });
+  });
+
+  it("F87: says why Keep can't apply", () => {
+    const projects = [active("a"), active("b"), active("c")];
+    const dated = { id: "me", estimate_min: 360, deadline: "2027-01-15" };
+    expect(ideaAction(dated, { kind: "keep" }, { ...PLAN, projects })).toEqual({
+      reason: "3 projects are already active (limit 2). Finish or pause one to start this now.",
+    });
   });
 });

@@ -17,6 +17,8 @@ import {
   firstMonday,
   hoursLabel,
   MAX_ACTIVE,
+  noRoom,
+  noRoomText,
   type PlannedProject,
   type Slot,
   type WeekModel,
@@ -119,7 +121,16 @@ export function placeIdea(idea: IdeaInput, plan: WeekPlan | null): Placement {
   }
 
   const slot = findSlot(idea.estimateMin, plan.today, plan.week, plan.projects);
-  if (!slot) return { values, echo: "Idea · no room in the next year at 85% load" };
+  if (!slot) {
+    const reason = noRoom(plan.today, plan.week, plan.projects);
+    return {
+      values,
+      echo:
+        reason.kind === "limit"
+          ? `Idea · saved · ${reason.running} projects run every week for the next year (limit ${MAX_ACTIVE}); finish, pause or date one to place it`
+          : "Idea · saved · no room in the next year at 85% load",
+    };
+  }
   values.status = placedStatus(slot, plan);
   values.start_date = slot.start;
   values.forecast_finish = slot.finish;
@@ -146,45 +157,60 @@ export interface IdeaRow {
   deadline: string | null;
 }
 
+/** The update for an action on an idea's card, or why it can't apply. */
+export type IdeaOutcome = { values: Record<string, SqlValue> } | { reason: string };
+
+export function ideaAction(project: IdeaRow, action: IdeaAction, plan: WeekPlan): IdeaOutcome {
+  const others = { ...plan, projects: plan.projects.filter((p) => p.id !== project.id) };
+  if (action.kind === "drop") return { values: { status: "dropped" } };
+  if (action.kind === "estimate")
+    return action.minutes > 0
+      ? { values: { estimate_min: action.minutes, estimate_by: action.by ?? "user" } }
+      : { reason: "Pick an estimate above 0." };
+  const estimate = project.estimate_min;
+  if (!estimate) return { reason: "Add an estimate first." };
+
+  if (action.kind === "keep") {
+    if (!project.deadline) return { reason: "There is no date to keep." };
+    const check = checkWithDate(estimate, project.deadline, plan.today, plan.week, others.projects);
+    if (check.weeksLeft <= 0) return { reason: "The date has passed." };
+    // Starting now with 2 projects already running would make 3 (R-BRN-05).
+    const running = weekLoad(plan.week, others.projects, weekStart(plan.today)).activeProjects;
+    const active = others.projects.filter((p) => p.status === "active").length;
+    if (running >= MAX_ACTIVE || active >= MAX_ACTIVE)
+      return {
+        reason: `${Math.max(running, active)} projects are already active (limit ${MAX_ACTIVE}). Finish or pause one to start this now.`,
+      };
+    return {
+      values: {
+        status: "active",
+        start_date: plan.today,
+        forecast_finish: project.deadline,
+        weekly_min: Math.min(check.weeklyNeeded, MAX_WEEKLY_HOURS * 60),
+        last_check_json: checkJson(check),
+      },
+    };
+  }
+
+  const slot = findSlot(estimate, plan.today, plan.week, others.projects);
+  if (!slot) return { reason: noRoomText(noRoom(plan.today, plan.week, others.projects)) };
+  return {
+    values: {
+      status: placedStatus(slot, others),
+      start_date: slot.start,
+      forecast_finish: slot.finish,
+      weekly_min: Math.min(slot.weeklyMin, MAX_WEEKLY_HOURS * 60),
+      ...(action.kind === "suggested" ? { deadline: slot.finish } : {}),
+    },
+  };
+}
+
 /** The update for an action on an idea's card; null when it can't apply. */
 export function ideaActionValues(
   project: IdeaRow,
   action: IdeaAction,
   plan: WeekPlan,
 ): Record<string, SqlValue> | null {
-  const others = { ...plan, projects: plan.projects.filter((p) => p.id !== project.id) };
-  if (action.kind === "drop") return { status: "dropped" };
-  if (action.kind === "estimate")
-    return action.minutes > 0
-      ? { estimate_min: action.minutes, estimate_by: action.by ?? "user" }
-      : null;
-  const estimate = project.estimate_min;
-  if (!estimate) return null;
-
-  if (action.kind === "keep") {
-    if (!project.deadline) return null;
-    const check = checkWithDate(estimate, project.deadline, plan.today, plan.week, others.projects);
-    if (check.weeksLeft <= 0) return null;
-    // Starting now with 2 projects already running would make 3 (R-BRN-05).
-    if (weekLoad(plan.week, others.projects, weekStart(plan.today)).activeProjects >= MAX_ACTIVE)
-      return null;
-    if (others.projects.filter((p) => p.status === "active").length >= MAX_ACTIVE) return null;
-    return {
-      status: "active",
-      start_date: plan.today,
-      forecast_finish: project.deadline,
-      weekly_min: Math.min(check.weeklyNeeded, MAX_WEEKLY_HOURS * 60),
-      last_check_json: checkJson(check),
-    };
-  }
-
-  const slot = findSlot(estimate, plan.today, plan.week, others.projects);
-  if (!slot) return null;
-  return {
-    status: placedStatus(slot, others),
-    start_date: slot.start,
-    forecast_finish: slot.finish,
-    weekly_min: Math.min(slot.weeklyMin, MAX_WEEKLY_HOURS * 60),
-    ...(action.kind === "suggested" ? { deadline: slot.finish } : {}),
-  };
+  const outcome = ideaAction(project, action, plan);
+  return "values" in outcome ? outcome.values : null;
 }

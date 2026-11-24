@@ -11,7 +11,7 @@ import { ask } from "../features/ai/ask";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { WEEK } from "../features/ai/touchpoints";
 import { isoWeekday, weekStart } from "../features/plan/dayplan";
-import { hoursLabel, loadWeek, type Query } from "../features/projects/capacity";
+import { hoursLabel, loadWeek, MAX_ACTIVE, type Query } from "../features/projects/capacity";
 import {
   AREA_WEEK_SQL,
   type AreaWeek,
@@ -75,7 +75,7 @@ function useNextWeek(monday: string): NextWeek | null {
   const [next, setNext] = useState<NextWeek | null>(null);
   useEffect(() => {
     const load = () => {
-      loadWeek(query as Query)
+      loadWeek(query as Query, logicalDate(systemClock.now()))
         .then(({ week, projects }) => setNext(nextWeek(week, projects, monday)))
         .catch(() => setNext(null));
     };
@@ -543,7 +543,11 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 id="projects"
                 icon={<IconProjects size={18} />}
                 title="Projects"
-                sub={`${activeCount} of 2 active`}
+                sub={
+                  activeCount > MAX_ACTIVE
+                    ? `${activeCount} active (limit ${MAX_ACTIVE})`
+                    : `${activeCount} of ${MAX_ACTIVE} active`
+                }
               />
               {projects.rows.length === 0 && (
                 <p className="empty">No projects running or next up. Add one on Projects.</p>
@@ -566,10 +570,10 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                     <span className="pw-actions">
                       {project.status === "next_up" ? (
                         <Button
-                          disabled={activeCount >= 2}
+                          disabled={activeCount >= MAX_ACTIVE}
                           title={
-                            activeCount >= 2
-                              ? "Two projects are already active: pause or finish one first"
+                            activeCount >= MAX_ACTIVE
+                              ? `${activeCount} projects are already active (limit ${MAX_ACTIVE}): pause or finish one first`
                               : undefined
                           }
                           onClick={() =>

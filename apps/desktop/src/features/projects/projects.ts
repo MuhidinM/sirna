@@ -201,9 +201,17 @@ export function checkDraft(draft: ProjectDraft): string | null {
 
 const orNull = (text: string) => (text.trim() ? text.trim() : null);
 
+/** Whether saving this draft finishes or drops a project that was still open. */
+export function closesProject(draft: ProjectDraft, existing: ProjectRow | null): boolean {
+  const closed = (status: string) => status === "done" || status === "dropped";
+  return existing !== null && closed(draft.status) && !closed(existing.status);
+}
+
 /**
  * Writes for a new or edited project. A new next step becomes a To do task on
- * the board and is linked; clearing it unlinks (the task stays).
+ * the board and is linked; rewording an open next step renames its card;
+ * clearing it unlinks (the task stays). Finishing or dropping the project
+ * drops its open cards when `dropOpenCards` is set, so they stop being planned.
  */
 export function projectOps(
   draft: ProjectDraft,
@@ -215,6 +223,7 @@ export function projectOps(
   plan: Partial<
     Record<"start_date" | "forecast_finish" | "weekly_min" | "status", string | number | null>
   > = {},
+  dropOpenCards = false,
 ): { ops: Op[]; projectId: string } {
   const projectId = existing?.id ?? newId();
   const ops: Op[] = [];
@@ -228,10 +237,23 @@ export function projectOps(
       if (task.area_id === existing.area_id)
         ops.push({ op: "update", table: "task_items", id: task.id, values: { area_id: areaId } });
 
+  if (dropOpenCards && closesProject(draft, existing))
+    for (const task of openTasks)
+      // As statusOps (tasks/list.ts) drops a card: a restored card goes back to To do.
+      ops.push({
+        op: "update",
+        table: "task_items",
+        id: task.id,
+        values: { status: "dropped", completed_at: null, started_at: null },
+      });
+
   let nextStepId: string | null = existing?.next_step_task_id ?? null;
   const currentStep = existing ? openStep(existing) : "";
   if (!step) nextStepId = null;
-  else if (step !== currentStep) {
+  else if (step !== currentStep && currentStep && nextStepId) {
+    // The field shows the open step, so a new text there is the same step reworded.
+    ops.push({ op: "update", table: "task_items", id: nextStepId, values: { title: step } });
+  } else if (step !== currentStep) {
     nextStepId = newId();
     ops.push({
       op: "insert",

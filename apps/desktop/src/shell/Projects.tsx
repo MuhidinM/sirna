@@ -10,6 +10,7 @@ import { ulid } from "../kernel/ulid";
 import {
   addTaskOp,
   checkDraft,
+  closesProject,
   type Column,
   COLUMNS,
   columnOf,
@@ -31,13 +32,15 @@ import {
   hoursLabel,
   LOAD_LIMIT,
   loadWeek,
+  MAX_ACTIVE,
+  noRoomText,
   type PlannedProject,
   type Query,
   type WeekModel,
   weekLoad,
 } from "../features/projects/capacity";
 import { savePlan, type Timing, timingOf } from "../features/projects/timing";
-import { type IdeaAction, ideaActionValues } from "../features/projects/idea";
+import { type IdeaAction, ideaAction } from "../features/projects/idea";
 import { AT_RISK_SQL, type Risk, type RiskRow, risks } from "../features/projects/risk";
 import { ask, useAsk } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
@@ -75,8 +78,9 @@ function useWeek(): WeekState | null {
   const [state, setState] = useState<WeekState | null>(null);
   useEffect(() => {
     const load = () => {
-      loadWeek(query as Query)
-        .then((loaded) => setState({ ...loaded, today: logicalDate(systemClock.now()) }))
+      const today = logicalDate(systemClock.now());
+      loadWeek(query as Query, today)
+        .then((loaded) => setState({ ...loaded, today }))
         .catch(() => setState(null));
     };
     load();
@@ -128,7 +132,9 @@ function TimingCard({ timing, reasons }: { timing: Timing; reasons?: string[] | 
   if (!timing.slot)
     return (
       <div className="timing timing-too_much" role="status">
-        No room in the next year at 85% load. Pause a project or lower a target.
+        {timing.noRoom
+          ? noRoomText(timing.noRoom)
+          : "No room in the next year at 85% load. Pause a project or lower a target."}
       </div>
     );
   return (
@@ -158,6 +164,7 @@ function ProjectForm({
   const titleId = useId();
   const [draft, setDraft] = useState<ProjectDraft>(project ? draftOf(project) : EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   // A new project's form opens under the board: bring it into view.
   useEffect(() => {
@@ -165,12 +172,44 @@ function ProjectForm({
   }, []);
   const set = (change: Partial<ProjectDraft>) => {
     setError(null);
+    setAsking(false);
     setDraft({ ...draft, ...change });
   };
   const timing =
     plan && !checkDraft(draft)
       ? timingOf(draft, project?.id ?? null, plan.week, plan.projects, plan.today)
       : null;
+  const save = (dropCards: boolean) => {
+    setAsking(false);
+    const selfId = project?.id ?? null;
+    const saving = plan
+      ? savePlan(
+          draft,
+          project ? { draft: draftOf(project), start_date: project.start_date } : null,
+          selfId,
+          timingOf(draft, selfId, plan.week, plan.projects, plan.today),
+          plan.projects,
+          plan.today,
+        )
+      : { values: {}, held: false };
+    const { ops, projectId } = projectOps(
+      draft,
+      project,
+      () => ulid(),
+      openTasks,
+      saving.values,
+      dropCards,
+    );
+    const active = (plan?.projects ?? []).filter(
+      (p) => p.status === "active" && p.id !== selfId,
+    ).length;
+    const note = saving.held
+      ? `${active} active projects already (limit ${MAX_ACTIVE}), so this one waits in Next up.`
+      : undefined;
+    transact("user", ops, `project:${projectId}`)
+      .then(() => onSaved(projectId, note))
+      .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+  };
   return (
     <form
       ref={formRef}
@@ -183,30 +222,12 @@ function ProjectForm({
           setError(problem);
           return;
         }
-        const selfId = project?.id ?? null;
-        const saving = plan
-          ? savePlan(
-              draft,
-              project ? { draft: draftOf(project), start_date: project.start_date } : null,
-              selfId,
-              timingOf(draft, selfId, plan.week, plan.projects, plan.today),
-              plan.projects,
-              plan.today,
-            )
-          : { values: {}, held: false };
-        const { ops, projectId } = projectOps(
-          draft,
-          project,
-          () => ulid(),
-          openTasks,
-          saving.values,
-        );
-        const note = saving.held
-          ? "Two projects are already active, so this one waits in Next up."
-          : undefined;
-        transact("user", ops, `project:${projectId}`)
-          .then(() => onSaved(projectId, note))
-          .catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
+        // Finishing or dropping with cards still open: ask what happens to them.
+        if (closesProject(draft, project) && openTasks.length > 0) {
+          setAsking(true);
+          return;
+        }
+        save(false);
       }}
     >
       <h2 id={titleId}>{project ? "Edit project" : "New project"}</h2>
@@ -287,6 +308,16 @@ function ProjectForm({
       {error && (
         <p role="alert" className="error">
           {error}
+        </p>
+      )}
+      {asking && (
+        <p role="status" className="row meta notice">
+          {openTasks.length} open card{openTasks.length === 1 ? "" : "s"}. Drop them, or keep them
+          as tasks to plan?
+          <Button primary onClick={() => save(true)}>
+            Drop them
+          </Button>
+          <Button onClick={() => save(false)}>Keep as tasks</Button>
         </p>
       )}
       <div className="proj-actions">
@@ -460,16 +491,28 @@ function IdeaCard({
       : null,
   );
   if (!plan) return null;
+  // Worked out up front, so a button that can't apply is off and says why.
+  const keep = ideaAction(project, { kind: "keep" }, plan);
+  const suggested = ideaAction(project, { kind: "suggested" }, plan);
+  const place = ideaAction(project, { kind: "place" }, plan);
+  // An undated idea's timing card already says why it has no slot.
+  const why = project.deadline
+    ? [
+        ...new Set(
+          [keep, suggested].flatMap((outcome) => ("reason" in outcome ? [outcome.reason] : [])),
+        ),
+      ]
+    : [];
   const act = (action: IdeaAction) => {
-    const values = ideaActionValues(project, action, plan);
-    if (!values) {
-      setError("That doesn't fit right now.");
+    const outcome = ideaAction(project, action, plan);
+    if ("reason" in outcome) {
+      setError(outcome.reason);
       return;
     }
     setError(null);
     transact(
       "user",
-      [{ op: "update", table: "project_items", id: project.id, values }],
+      [{ op: "update", table: "project_items", id: project.id, values: outcome.values }],
       `project:${project.id}`,
     ).catch((failure: unknown) => setError(`Couldn't save: ${message(failure)}`));
   };
@@ -521,20 +564,31 @@ function IdeaCard({
           </Button>
         )}
         {project.estimate_min && !project.deadline && (
-          <Button onClick={() => act({ kind: "place" })}>Place it in my weeks</Button>
+          <Button disabled={"reason" in place} onClick={() => act({ kind: "place" })}>
+            Place it in my weeks
+          </Button>
         )}
         {project.estimate_min && project.deadline && (
           <>
-            <Button onClick={() => act({ kind: "keep" })}>
+            <Button disabled={"reason" in keep} onClick={() => act({ kind: "keep" })}>
               Keep {shortDate(project.deadline)}
             </Button>
-            <Button onClick={() => act({ kind: "suggested" })}>Use suggested dates</Button>
+            <Button disabled={"reason" in suggested} onClick={() => act({ kind: "suggested" })}>
+              Use suggested dates
+            </Button>
           </>
         )}
         <Button className="btn-ghost btn-danger" onClick={() => act({ kind: "drop" })}>
           Drop
         </Button>
       </div>
+      {project.estimate_min && why.length > 0 && (
+        <ul className="meta idea-why">
+          {why.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
