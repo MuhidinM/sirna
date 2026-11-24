@@ -1,7 +1,9 @@
 /**
- * Reads the date and time words people put in a capture: `today`, `tomorrow`,
- * `fri`, `next mon`, `in 3 days`, `20 dec`, `dec 20`, `20/12`, `10am`,
- * `10:30`, `at 3`, `15:00`. Small and deterministic on purpose (ADR-0005):
+ * Reads the date and time words people put in a capture: `today`, `tomorrow`
+ * (and its usual misspellings), `fri`, `next mon`, `in 3 days`, `20 dec`,
+ * `dec 20 2027`, `20/12`, `2026-12-03`, `the 28th`, `this weekend`, `next week`,
+ * `10am`, `10:30`, `at 3`, `at 1530`, `15:00`, `tomorrow 9`, `in 30 min`,
+ * `for 45 min`. Small and deterministic on purpose (ADR-0005):
  * the capture box loads it on every open.
  *
  * Dates are local (Africa/Addis_Ababa, UTC+3, no daylight saving).
@@ -16,7 +18,7 @@ export interface When {
   date?: string;
   /** Minutes after the date's midnight; 24:00 or more for 00:00–03:00, which belongs to the logical day before. */
   minutes?: number;
-  /** How long, from a range (`3-4:30pm`) or `for 45 min` after a time. */
+  /** How long, from a range (`3-4:30pm`) or `for 45 min`. */
   durationMin?: number;
   /** A part of the day instead of a time: `tomorrow morning`, `tonight`. */
   window?: DayWindow;
@@ -123,13 +125,50 @@ function monthDay(today: string, month: number, day: number, past: boolean): str
   return undefined;
 }
 
+/** A month/day in the year written ("25 dec 2027"), else the next one. */
+function dayIn(
+  today: string,
+  month: number,
+  day: number,
+  year: string | undefined,
+  past: boolean,
+): string | undefined {
+  if (!year) return monthDay(today, month, day, past);
+  return isValidDate(Number(year), month, day) ? format(Number(year), month, day) : undefined;
+}
+
+/** "the 28th": the next date with that day of the month (the last one, for spending). */
+function nthOfMonth(today: string, day: number, past: boolean): string | undefined {
+  if (day < 1 || day > 31) return undefined;
+  const [y, m] = parts(today);
+  for (let step = 0; step <= 12; step++) {
+    const index = y * 12 + (m - 1) + (past ? -step : step);
+    const year = Math.floor(index / 12);
+    const month = (index % 12) + 1;
+    if (!isValidDate(year, month, day)) continue;
+    const candidate = format(year, month, day);
+    if (past ? candidate <= today : candidate >= today) return candidate;
+  }
+  return undefined;
+}
+
 /** Epoch ms for a local date and minutes after midnight. */
 export function localToEpoch(date: string, minutes: number): number {
   const [y, m, d] = parts(date);
   return Date.UTC(y, m - 1, d) + (minutes - HOME_UTC_OFFSET_MIN) * 60 * 1000;
 }
 
-function readHour(hour: number, ampm: string | undefined, style: ClockStyle): number | undefined {
+/**
+ * An hour as written. `literal` is the 24-hour clock ("01:00", zero-padded):
+ * 1–6 is then the night, not the afternoon.
+ */
+function readHour(
+  hour: number,
+  ampm: string | undefined,
+  style: ClockStyle,
+  literal = false,
+): number | undefined {
+  if (!ampm && literal) return hour <= 23 ? hour : undefined;
   if (ampm) {
     if (hour < 1 || hour > 12) return undefined;
     const isPm = ampm.startsWith("p");
@@ -149,24 +188,59 @@ const RANGE = new RegExp(
   String.raw`\s(?:(from|at)\s+)?(\d{1,2})(?::(\d{2}))?\s*${AMPM}?(?:\s*[-–]\s*|\s+(?:to|till|until)\s+)(\d{1,2})(?::(\d{2}))?\s*${AMPM}?(?=\s)`,
   "i",
 );
-/** `for 45 min`, `for 2h`, `for an hour` after a time. */
+/** `for 45 min`, `for 2h`, `for an hour`: how long, with or without a time. */
 const FOR_DURATION = /\s+for\s+(\d+(?:\.\d+)?|an?|one)\s*(m|mins?|minutes?|h|hrs?|hours?)(?=\s)/i;
-const WINDOW_WORD =
-  /\s(?:(this|in\s+the|tomorrow|tmrw|tmr|today)\s+)?(morning|afternoon|evening|tonight)(?=\s)/i;
+/** `in 30 min`, `in an hour`, `in 2 hours`: that long from now. */
+const IN_DURATION = /\sin\s+(\d{1,3}|an?|one)\s*(m|mins?|minutes?|h|hrs?|hours?)(?=\s)/i;
+/** `tomorrow` and the ways it gets mistyped: a fixed list, so reading stays deterministic. */
+const TOMORROW = String.raw`tomm?orr?ow|tmrw|tmr|2moro|2morr?ow`;
+const WINDOW_WORD = new RegExp(
+  String.raw`\s(?:(this|in\s+the|${TOMORROW}|today)\s+)?(morning|afternoon|evening|tonight)(?=\s)`,
+  "i",
+);
+const IS_TOMORROW = new RegExp(String.raw`^(?:${TOMORROW})$`, "i");
 const ENDS_WITH_WEEKDAY =
   /(?:^|\s)(?:sun|sunday|mon|monday|tue|tues|tuesday|wed|weds|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\s*$/i;
 
-/** A range's two ends in minutes; the side without am/pm borrows the other's. */
+/** Minutes from `start` to `end`, past midnight when `end` is earlier. */
+const spanOf = ([start, end]: [number, number]) =>
+  end > start ? end - start : end + 24 * 60 - start;
+
+/**
+ * A range's two ends in minutes; the side without am/pm borrows the other's.
+ * With no am/pm at all, a zero-padded hour ("01:00") is the 24-hour clock,
+ * and so is the reading that makes the shorter span: "23:00-1:00" is two
+ * hours past midnight, not fourteen.
+ */
 function readRange(m: RegExpExecArray, style: ClockStyle): [number, number] | undefined {
   const [, lead, h1, m1, ap1, h2, m2, ap2] = m;
   // Bare numbers ("chapters 3-4") are only a time with `from`, a colon or am/pm.
   if (!lead?.toLowerCase().startsWith("from") && !m1 && !m2 && !ap1 && !ap2) return undefined;
   const minute = (text: string | undefined) => (text ? Number(text) : 0);
   if (minute(m1) > 59 || minute(m2) > 59) return undefined;
-  const at = (hour: string | undefined, mins: string | undefined, ampm: string | undefined) => {
-    const h = readHour(Number(hour), ampm?.toLowerCase(), ampm || mins ? "western" : style);
+  const at = (
+    hour: string | undefined,
+    mins: string | undefined,
+    ampm: string | undefined,
+    literal = false,
+  ) => {
+    const h = readHour(
+      Number(hour),
+      ampm?.toLowerCase(),
+      ampm || mins ? "western" : style,
+      literal || /^0\d/.test(hour ?? ""),
+    );
     return h === undefined ? undefined : h * 60 + minute(mins);
   };
+  if (!ap1 && !ap2) {
+    const start = at(h1, m1, undefined);
+    const end = at(h2, m2, undefined);
+    if (start === undefined || end === undefined) return undefined;
+    const start24 = at(h1, m1, undefined, true);
+    const end24 = at(h2, m2, undefined, true);
+    if (start24 === undefined || end24 === undefined) return [start, end];
+    return spanOf([start24, end24]) < spanOf([start, end]) ? [start24, end24] : [start, end];
+  }
   const flip = (ampm: string) => (ampm.toLowerCase().startsWith("a") ? "pm" : "am");
   let end = at(h2, m2, ap2 ?? ap1);
   let start = at(h1, m1, ap1 ?? ap2);
@@ -187,7 +261,7 @@ export interface ReadOptions {
 /** A day named anywhere in the text: today, tomorrow, a weekday, `in 3 days`, `20 dec`, `20/12`. */
 const MONTH_NAMES = Object.keys(MONTHS).join("|");
 const NAMES_A_DAY = new RegExp(
-  String.raw`\b(?:today|tdy|tomorrow|tmrw|tmr|yesterday|yday|${Object.keys(WEEKDAY_WORDS).join("|")})\b|\bin\s+\d{1,3}\s+(?:days?|weeks?)\b|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:${MONTH_NAMES})\b|\b(?:${MONTH_NAMES})\s+\d{1,2}\b`,
+  String.raw`\b\d{4}-\d{2}-\d{2}\b|\b(?:today|tdy|${TOMORROW}|yesterday|yday|${Object.keys(WEEKDAY_WORDS).join("|")})\b|\bin\s+\d{1,3}\s+(?:days?|weeks?)\b|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:${MONTH_NAMES})\b|\b(?:${MONTH_NAMES})\s+\d{1,2}\b`,
   "i",
 );
 
@@ -226,15 +300,18 @@ export function readWhen(
   let window: DayWindow | undefined;
   /** Where `fri afternoon` had its part of the day, so `fri` still counts mid-line. */
   let windowAfterDayAt: number | undefined;
+  /** Where a day word was taken out, so `tomorrow 9` can read the hour after it. */
+  let dayAt: number | undefined;
+  /** "tonight" said after midnight: already the calendar evening, not a night to shift. */
+  let calendarEvening = false;
 
   // A range first, so its end isn't left behind in the title (time-first §2).
   take(RANGE, (m) => {
     const range = readRange(m, style);
     if (!range) return false;
-    const [start, end] = range;
-    const length = end > start ? end - start : end + 24 * 60 - start;
+    const length = spanOf(range);
     if (length > 18 * 60) return false;
-    minutes = start;
+    minutes = range[0];
     durationMin = length;
     return true;
   });
@@ -242,7 +319,13 @@ export function readWhen(
   // Times first, so "10am" isn't read as a day.
   if (minutes === undefined)
     take(/\s(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?(?=\s)/i, (m) => {
-      const hour = readHour(Number(m[1]), m[3]?.toLowerCase(), m[3] ? style : "western");
+      // "01:00" is the 24-hour clock: one at night.
+      const hour = readHour(
+        Number(m[1]),
+        m[3]?.toLowerCase(),
+        m[3] ? style : "western",
+        /^0\d/.test(m[1] ?? ""),
+      );
       const minute = Number(m[2]);
       if (hour === undefined || minute > 59) return false;
       minutes = hour * 60 + minute;
@@ -274,6 +357,16 @@ export function readWhen(
     });
   }
   if (minutes === undefined) {
+    // "at 1530": four digits are the 24-hour clock. Only after "at", so "rent 1530" stays money.
+    take(/\sat\s+(\d{2})(\d{2})(?=\s)/i, (m) => {
+      const hour = Number(m[1]);
+      const minute = Number(m[2]);
+      if (hour > 23 || minute > 59) return false;
+      minutes = hour * 60 + minute;
+      return true;
+    });
+  }
+  if (minutes === undefined) {
     take(/\sat\s+(\d{1,2})(?=\s)/i, (m) => {
       const hour = readHour(Number(m[1]), undefined, style);
       if (hour === undefined) return false;
@@ -284,7 +377,23 @@ export function readWhen(
   if (minutes === undefined) {
     take(/\s(noon|midday)(?=\s)/i, () => ((minutes = 12 * 60), true));
   }
-  if (minutes !== undefined && durationMin === undefined) {
+  /** Set when the date and time are an exact moment ("in 30 min"), already on its logical day. */
+  let exact = false;
+  if (minutes === undefined && !past) {
+    take(IN_DURATION, (m) => {
+      const count = /^\d/.test(m[1] ?? "") ? Number(m[1]) : 1;
+      const length = (m[2]?.toLowerCase().startsWith("m") ? 1 : 60) * count;
+      if (length <= 0 || length > 24 * 60) return false;
+      const target = nowMs + length * 60_000;
+      const day = logicalDate(target);
+      date = day;
+      minutes = Math.round((target - localToEpoch(day, 0)) / 60_000);
+      exact = true;
+      return true;
+    });
+  }
+  // A length, with or without a time: "call mom for 20 minutes" is how long.
+  if (durationMin === undefined) {
     take(FOR_DURATION, (m) => {
       const count = /^\d/.test(m[1] ?? "") ? Number(m[1]) : 1;
       const length = Math.round((m[2]?.toLowerCase().startsWith("m") ? 1 : 60) * count);
@@ -312,16 +421,28 @@ export function readWhen(
     if (afterDay && !lead) windowAfterDayAt = m.index;
     // "tonight" said at 01:00 is the coming evening, not the one just gone.
     const evening = word === "tonight" || (word === "evening" && lead === "this");
-    if (evening && calendarToday !== today) date = calendarToday;
-    else if (word === "tonight" || lead === "this" || lead === "today") date = today;
-    else if (lead && lead !== "in the") date = addDays(today, 1);
+    if (evening && calendarToday !== today) {
+      date = calendarToday;
+      calendarEvening = true;
+    } else if (word === "tonight" || lead === "this" || lead === "today") date = today;
+    else if (lead && IS_TOMORROW.test(lead)) date = addDays(today, 1);
     // A time you gave wins over the part of the day.
     if (minutes === undefined) window = word === "tonight" ? "evening" : (word as DayWindow);
     return true;
   });
 
-  if (!date) take(/\s(today|tdy)(?=\s)/i, () => ((date = today), true));
-  if (!date) take(/\s(tomorrow|tmrw|tmr)(?=\s)/i, () => ((date = addDays(today, 1)), true));
+  if (!date)
+    take(/\s(today|tdy)(?=\s)/i, (m) => {
+      date = today;
+      dayAt = m.index;
+      return true;
+    });
+  if (!date)
+    take(new RegExp(String.raw`\s(${TOMORROW})(?=\s)`, "i"), (m) => {
+      date = addDays(today, 1);
+      dayAt = m.index;
+      return true;
+    });
   if (!date) {
     take(/\sin\s+(\d{1,3})\s+(day|days|week|weeks)(?=\s)/i, (m) => {
       const n = Number(m[1]);
@@ -330,16 +451,36 @@ export function readWhen(
     });
   }
   if (!date) take(/\s(yesterday|yday)(?=\s)/i, () => ((date = addDays(today, -1)), true));
+  if (!date && !past) {
+    // "this weekend": the coming Saturday (today at the weekend); "next weekend" the one after.
+    take(/\s(this|next|the)\s+weekend(?=\s)/i, (m) => {
+      const day = weekday(today);
+      const ahead = day === 0 ? 0 : 6 - day;
+      const next = m[1]?.toLowerCase() === "next";
+      date = addDays(today, next ? (day === 0 ? 6 : ahead + 7) : ahead);
+      return true;
+    });
+  }
+  if (!date && !past) {
+    // "next week": its Monday.
+    take(/\snext\s+week(?=\s)/i, () => {
+      date = addDays(today, 7 - ((weekday(today) + 6) % 7));
+      return true;
+    });
+  }
   if (!date) {
     // A weekday counts when it follows on/next/this/by or ends the line, so
     // "the sun is out" stays text while "gym sat" and "on sun" are dates.
     take(/\s(?:(next|this|on|by)\s+)?([a-z]+)(?=\s)/i, (m) => {
       const target = WEEKDAY_WORDS[m[2]?.toLowerCase() ?? ""];
       if (target === undefined) return false;
-      const isLast = rest.slice(m.index + m[0].length).trim() === "";
+      const after = rest.slice(m.index + m[0].length).trim();
+      // "call bank fri 4": a bare hour after it still ends the line.
+      const isLast = after === "" || (!past && minutes === undefined && /^\d{1,2}$/.test(after));
       const prefix = m[1]?.toLowerCase();
       const beforeWindow = windowAfterDayAt === m.index + m[0].length;
       if (!prefix && !isLast && !beforeWindow) return false;
+      dayAt = m.index;
       if (past) {
         // Spending: the most recent such day, today included.
         date = addDays(today, -((weekday(today) - target + 7) % 7));
@@ -353,21 +494,56 @@ export function readWhen(
     });
   }
   if (!date) {
-    take(/\s(?:on\s+)?(\d{1,2})\s*(?:st|nd|rd|th)?\s+([a-z]{3,9})(?=\s)/i, (m) => {
+    take(/\s(?:on\s+)?(\d{1,2})\s*(?:st|nd|rd|th)?\s+([a-z]{3,9})(?:,?\s+(\d{4}))?(?=\s)/i, (m) => {
       const month = MONTHS[m[2]?.toLowerCase() ?? ""];
       if (!month) return false;
-      date = monthDay(today, month, Number(m[1]), past);
+      date = dayIn(today, month, Number(m[1]), m[3], past);
       return date !== undefined;
     });
   }
   if (!date) {
-    take(/\s(?:on\s+)?([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?=\s)/i, (m) => {
+    take(/\s(?:on\s+)?([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?(?=\s)/i, (m) => {
       const month = MONTHS[m[1]?.toLowerCase() ?? ""];
       if (!month) return false;
-      date = monthDay(today, month, Number(m[2]), past);
+      date = dayIn(today, month, Number(m[2]), m[3], past);
       return date !== undefined;
     });
   }
+  if (!date) {
+    // ISO, as copied from a form or an email: 2026-12-03.
+    take(/\s(\d{4})-(\d{2})-(\d{2})(?=\s)/, (m) => {
+      const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      if (!isValidDate(y, mo, d)) return false;
+      date = format(y, mo, d);
+      return true;
+    });
+  }
+  if (!date) {
+    // "on the 28th", "by the 28th", or "the 28th" ending the line: the next
+    // 28th (the last one, for spending). "read the 5th chapter" stays text.
+    const nth =
+      /\s(?:(?:on|by)\s+the\s+(\d{1,2})(?:st|nd|rd|th)?|the\s+(\d{1,2})(?:st|nd|rd|th)(?=\s*$))(?=\s)/i;
+    take(nth, (m) => {
+      date = nthOfMonth(today, Number(m[1] ?? m[2]), past);
+      return date !== undefined;
+    });
+  }
+
+  // "tomorrow 9", "fri 4": a bare hour right after the day, ending the line.
+  if (date && dayAt !== undefined && minutes === undefined && !past) {
+    const hour = /^\s+(\d{1,2})\s*$/.exec(rest.slice(dayAt));
+    const read = hour ? readHour(Number(hour[1]), undefined, style) : undefined;
+    if (read !== undefined) {
+      minutes = read * 60;
+      rest = rest.slice(0, dayAt) + " ";
+    }
+  }
+
+  // A day you named with a time before 03:00 is that day's night (the
+  // logical day runs to 03:00): "tomorrow 2am" comes after tomorrow's
+  // evening, written 26:00 like a bare "at 1am" after midnight.
+  if (date && minutes !== undefined && minutes < 3 * 60 && !exact && !calendarEvening)
+    minutes += 24 * 60;
   if (!date) {
     // Day first, as written in Ethiopia and the UK: 12/11 = 12 November.
     take(/\s(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?=\s)/, (m) => {

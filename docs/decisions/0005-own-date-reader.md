@@ -10,8 +10,12 @@ The plan named chrono-node (`en.GB`) for dates in captures (plan §3.5). The cap
 
 `src/capture/when.ts` reads only what a capture needs: `today`, `tonight`, `tomorrow`, `yesterday`, weekdays (with `on`/`next`/`this`/`by`, or as the last word, so "the sun is out" stays text), `in 3 days`, `in 2 weeks`, `20 dec`, `dec 20`, day-first `12/11` and `31/12/2026`, `10am`, `10:30`, `15:00`, `at 3`, `noon`. "at 3" without am/pm follows the `capture.clock_style` setting: western (15:00) or the Ethiopian clock (09:00). A time with no day means today, or tomorrow if it has passed.
 
+Added after the user-test campaign (2026-11): `tomorrow` misspelt (`tommorow`, `tomorow`, `2moro`: a fixed list, not fuzzy), a year after a month name (`25 dec 2027`), ISO `2026-12-03`, `on the 28th` / `by the 28th` (or `the 28th` ending the line), `this weekend` (the coming Saturday), `next week` (its Monday), `in 30 min` / `in an hour`, `at 1530`, a bare hour after a day (`tomorrow 9`), `for 45 min` with or without a time, and zero-padded hours as the 24-hour clock (`23:00-01:00`). A named day with a time before 03:00 is that day's night (`tomorrow 2am` is after tomorrow's evening), as the logical day runs to 03:00.
+
+`next fri` means the coming Friday, the same as `fri`: the chip shows the date before Enter, so a different meaning is one Tab or edit away. Spelling out the date (`4 dec`) is the way to name a later one.
+
 ## Consequences
 
 - The capture box is 11.8 KB of JS with the parser included.
 - Every supported form is pinned by a fixture (`src/capture/fixtures/capture.json`, 69 cases); a misread reported with `fb:` becomes a new fixture.
-- Phrases outside the list ("the first Monday of next month") stay in the text and land in the inbox, to be sorted in the review or by the AI fallback (M4).
+- Phrases outside the list ("the first Monday of next month") stay in the text and land in the inbox, to be sorted in the review or by the AI fallback (M4). A task line whose time words look read but were not (`at 2590`, `on the 32nd`) is kept as a loose end with the reason, not filed as Someday.
