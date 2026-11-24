@@ -318,7 +318,7 @@ export async function loadPlanInput(
       localToEpoch(date, DAY_START_MIN),
     ]),
   ]);
-  const projects = await query<PlannedProject & { area_id: string }>(PROJECT_TIME_SQL);
+  const projects = await query<PlannedProject & { area_id: string } & Row>(PROJECT_TIME_SQL);
   /** Weekly minutes of the projects running this week, per area. */
   const projectMin = new Map<string, number>();
   for (const project of projects)
