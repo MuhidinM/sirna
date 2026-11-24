@@ -1020,7 +1020,12 @@ function settleSaving(
       : (accounts.find((a) => a.pays_in === 1 && a.is_savings !== 1 && currencyOf(a) === code) ??
         homeIn(accounts, code));
   if (!savings) return { ...base, unbacked: `no ${code} savings account` };
-  if (!spend) return { ...base, unbacked: `no ${code} account to take it from` };
+  // Only a savings account in that currency: saving gives the goal money it
+  // already holds (F36). Taking out has nowhere to go, so it is only marked.
+  if (!spend)
+    return parsed.amount > 0
+      ? { ...base, savings: refOf(savings) }
+      : { ...base, unbacked: `no ${code} account to take it from` };
   return { ...base, spend: refOf(spend), savings: refOf(savings) };
 }
 

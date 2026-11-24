@@ -129,7 +129,7 @@ import {
   addGoalOps,
   type GoalRow,
   GOALS_SQL,
-  onlyActiveGoal,
+  savingGoal,
   transferSaving,
   transferSavingOps,
   UNASSIGNED_SQL,
@@ -2890,7 +2890,8 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
             }),
             ...transferSavingOps({
               saving,
-              goalId: onlyActiveGoal(goals.rows),
+              // Out of savings, from a finished goal holding it first (F32).
+              goalId: savingGoal(goals.rows, saving?.minor ?? 0),
               transferId,
               nowMs,
               date: today,

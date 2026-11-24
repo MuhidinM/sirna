@@ -8,7 +8,14 @@ import { transferOps } from "../features/money/accounts";
 import { fromEtb, type Rates } from "../features/money/currency";
 import { ruleText } from "../features/money/regulars";
 import { loanEchoText, loanOps } from "../features/money/loans";
-import { moveOps, transferSavingOps } from "../features/savings/savings";
+import {
+  checkTakeOut,
+  checkTakeOutFrom,
+  claimOps,
+  moveOps,
+  takeOutOps,
+  transferSavingOps,
+} from "../features/savings/savings";
 import {
   type LoanItem,
   type MoneyItem,
@@ -19,15 +26,53 @@ import {
 } from "./parse";
 import { weekdayName } from "./when";
 
+/**
+ * A goal as the capture box knows it. A take-out needs what the goal holds
+ * (`saved_minor`, `held_minor`) and what each savings account can give it
+ * (`room`, by account id): without them it is refused, as on the goal card.
+ */
+export interface SavingGoal {
+  id: string;
+  title: string;
+  saved_minor?: number;
+  held_minor?: number;
+  room?: Record<string, number>;
+}
+
 export interface OpsContext {
   nowMs: number;
   newId: () => string;
   /** Where an idea lands (features/projects/idea.ts); without it, an unplaced idea. */
   idea?: Placement;
   /** The goal a saving goes to (matched in the capture box); null waits for one. */
-  savingGoal?: { id: string; title: string } | null;
-  /** The goal each saving on a several-item line goes to, by its words. */
-  goalOf?: (words: string | undefined) => { id: string; title: string } | null;
+  savingGoal?: SavingGoal | null;
+  /**
+   * The goal each saving on a several-item line goes to, by its words; with
+   * no words, by the sign of the saving (`minor`: money out of savings comes
+   * from a finished goal that holds it).
+   */
+  goalOf?: (words: string | undefined, minor?: number) => SavingGoal | null;
+  /** ETB worth in each savings account that no goal holds yet (by account id). */
+  unclaimed?: Record<string, number>;
+  /** Savings accounts with no balance set yet (by id). */
+  unset?: string[];
+}
+
+/**
+ * How a take-out through a savings account splits, as takeOutOps does it:
+ * `moved` leaves the account, `plain` only lowers the goal's number (it was
+ * put aside inside a spending account). ETB worth; null when nothing moves
+ * through an account.
+ */
+export function takeOutSplit(
+  parsed: Pick<SavingItem, "amount" | "worth" | "spend" | "savings">,
+  goal: SavingGoal | null | undefined,
+): { moved: number; plain: number } | null {
+  if (parsed.amount >= 0 || !goal || !parsed.spend || !parsed.savings) return null;
+  const worth = -(parsed.worth ?? parsed.amount);
+  const room = goal.room?.[parsed.savings.id] ?? 0;
+  const moved = Math.max(0, Math.min(worth, goal.held_minor ?? 0, room));
+  return { moved, plain: worth - moved };
 }
 
 /**
@@ -161,7 +206,7 @@ function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
     ...ops,
     ...transferSavingOps({
       saving: parsed.saving,
-      goalId: context.goalOf?.(undefined)?.id ?? null,
+      goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
       transferId,
       nowMs,
       date: parsed.date,
@@ -185,12 +230,52 @@ function withoutBirr(op: Op): Op {
  */
 function savingOps(
   parsed: SavingItem,
-  nowMs: number,
-  newId: () => string,
-  goal: { id: string; title: string } | null | undefined,
+  context: OpsContext,
+  goal: SavingGoal | null | undefined,
 ): Op[] {
+  const { nowMs, newId } = context;
   const date = logicalDate(nowMs);
   const worth = parsed.worth ?? parsed.amount;
+  // Take out keeps the goal card's rules (F8): a goal named, no more than it
+  // holds, and only what the savings account holds for it moves out.
+  if (parsed.amount < 0) {
+    if (!goal) throw "Name the goal to take it from: took 2000 from laptop";
+    const taken = -worth;
+    const saved = { saved_minor: goal.saved_minor ?? 0, held_minor: goal.held_minor ?? 0 };
+    if (parsed.spend && parsed.savings) {
+      const available = goal.room?.[parsed.savings.id] ?? 0;
+      const problem = checkTakeOutFrom(saved, taken, available, parsed.savings.name);
+      if (problem) throw problem;
+      const currency = parsed.currency ?? "ETB";
+      return takeOutOps({
+        goal: { id: goal.id, held_minor: saved.held_minor },
+        amount: -parsed.amount,
+        spend: { ...parsed.spend, currency },
+        savings: { ...parsed.savings, currency },
+        nowMs,
+        date,
+        ids: { entry: newId(), halves: [newId(), newId()], transfer: newId(), plain: newId() },
+        entryMinor: taken,
+        available,
+        origin: "capture",
+        note: parsed.goal ?? null,
+      }).ops.map((op) => withoutBirr(op));
+    }
+    const problem = checkTakeOut(saved, taken);
+    if (problem) throw problem;
+  }
+  // Dollars already in a dollar savings account, with no dollar account to
+  // move them from: the goal is given what the account holds (F36).
+  if (parsed.amount > 0 && parsed.savings && !parsed.spend) {
+    // No balance set: what it holds is unknown, not nothing (F36).
+    if (context.unset?.includes(parsed.savings.id))
+      throw `${parsed.savings.name} has no balance yet: set it in Money → Accounts first`;
+    const free = context.unclaimed?.[parsed.savings.id] ?? 0;
+    if (worth > free)
+      throw `${parsed.savings.name} holds ${formatAmount(free)} no goal has yet: save that much or less`;
+    if (!goal) throw "Name the goal: saved $50 laptop";
+    return claimOps(goal.id, parsed.savings.id, worth, nowMs, date, newId());
+  }
   if (parsed.spend && parsed.savings) {
     const currency = parsed.currency ?? "ETB";
     return moveOps({
@@ -235,7 +320,7 @@ function pieceOps(piece: MoneyPiece, context: OpsContext): Op[] {
     case "transfer":
       return transferPieceOps(piece, context);
     case "saving":
-      return savingOps(piece, nowMs, newId, goalOf ? goalOf(piece.goal) : null);
+      return savingOps(piece, context, goalOf ? goalOf(piece.goal, piece.amount) : null);
   }
 }
 
@@ -315,7 +400,7 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
         },
       ];
     case "saving":
-      return savingOps(parsed, nowMs, newId, savingGoal);
+      return savingOps(parsed, context, savingGoal);
     case "search":
     case "away":
     case "focus":
@@ -445,7 +530,7 @@ export function echo(
   parsed: Parsed,
   nowMs: number,
   idea?: Placement,
-  savingGoal?: { id: string; title: string } | null,
+  savingGoal?: SavingGoal | null,
   /** Whether you have an active savings goal: "no goal yet" or "no goal named" (F76). */
   goals: { hasGoals?: boolean } = {},
 ): string {
@@ -538,14 +623,25 @@ export function echo(
             ? " · no goal named: give it one on the Dashboard"
             : " · no goal yet: add one on the Dashboard"
           : "";
+      // A take-out that is only partly in the savings account says which
+      // part moved, like the goal card (F75).
+      const split = takeOutSplit(parsed, savingGoal);
+      const route =
+        parsed.spend && parsed.savings ? `${parsed.savings.name} → ${parsed.spend.name}` : "";
       const moved =
-        parsed.spend && parsed.savings
-          ? parsed.amount > 0
-            ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
-            : ` · ${parsed.savings.name} → ${parsed.spend.name}`
-          : parsed.unbacked
-            ? ` · ${parsed.unbacked}, so the money stays where it is`
-            : "";
+        split && split.plain > 0
+          ? split.moved > 0
+            ? ` · ${formatAmount(split.moved)} ${route}; ${formatAmount(split.plain)} was already in your spending accounts`
+            : " · it was already in your spending accounts, so only the goal went down"
+          : parsed.spend && parsed.savings
+            ? parsed.amount > 0
+              ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
+              : ` · ${parsed.savings.name} → ${parsed.spend.name}`
+            : parsed.savings
+              ? ` · from what ${parsed.savings.name} already holds`
+              : parsed.unbacked
+                ? ` · ${parsed.unbacked}, so the money stays where it is`
+                : "";
       return `${what} ${formatAmount(Math.abs(parsed.amount), parsed.currency)}${where}${moved}`;
     }
   }

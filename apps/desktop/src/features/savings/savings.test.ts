@@ -73,6 +73,7 @@ describe("goals and entries", () => {
         target_date: null,
         saved_minor: 4_300_000,
         held_minor: 0,
+        flow_minor: 4_300_000,
       },
     ]);
     apply(db, goalStatusOps("g1", "done"));

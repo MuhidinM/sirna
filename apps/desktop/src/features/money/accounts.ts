@@ -44,14 +44,21 @@ export function balanceOf(account: AccountRow): Santim | null {
   return account.opening_date === null ? null : account.opening_minor + account.moved_minor;
 }
 
-/** What you have in the accounts whose balance is known, and how many are unknown. */
+/**
+ * What you have in the accounts whose balance is known, and how many are
+ * unknown. A birr savings account with no balance yet still counts what
+ * moved into it: money put aside must not drop out of the total (F55).
+ */
 export function totalBalance(accounts: AccountRow[]): { total: Santim; unknown: number } {
   let total = 0;
   let unknown = 0;
   for (const account of accounts) {
     const balance = balanceOf(account);
-    if (balance === null) unknown++;
-    else total += balance;
+    if (balance !== null) total += balance;
+    else {
+      unknown++;
+      if (isSavings(account) && currencyOf(account) === "ETB") total += account.moved_minor;
+    }
   }
   return { total, unknown };
 }

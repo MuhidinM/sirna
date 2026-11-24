@@ -6,7 +6,7 @@
  * the sum is returned, so the page can show it. Pure and tested.
  */
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
-import { type GoalRow, goalPace } from "../savings/savings";
+import { type GoalRow, goalPace, SAVING_FLOW } from "../savings/savings";
 import { type AccountRow, balanceOf, inEtb, spending, totalBalance } from "./accounts";
 import {
   convert,
@@ -18,10 +18,14 @@ import {
 import { type LoanEvent, owedThrough } from "./loans";
 import { type DueItem, readRule, type RegularRow } from "./regulars";
 
-/** Saved into goals in total, and this month per goal (?1 first day, ?2 last day). */
+/**
+ * Saved into goals this month per goal (?1 first day, ?2 last day). A claim
+ * of money already in the account is not this month's saving (F31).
+ */
 export const GOAL_MONTH_SQL = `SELECT goal_id, COALESCE(sum(amount_minor), 0) AS minor
   FROM savings_entries
   WHERE deleted_at IS NULL AND goal_id IS NOT NULL AND local_date >= ?1 AND local_date <= ?2
+    AND ${SAVING_FLOW}
   GROUP BY goal_id`;
 
 export interface SafeLine {

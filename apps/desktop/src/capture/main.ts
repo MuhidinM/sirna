@@ -23,7 +23,7 @@ import {
 } from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
-import { matchGoal } from "../features/savings/savings";
+import { goalFinder, loadSavingsContext, type SavingsContext } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
 import {
   affordState,
@@ -32,6 +32,7 @@ import {
   ideaInput,
   SAME_PROJECT_SQL,
   sameProject,
+  type SavingGoal,
   toOps,
 } from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
@@ -282,41 +283,52 @@ form.addEventListener("submit", (event) => {
       : Promise.resolve(undefined);
   let idea: Placement | undefined;
   // A saving goes to the goal it names, or the only one (plan §3.13).
-  let savingGoal: { id: string; title: string } | null | undefined;
+  let savingGoal: SavingGoal | null | undefined;
   /** With goals but none named, the echo says so rather than "no goal yet" (F76). */
   let hasGoals = false;
-  type Goal = { id: string; title: string; status: "active" | "done" | "paused" };
   // A transfer into or out of a savings account is saving too (time-first §4).
   const savesSomething = (item: Parsed) =>
     item.kind === "saving" || (item.kind === "transfer" && item.saving !== undefined);
   const hasSaving =
     savesSomething(parsed) || (parsed.kind === "money" && parsed.items.some(savesSomething));
-  const goalRows: Promise<Goal[]> = hasSaving
-    ? query<Goal>("SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL").catch(
-        () => [],
-      )
-    : Promise.resolve([]);
-  const goalOf = (goals: Goal[]) => (words: string | undefined) => {
-    const id = matchGoal(goals, words);
-    const goal = goals.find((row) => row.id === id);
-    return goal ? { id: goal.id, title: goal.title } : null;
-  };
-  const goalFor: Promise<{ id: string; title: string } | null | undefined> =
+  // What the goals and savings accounts hold, so a take-out keeps the goal
+  // card's limits (F8) and a saving knows what an account holds unclaimed.
+  const empty: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null, unset: [] };
+  const goalRows: Promise<SavingsContext> = hasSaving
+    ? loadSavingsContext(query as Query, moneyContext.rates ?? {}).catch(() => empty)
+    : Promise.resolve(empty);
+  const goalFor: Promise<SavingGoal | null | undefined> =
     parsed.kind === "saving"
-      ? goalRows.then((goals) => goalOf(goals)(parsed.goal))
+      ? goalRows.then((context) => goalFinder(context)(parsed.goal, parsed.amount))
       : Promise.resolve(undefined);
   // A fix undoes the old capture and saves the new one in one transaction.
-  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, goals]) => {
+  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, context]) => {
     idea = placement;
     savingGoal = goal;
-    hasGoals = goals.some((row) => row.status === "active");
-    const ops = toOps(parsed, {
-      nowMs,
-      newId: () => ulid(),
-      goalOf: goalOf(goals),
-      ...(placement ? { idea: placement } : {}),
-      ...(goal !== undefined ? { savingGoal: goal } : {}),
-    });
+    hasGoals = context.goals.some((row) => row.status === "active");
+    let ops: ReturnType<typeof toOps>;
+    try {
+      ops = toOps(parsed, {
+        nowMs,
+        newId: () => ulid(),
+        goalOf: goalFinder(context),
+        unclaimed: context.unclaimed,
+        unset: context.unset,
+        ...(placement ? { idea: placement } : {}),
+        ...(goal !== undefined ? { savingGoal: goal } : {}),
+      });
+    } catch (refusal) {
+      // A refused take-out or saving (F8): the line is still kept as typed
+      // (store first, parse second) with nothing made from it, and the box
+      // stays open on it so Enter after a correction fixes that capture.
+      // A fix that is refused leaves the capture it was fixing alone.
+      if (typeof refusal !== "string" || fixing) throw refusal;
+      return commitCapture(rawText, [], parser).then((rawId) => {
+        editing = { id: rawId, body: rawText };
+        fixKind = undefined;
+        throw refusal;
+      });
+    }
     return fixing
       ? replaceCapture(fixing.id, rawText, ops, parser)
       : commitCapture(rawText, ops, parser);
