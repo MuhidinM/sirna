@@ -18,6 +18,20 @@ export interface FocusStatus {
   distractions: number;
 }
 
+/**
+ * A loader that applies only the newest answer: an older request that comes
+ * back late (the status read before a session started) can't hide a newer one.
+ */
+export function newestOnly<T>(read: () => Promise<T>, apply: (value: T) => void): () => void {
+  let asked = 0;
+  return () => {
+    const ticket = ++asked;
+    void read().then((value) => {
+      if (ticket === asked) apply(value);
+    });
+  };
+}
+
 /** The timer's state from Rust, counted down locally once a second between updates. */
 export function useFocus(): FocusStatus | undefined {
   const [status, setStatus] = useState<FocusStatus>();
@@ -25,14 +39,19 @@ export function useFocus(): FocusStatus | undefined {
   useEffect(() => {
     let base: FocusStatus | undefined;
     let shownAt = 0;
-    const load = () =>
-      void invoke<FocusStatus>("focus_status").then((next) => {
+    const load = newestOnly(
+      () => invoke<FocusStatus>("focus_status"),
+      (next) => {
         base = next;
         shownAt = performance.now();
         setStatus(next);
-      });
+      },
+    );
     load();
     const stops = [listen("focus-changed", load), listen("focus-tick", load)];
+    // A session started while the listeners were still being set up sent its
+    // event to nobody (F64-new): read the status again once they are.
+    void Promise.all(stops).then(load, () => undefined);
     const second = setInterval(() => {
       if (!base || base.kind === null || base.paused) return;
       const remaining = Math.max(0, base.remaining_ms - (performance.now() - shownAt));
