@@ -11,6 +11,10 @@ export interface BlockRow {
   status: string;
   color: string | null;
   task_title: string | null;
+  task_due_at?: number | null;
+  task_remind_at?: number | null;
+  task_status?: string | null;
+  task_completed_at?: number | null;
   /** Minutes of finished focus sessions on this block (paused time left out). */
   focused_min?: number | null;
 }
@@ -40,7 +44,8 @@ export function blockProgress(
 
 export const TODAY_BLOCKS_SQL = `
   SELECT b.id, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title, b.status,
-         a.color, t.title AS task_title,
+         a.color, t.title AS task_title, t.due_at AS task_due_at, t.remind_at AS task_remind_at,
+         t.status AS task_status, t.completed_at AS task_completed_at,
          (SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
             FROM focus_sessions AS f
             WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL) AS focused_min

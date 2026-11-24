@@ -16,7 +16,7 @@ import {
   addOps,
   type BlockDraft,
   BOARD_TASKS_SQL,
-  blockBefore,
+  beforeOf,
   type BoardTask,
   changeOps,
   clockOf,
@@ -25,6 +25,7 @@ import {
   editorKey,
   focusAfterDelete,
   minuteOf,
+  markDoneOps,
   moveOps,
   moveSpan,
   newDraft,
@@ -336,7 +337,7 @@ export function Timeline({
       state.mode === "move"
         ? `Moved ${block.title} to ${clockOf(next.startMin)}.`
         : `${block.title} now ends at ${clockOf(next.endMin)}.`,
-      { [block.id]: blockBefore(block) },
+      beforeOf(block),
     );
   };
 
@@ -353,19 +354,19 @@ export function Timeline({
       write(
         resizeOps(day, block, span.endMin + step),
         `${block.title} now ends at ${clockOf(next.endMin)}.`,
-        {
-          [block.id]: blockBefore(block),
-        },
+        beforeOf(block),
       );
     } else if (step !== 0) {
       event.preventDefault();
       const next = moveSpan(span, step);
-      write(moveOps(day, block, step), `Moved ${block.title} to ${clockOf(next.startMin)}.`, {
-        [block.id]: blockBefore(block),
-      });
+      write(
+        moveOps(day, block, step),
+        `Moved ${block.title} to ${clockOf(next.startMin)}.`,
+        beforeOf(block),
+      );
     } else if (event.key === "Delete") {
       event.preventDefault();
-      write(deleteOps(block), `Deleted ${block.title}.`, { [block.id]: blockBefore(block) });
+      write(deleteOps(block), `Deleted ${block.title}.`, beforeOf(block));
       focusBlock(focusAfterDelete(blocks, block.id));
     }
   };
@@ -717,7 +718,7 @@ function BlockEditor({
     }
     if (block) {
       const ops = changeOps(date, block, draft, names());
-      onSave(ops, `Changed ${block.title}.`, { [block.id]: blockBefore(block) });
+      onSave(ops, `Changed ${block.title}.`, beforeOf(block));
     } else {
       const ops = addOps(date, draft, ulid(), names());
       const title = ops[0]?.op === "insert" ? String(ops[0].values.title) : "the block";
@@ -826,16 +827,9 @@ function BlockEditor({
             onClick={() => {
               const done = block.status === "done";
               onSave(
-                [
-                  {
-                    op: "update",
-                    table: "day_blocks",
-                    id: block.id,
-                    values: { status: done ? "planned" : "done" },
-                  },
-                ],
+                markDoneOps(block, systemClock.now()),
                 done ? `${block.title}: not done.` : `${block.title}: done.`,
-                { [block.id]: blockBefore(block) },
+                beforeOf(block),
               );
             }}
           >
@@ -845,11 +839,7 @@ function BlockEditor({
         {block && (
           <Button
             className="day-delete btn-danger"
-            onClick={() =>
-              onSave(deleteOps(block), `Deleted ${block.title}.`, {
-                [block.id]: blockBefore(block),
-              })
-            }
+            onClick={() => onSave(deleteOps(block), `Deleted ${block.title}.`, beforeOf(block))}
           >
             Delete
           </Button>

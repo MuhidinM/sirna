@@ -6,6 +6,7 @@ import {
   addOps,
   BOARD_TASKS_SQL,
   type BoardTask,
+  beforeOf,
   blockBefore,
   changeOps,
   clockOf,
@@ -14,6 +15,7 @@ import {
   editorKey,
   type EditBlock,
   focusAfterDelete,
+  markDoneOps,
   minuteOf,
   moveOps,
   moveSpan,
@@ -254,6 +256,77 @@ describe("undo", () => {
     expect(undoOps(deleteOps(gym), before)).toEqual([
       { op: "upsert", table: "day_blocks", id: "b1", values: blockBefore(gym) },
     ]);
+  });
+});
+
+describe("a task's own block and its task (F60)", () => {
+  const call: EditBlock = {
+    id: "b9",
+    start_at: at(19 * 60),
+    end_at: at(19 * 60 + 30),
+    title: "call bank",
+    kind: "area",
+    area_id: null,
+    task_id: "t9",
+    status: "planned",
+    task_title: "call bank",
+    task_due_at: at(19 * 60),
+    task_remind_at: at(19 * 60) - 10 * 60_000,
+    task_status: "todo",
+    task_completed_at: null,
+  };
+
+  it("moves the task's time with its own block, reminder and all, and undoes both", () => {
+    const ops = moveOps(DATE, call, 45);
+    expect(ops).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { due_at: at(19 * 60 + 45), remind_at: at(19 * 60 + 35) },
+    });
+    expect(undoOps(ops, beforeOf(call))).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { due_at: call.task_due_at, remind_at: call.task_remind_at },
+    });
+    // A longer block keeps the task's time; so does a focus slot that holds a task.
+    expect(resizeOps(DATE, call, 20 * 60).some((op) => op.table === "task_items")).toBe(false);
+    const slot = { ...call, title: "Admin: call bank" };
+    expect(moveOps(DATE, slot, 45).some((op) => op.table === "task_items")).toBe(false);
+    // The popover moves it too.
+    const draft = { ...draftOf(DATE, call), start: "20:00", end: "20:30" };
+    expect(changeOps(DATE, call, draft)).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { due_at: at(20 * 60), remind_at: at(20 * 60) - 10 * 60_000 },
+    });
+  });
+
+  it("ticks the task when its own block is marked done, and back", () => {
+    expect(markDoneOps(call, 5)).toEqual([
+      { op: "update", table: "day_blocks", id: "b9", values: { status: "done" } },
+      { op: "update", table: "task_items", id: "t9", values: { status: "done", completed_at: 5 } },
+    ]);
+    const done = { ...call, status: "done", task_status: "done", task_completed_at: 5 };
+    expect(markDoneOps(done, 6)).toEqual([
+      { op: "update", table: "day_blocks", id: "b9", values: { status: "planned" } },
+      {
+        op: "update",
+        table: "task_items",
+        id: "t9",
+        values: { status: "todo", completed_at: null },
+      },
+    ]);
+    expect(undoOps(markDoneOps(call, 5), beforeOf(call))).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { status: "todo", completed_at: null },
+    });
+    // A focus slot's done is the slot's, not its task's.
+    expect(markDoneOps({ ...call, title: "Admin: call bank" }, 5)).toHaveLength(1);
   });
 });
 
