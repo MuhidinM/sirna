@@ -47,17 +47,33 @@ export const AREAS_SQL = `
   SELECT id, name, kind, weekly_target_min, capped, protected, priority_rank, active
   FROM area_items WHERE deleted_at IS NULL`;
 
-/** Minutes of done blocks per area from Monday up to (not including) today. */
+/**
+ * Minutes done per area from Monday up to (not including) today: a block
+ * marked done counts in full, any other block counts the focus time on it
+ * (up to its length).
+ */
 export const DONE_THIS_WEEK_SQL = `
-  SELECT area_id, SUM((end_at - start_at) / 60000) AS minutes FROM day_blocks
-  WHERE deleted_at IS NULL AND status = 'done' AND area_id IS NOT NULL
-    AND logical_date >= ? AND logical_date < ?
-  GROUP BY area_id`;
+  SELECT area_id, SUM(CASE WHEN status = 'done' THEN length ELSE MIN(length, focused) END) AS minutes
+  FROM (
+    SELECT b.area_id, b.status, (b.end_at - b.start_at) / 60000 AS length,
+           COALESCE((SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
+                     FROM focus_sessions f
+                     WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)
+             AS focused
+    FROM day_blocks b
+    WHERE b.deleted_at IS NULL AND b.area_id IS NOT NULL
+      AND b.logical_date >= ? AND b.logical_date < ?)
+  GROUP BY area_id
+  HAVING minutes > 0`;
 
 /** Open tasks, with what is left of their estimate after focus time on them. */
 export const OPEN_TASKS_SQL = `
   SELECT t.id, t.title, t.area_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
-         t.estimate_min,
+         t.estimate_min, t.parent_id, t.step_no,
+         -- A later step of a split task: planned after the steps before it.
+         EXISTS (SELECT 1 FROM task_items AS before_step
+                 WHERE before_step.parent_id = t.parent_id AND before_step.step_no < t.step_no
+                   AND before_step.status = 'todo' AND before_step.deleted_at IS NULL) AS waits,
          -- A deadline an old carry may have written isn't urgent until confirmed.
          CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date,
          CASE WHEN t.estimate_min IS NULL THEN NULL ELSE MAX(0, t.estimate_min - COALESCE((
@@ -69,11 +85,12 @@ export const OPEN_TASKS_SQL = `
   WHERE t.deleted_at IS NULL AND t.status = 'todo'
     -- A task moved to a later day waits for that day (T-050).
     AND (t.planned_date IS NULL OR t.planned_date <= ?)
-    -- A later step of a split task waits for the steps before it (T-051).
+    -- A later step waits while a step before it is blocked (T-051); steps
+    -- still to do are planned in order on the calendar.
     AND NOT EXISTS (
       SELECT 1 FROM task_items AS before_step
       WHERE before_step.parent_id = t.parent_id AND before_step.step_no < t.step_no
-        AND before_step.status IN ('todo', 'waiting') AND before_step.deleted_at IS NULL)
+        AND before_step.status = 'waiting' AND before_step.deleted_at IS NULL)
   ORDER BY t.created_at`;
 
 export const CHOSEN_TOP_SQL =
@@ -84,7 +101,7 @@ export const CHOSEN_TOP_SQL =
  * focus session ran in (a capture heals today's plan mid-session).
  */
 export const KEPT_BLOCKS_SQL = `
-  SELECT id, start_at, end_at, task_id, title, kind FROM day_blocks
+  SELECT id, start_at, end_at, task_id, title, kind, area_id FROM day_blocks
   WHERE logical_date = ? AND deleted_at IS NULL
     AND (source = 'user' OR user_edited_at IS NOT NULL
       OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`;
@@ -140,6 +157,10 @@ export type OpenTaskRow = {
   estimate_min: number | null;
   created_at: number;
   remaining_min: number | null;
+  parent_id?: string | null;
+  step_no?: number | null;
+  /** 1 when a step before it is still to do. */
+  waits?: number | null;
 };
 
 const WINDOW_NAMES = new Set<string>(["morning", "afternoon", "evening"]);
@@ -158,6 +179,9 @@ export function taskOnDay(task: OpenTaskRow, date: string): TaskInput | undefine
     dueDate: task.due_date,
     createdAt: task.created_at,
     remainingMin: task.remaining_min,
+    ...(task.parent_id && task.step_no !== null && task.step_no !== undefined
+      ? { step: { parentId: task.parent_id, no: task.step_no, waits: task.waits === 1 } }
+      : {}),
     estimateMin: task.estimate_min,
   };
   if (task.due_at !== null) {
@@ -184,6 +208,7 @@ type KeptRow = {
   task_id: string | null;
   title: string;
   kind: string;
+  area_id?: string | null;
 };
 
 function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBlock {
@@ -193,6 +218,7 @@ function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBloc
     taskId: block.task_id,
     title: block.title,
     kind: block.kind as TemplateBlock["kind"],
+    areaId: block.area_id ?? null,
   };
 }
 
@@ -371,7 +397,7 @@ export function ensureDayPlan(
 export const REST_DAY_MIN = 6 * 60;
 
 /** Today's plan blocks Sirna made and you didn't touch. */
-export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind FROM day_blocks
+export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id FROM day_blocks
   WHERE logical_date = ? AND deleted_at IS NULL
   AND source IN ('template', 'generator') AND user_edited_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)`;

@@ -59,6 +59,11 @@ export interface TaskInput {
   atMin?: number | null;
   /** The part of this day it asked for. */
   window?: DayWindow | null;
+  /**
+   * A step of a split task: planned after the steps before it; `waits` while
+   * one of them is still to do (then it is never in Top 3).
+   */
+  step?: { parentId: string; no: number; waits: boolean };
 }
 
 export type DayWindow = "morning" | "afternoon" | "evening";
@@ -90,6 +95,8 @@ export interface KeptBlock {
    * or event of the same kind and title, wherever you moved it.
    */
   kind?: TemplateBlock["kind"];
+  /** Its area: a timed task of that area inside it is listed there (rule 1). */
+  areaId?: string | null;
 }
 
 export interface PlanInput {
@@ -220,6 +227,8 @@ function urgent(tasks: TaskInput[], date: string): TaskInput[] {
 }
 
 function byDeadlineThenAge(a: TaskInput, b: TaskInput): number {
+  // Steps of one task keep their order.
+  if (a.step && b.step && a.step.parentId === b.step.parentId) return a.step.no - b.step.no;
   if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
   if (a.dueDate && !b.dueDate) return -1;
   if (!a.dueDate && b.dueDate) return 1;
@@ -334,11 +343,27 @@ export function generateDay(input: PlanInput): DayPlan {
   const lengthOf = (task: TaskInput) =>
     task.estimateMin && task.estimateMin > 0 ? task.estimateMin : TASK_BLOCK_MIN;
 
+  /**
+   * A block of the task's own area (Job A, a routine) that already covers
+   * its time: the task is listed inside that block, not given a card beside it.
+   */
+  const hostOf = (task: TaskInput, startMin: number, durationMin: number) =>
+    task.areaId === null
+      ? undefined
+      : [...blocks, ...input.kept.filter((kept) => !kept.taskId)].find(
+          (block) =>
+            block.areaId === task.areaId &&
+            block.kind !== "rest" &&
+            block.startMin <= startMin &&
+            startMin + durationMin <= block.startMin + block.durationMin,
+        );
+
   // Time first, rule 1: a task with a time gets its own block at that time.
   for (const task of tasksLeft.filter((t) => t.atMin !== null && t.atMin !== undefined)) {
     const startMin = task.atMin ?? 0;
     // A block never runs past the end of its logical day (03:00 next morning).
-    addTaskBlock(task, startMin, Math.max(1, Math.min(lengthOf(task), DAY_END_MIN - startMin)));
+    const length = Math.max(1, Math.min(lengthOf(task), DAY_END_MIN - startMin));
+    if (!hostOf(task, startMin, length)) addTaskBlock(task, startMin, length);
     drop(task);
   }
   // Rule 2: a task with a part of the day goes into the first free gap in it.
@@ -459,14 +484,28 @@ export function generateDay(input: PlanInput): DayPlan {
     const loose = tasksLeft
       .filter((task) => task.areaId === null && hasEstimate(task))
       .sort(byDeadlineThenAge);
+    /** Where the latest planned step of each split task ends: the next step starts after it. */
+    const stepEnds = new Map<string, number>();
+    for (const block of blocks) {
+      const step = input.tasks.find((t) => t.id === block.taskId)?.step;
+      if (step)
+        stepEnds.set(
+          step.parentId,
+          Math.max(stepEnds.get(step.parentId) ?? 0, block.startMin + block.durationMin),
+        );
+    }
     for (const task of loose) {
       for (let i = 0; i < leftover.length && tasksLeft.includes(task); i++) {
         const piece = leftover[i];
         if (!piece) continue;
+        const after = task.step ? (stepEnds.get(task.step.parentId) ?? 0) : 0;
+        if (piece.startMin < after) continue;
         const need = left.get(task.id) ?? task.remainingMin ?? task.estimateMin ?? 0;
         const minutes = Math.min(need, piece.durationMin, budget - used);
-        if (minutes < MIN_BLOCK_MIN) continue;
+        // A short task (a 15-minute step) gets a block of its own length.
+        if (minutes < Math.min(MIN_BLOCK_MIN, need)) continue;
         addTaskBlock(task, piece.startMin, minutes);
+        if (task.step) stepEnds.set(task.step.parentId, Math.max(after, piece.startMin + minutes));
         used += minutes;
         charge(task, minutes);
         leftover[i] = {
@@ -484,10 +523,16 @@ export function generateDay(input: PlanInput): DayPlan {
   const add = (id: string | null | undefined) => {
     if (id && !top.includes(id) && top.length < (light ? 1 : 3)) top.push(id);
   };
-  const known = new Set(input.tasks.map((task) => task.id));
+  // A later step whose earlier step is still to do never takes a Top 3 place.
+  const waiting = new Set(input.tasks.filter((task) => task.step?.waits).map((task) => task.id));
+  const known = new Set(input.tasks.filter((task) => !waiting.has(task.id)).map((task) => task.id));
   input.chosenTop.filter((id) => known.has(id)).forEach(add);
-  urgent(input.tasks, input.date).forEach((task) => add(task.id));
-  blocks.filter((block) => block.kind === "area").forEach((block) => add(block.taskId));
+  urgent(input.tasks, input.date)
+    .filter((task) => known.has(task.id))
+    .forEach((task) => add(task.id));
+  blocks
+    .filter((block) => block.kind === "area" && !waiting.has(block.taskId ?? ""))
+    .forEach((block) => add(block.taskId));
 
   // A block you kept with the same title at the same minute stands in for a
   // new one (the database allows one per day, title and start).

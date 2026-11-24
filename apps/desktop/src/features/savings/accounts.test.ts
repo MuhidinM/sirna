@@ -26,6 +26,9 @@ import {
   type SavingsTransfer,
   savingsSyncOps,
   UNASSIGNED_SQL,
+  claimOps,
+  HELD_BY_ACCOUNT_SQL,
+  unclaimed,
 } from "./savings";
 
 type Input = string | number | null;
@@ -263,5 +266,51 @@ describe("savings accounts back the goals (time-first §4)", () => {
     expect(checkCurrency(find(db, "cbe"), 2)).toMatch(/stays/);
     setBalance(db, "cbe", 100);
     expect(checkCurrency(find(db, "cbe"), 0)).toMatch(/stays/);
+  });
+});
+
+describe("money already in a savings account (r2-18)", () => {
+  const account = (over: Partial<AccountRow>): AccountRow => ({
+    id: "cbosaving",
+    name: "CBO saving",
+    kind: "bank",
+    opening_minor: 5_000_000,
+    opening_date: "2026-11-23",
+    pays_in: 0,
+    sort_order: 0,
+    moved_minor: 0,
+    currency: "ETB",
+    is_savings: 1,
+    ...over,
+  });
+
+  it("is the balance less what goal entries in it hold", () => {
+    const held = [{ account: "cbosaving", minor: 1_000_000 }];
+    expect(unclaimed([account({})], held, {})).toEqual([
+      { account: account({}), minor: 4_000_000 },
+    ]);
+    // A spending account, a fully held one, or one without a balance: nothing to claim.
+    expect(unclaimed([account({ is_savings: 0 })], [], {})).toEqual([]);
+    expect(unclaimed([account({})], [{ account: "cbosaving", minor: 5_000_000 }], {})).toEqual([]);
+    expect(unclaimed([account({ opening_date: null })], [], {})).toEqual([]);
+  });
+
+  it("converts a foreign savings account at its rate, and skips it without one", () => {
+    const wise = account({ id: "wise", currency: "USD", opening_minor: 10_000 });
+    const rates = { USD: { rate: "132.50", set_on: "2026-11-23" } };
+    expect(unclaimed([wise], [], rates)[0]?.minor).toBe(1_325_000);
+    expect(unclaimed([wise], [], {})).toEqual([]);
+  });
+
+  it("gives it to a goal without moving money", () => {
+    const db = openTestDb();
+    db.exec(
+      "INSERT INTO savings_goals (id, title, target_minor, start_date, status, created_at, updated_at) VALUES ('g', 'Laptop', 100000, '2026-11-01', 'active', 0, 0)",
+    );
+    apply(db, claimOps("g", "cbosaving", 4_000_000, 1, "2026-11-24", "e1"));
+    expect(db.prepare(HELD_BY_ACCOUNT_SQL).all()).toEqual([
+      { account: "cbosaving", minor: 4_000_000 },
+    ]);
+    expect(db.prepare("SELECT count(*) AS n FROM money_txns").get()).toEqual({ n: 0 });
   });
 });

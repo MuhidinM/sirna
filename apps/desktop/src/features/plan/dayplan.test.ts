@@ -232,6 +232,20 @@ describe("ensureDayPlan", () => {
     const input = await loadPlanInput(h.query, "2026-11-11");
     expect(input.doneThisWeekMin).toEqual({ coding: 90 });
   });
+
+  it("counts focus time on a block that isn't marked done, up to its length", async () => {
+    const h = harness();
+    h.db.exec(
+      `INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, created_at, updated_at) VALUES
+       ('q', '2026-11-10', 0, 1800000, 'area', 'quran', 'Quran', 0, 0)`,
+    );
+    h.db.exec(
+      `INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, paused_ms, ended_at) VALUES
+       ('f1', 'q', 'focus', 0, 25, 0, 1200000), ('f2', 'q', 'focus', 0, 25, 0, 1500000)`,
+    );
+    const input = await loadPlanInput(h.query, "2026-11-11");
+    expect(input.doneThisWeekMin).toEqual({ quran: 30 });
+  });
 });
 
 describe("replanning after a routine change", () => {
