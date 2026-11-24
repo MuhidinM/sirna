@@ -118,7 +118,12 @@ describe("pay that comes after its month ends", () => {
     expect(
       on("2026-12-02", [paid("2026-12-01", "rent", 600_000), paid("2026-12-01", "rent", 600_000)]),
     ).toEqual([["rent", "2026-12-01", "paid", 0]]);
+    // One payment pays December; the missed November stays late for 31 days (F84).
     expect(on("2026-12-02", [paid("2026-12-01", "rent", 600_000)])).toEqual([
+      ["rent", "2026-11-01", "late", 600_000],
+      ["rent", "2026-12-01", "paid", 0],
+    ]);
+    expect(on("2026-12-03", [paid("2026-12-01", "rent", 600_000)])).toEqual([
       ["rent", "2026-12-01", "paid", 0],
     ]);
   });

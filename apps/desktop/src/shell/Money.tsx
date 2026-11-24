@@ -81,10 +81,12 @@ import {
 } from "../features/money/currency";
 import {
   checkRegular,
+  regularDraftOf,
   type DueItem,
   dueItems,
   dueLines,
   dueWindow,
+  pauseOps,
   type RegularDraft,
   regularOps,
   type RegularRow,
@@ -94,6 +96,7 @@ import {
   type RegularTxn,
   removeRegularOps,
   settleOps,
+  skipOps,
 } from "../features/money/regulars";
 import {
   balances,
@@ -2257,8 +2260,34 @@ function DueRow({ item, today }: { item: DueItem; today: string }) {
       <span className="money-row-line">
         <span className={`money-state ${item.state}`}>{STATE_TEXT[item.state]}</span>
         {item.state !== "paid" && <SettleButton item={item} today={today} />}
+        {item.state !== "paid" && item.done === 0 && <SkipButton item={item} today={today} />}
       </span>
     </li>
+  );
+}
+
+/** Skip this one date (F29): it stops asking, and nothing is recorded. Undo brings it back. */
+function SkipButton({ item, today }: { item: DueItem; today: string }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <Button
+        className="btn-ghost"
+        title="Not this time: nothing is recorded"
+        onClick={() =>
+          void transact("user", skipOps(item, today), `regular:${item.regular.id}`).catch(
+            (failure: unknown) => setError(`Couldn't skip it: ${message(failure)}`),
+          )
+        }
+      >
+        Skip
+      </Button>
+      {error && (
+        <span role="alert" className="error">
+          {error}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -2272,12 +2301,23 @@ const emptyRegular = (kind: RegularDraft["kind"], account: string): RegularDraft
   areaId: "",
 });
 
-function RegularForm() {
+/** Adds a regular, or changes one you have (`editing`, F29). */
+function RegularForm({
+  editing = null,
+  onDone,
+}: {
+  editing?: RegularRow | null;
+  onDone?: () => void;
+}) {
   const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const categories = useLiveQuery<Category>(CATEGORIES_SQL);
   const jobs = useLiveQuery<{ id: string; name: string }>(JOBS_SQL);
-  const [draft, setDraft] = useState<RegularDraft>(emptyRegular("bill", ""));
-  const [amountText, setAmountText] = useState("");
+  const [draft, setDraft] = useState<RegularDraft>(() =>
+    editing ? regularDraftOf(editing) : emptyRegular("bill", ""),
+  );
+  const [amountText, setAmountText] = useState(() =>
+    editing ? formatNumber(editing.amount_minor) : "",
+  );
   const [note, setNote] = useState<string | null>(null);
   const set = (part: Partial<RegularDraft>) => setDraft((old) => ({ ...old, ...part }));
   const account =
@@ -2286,7 +2326,7 @@ function RegularForm() {
   const currency = currencyOf(accounts.rows.find((row) => row.id === account));
   return (
     <section className="card money-full" aria-labelledby="regular-add">
-      <h2 id="regular-add">Add pay or a bill</h2>
+      <h2 id="regular-add">{editing ? `Change ${editing.name}` : "Add pay or a bill"}</h2>
       <form
         className="money-form"
         onSubmit={(event) => {
@@ -2295,6 +2335,12 @@ function RegularForm() {
           const problem = checkRegular(full);
           if (problem) {
             setNote(problem);
+            return;
+          }
+          if (editing) {
+            void transact("user", regularOps(full, editing.id, true), `regular:${editing.id}`)
+              .then(() => onDone?.())
+              .catch((failure: unknown) => setNote(`Couldn't save it: ${message(failure)}`));
             return;
           }
           void transact("user", regularOps(full, ulid()), "regular")
@@ -2311,6 +2357,7 @@ function RegularForm() {
             <span>Kind</span>
             <select
               value={draft.kind}
+              disabled={editing !== null}
               onChange={(e) => setDraft(emptyRegular(e.target.value as RegularDraft["kind"], ""))}
             >
               <option value="bill">A bill I pay</option>
@@ -2393,7 +2440,12 @@ function RegularForm() {
           </label>
         </div>
         <div className="money-actions">
-          <Button type="submit">Add</Button>
+          <Button type="submit">{editing ? "Save" : "Add"}</Button>
+          {editing && (
+            <Button className="btn-ghost" onClick={() => onDone?.()}>
+              Cancel
+            </Button>
+          )}
           <span className="meta">
             When: <code>monthly 10</code>, <code>monthly last</code>, <code>every mon</code>,{" "}
             <code>every weekday</code>.
@@ -2454,6 +2506,8 @@ function SuggestedRegulars({ today, regulars }: { today: string; regulars: Regul
 function RegularsView({ today }: { today: string }) {
   const { items, regulars, loading } = useDue(today);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editing = regulars.find((row) => row.id === editingId) ?? null;
   if (loading) return null;
   const pay = items.filter((item) => item.regular.kind === "pay");
   const bills = items.filter((item) => item.regular.kind === "bill");
@@ -2504,7 +2558,11 @@ function RegularsView({ today }: { today: string }) {
         )}
       </section>
       <SuggestedRegulars today={today} regulars={regulars} />
-      <RegularForm />
+      {editing ? (
+        <RegularForm key={editing.id} editing={editing} onDone={() => setEditingId(null)} />
+      ) : (
+        <RegularForm key="new" />
+      )}
       {regulars.length > 0 && (
         <section className="card" aria-labelledby="regular-all">
           <h2 id="regular-all">All regulars</h2>
@@ -2513,18 +2571,37 @@ function RegularsView({ today }: { today: string }) {
               <li key={row.id} className="money-row">
                 <span>
                   {row.kind === "pay" ? (row.job ?? row.name) : row.name}
-                  <span className="meta"> · {regularText(row)}</span>
+                  <span className="meta">
+                    {" "}
+                    · {regularText(row)}
+                    {row.active !== 1 ? " · paused" : ""}
+                  </span>
                 </span>
-                <Button
-                  className="btn-ghost btn-danger"
-                  onClick={() =>
-                    void transact("user", removeRegularOps(row.id), `regular:${row.id}`).catch(
-                      (failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`),
-                    )
-                  }
-                >
-                  Remove
-                </Button>
+                <span className="money-row-line">
+                  <Button className="btn-ghost" onClick={() => setEditingId(row.id)}>
+                    Edit
+                  </Button>
+                  <Button
+                    className="btn-ghost"
+                    onClick={() =>
+                      void transact("user", pauseOps(row), `regular:${row.id}`).catch(
+                        (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
+                      )
+                    }
+                  >
+                    {row.active === 1 ? "Pause" : "Resume"}
+                  </Button>
+                  <Button
+                    className="btn-ghost btn-danger"
+                    onClick={() =>
+                      void transact("user", removeRegularOps(row.id), `regular:${row.id}`).catch(
+                        (failure: unknown) => setError(`Couldn't remove it: ${message(failure)}`),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </span>
               </li>
             ))}
           </ul>
