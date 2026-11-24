@@ -591,6 +591,85 @@ export const ORPHAN_SAVINGS_SQL = `
     AND NOT EXISTS (SELECT 1 FROM money_txns m
                     WHERE m.transfer_id = e.transfer_id AND m.deleted_at IS NULL)`;
 
+/**
+ * Take-outs of a goal whose entries sum below zero, newest first, with that
+ * sum (`goal_saved`). That happens when a take-out outlives the put-aside it
+ * was set against (the put-aside deleted in Ledger): see overdrawnOps.
+ */
+export const OVERDRAWN_SQL = `
+  SELECT e.id, e.goal_id, e.amount_minor, e.account, e.transfer_id, e.occurred_at,
+         e.local_date, e.note, s.saved AS goal_saved
+  FROM savings_entries e
+  JOIN (SELECT goal_id, sum(amount_minor) AS saved FROM savings_entries
+        WHERE deleted_at IS NULL AND goal_id IS NOT NULL GROUP BY goal_id) s
+    ON s.goal_id = e.goal_id AND s.saved < 0
+  WHERE e.deleted_at IS NULL AND e.amount_minor < 0
+    AND e.goal_id IN (SELECT id FROM savings_goals WHERE deleted_at IS NULL)
+  ORDER BY e.occurred_at DESC, e.id DESC`;
+
+export interface OverdrawnEntry {
+  id: string;
+  goal_id: string;
+  amount_minor: number;
+  account: string | null;
+  transfer_id: string | null;
+  occurred_at: number;
+  local_date: string;
+  note: string | null;
+  goal_saved: number;
+}
+
+/**
+ * A goal never counts below zero (#174): the part of its take-outs it no
+ * longer holds, newest first, becomes money no goal had (UNHELD), as a
+ * take-out bigger than a goal holds is written in the first place
+ * (transferGoal). The money still left the account; only the goal stops
+ * being charged, so a later put-aside counts in full.
+ */
+export function overdrawnOps(entries: OverdrawnEntry[], newId: () => string): Op[] {
+  const ops: Op[] = [];
+  const left = new Map<string, Santim>();
+  for (const entry of entries) {
+    const short = left.get(entry.goal_id) ?? -entry.goal_saved;
+    if (short <= 0) continue;
+    const taken = -entry.amount_minor;
+    if (taken <= short) {
+      ops.push({
+        op: "update",
+        table: "savings_entries",
+        id: entry.id,
+        values: { goal_id: null, origin: UNHELD },
+      });
+    } else {
+      ops.push(
+        {
+          op: "update",
+          table: "savings_entries",
+          id: entry.id,
+          values: { amount_minor: -(taken - short) },
+        },
+        {
+          op: "insert",
+          table: "savings_entries",
+          id: newId(),
+          values: {
+            goal_id: null,
+            occurred_at: entry.occurred_at,
+            local_date: entry.local_date,
+            amount_minor: -short,
+            note: entry.note,
+            origin: UNHELD,
+            account: entry.account,
+            transfer_id: entry.transfer_id,
+          },
+        },
+      );
+    }
+    left.set(entry.goal_id, short - Math.min(taken, short));
+  }
+  return ops;
+}
+
 export interface SavingsTransfer {
   id: string;
   transfer_id: string;
@@ -621,6 +700,8 @@ export function savingsSyncOps(input: {
   newId: () => string;
   /** What each goal holds in each savings account; out of savings needs it. */
   held?: GoalHeld[];
+  /** Take-outs of goals below zero (OVERDRAWN_SQL): the goal stops counting them. */
+  overdrawn?: OverdrawnEntry[];
 }): Op[] {
   const goals = new Set(input.goals.map((goal) => goal.id));
   const ops: Op[] = input.orphans.map((row) => ({
@@ -628,6 +709,8 @@ export function savingsSyncOps(input: {
     table: "savings_entries" as const,
     id: row.id,
   }));
+  // With orphans going this pass, the goals are read again next pass first.
+  if (input.orphans.length === 0) ops.push(...overdrawnOps(input.overdrawn ?? [], input.newId));
   for (const half of input.transfers) {
     if (half.created_at < (input.since[half.account] ?? 0)) continue;
     const minor = toEtb(half.amount_minor, half.currency, input.rates);

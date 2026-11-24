@@ -234,6 +234,25 @@ function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
   ];
 }
 
+/**
+ * Why a take-out from this goal would be refused (F8), or null: the goal
+ * card's rules. The chip shows it before Enter, so it never promises a
+ * take-out the save refuses (#174).
+ */
+export function takeOutProblem(
+  parsed: Pick<SavingItem, "amount" | "worth" | "spend" | "savings">,
+  goal: SavingGoal,
+): string | null {
+  if (parsed.amount >= 0) return null;
+  const taken = -(parsed.worth ?? parsed.amount);
+  const saved = { saved_minor: goal.saved_minor ?? 0, held_minor: goal.held_minor ?? 0 };
+  if (parsed.spend && parsed.savings) {
+    const available = goal.room?.[parsed.savings.id] ?? 0;
+    return checkTakeOutFrom(saved, taken, available, parsed.savings.name);
+  }
+  return checkTakeOut(saved, taken);
+}
+
 /** Birr is the column's default: left unmarked, like every other capture. */
 function withoutBirr(op: Op): Op {
   if (op.op !== "insert" || op.values.currency !== "ETB") return op;
@@ -259,14 +278,13 @@ function savingOps(
   if (parsed.amount < 0) {
     if (!goal) throw "Name the goal to take it from: took 2000 from laptop";
     const taken = -worth;
-    const saved = { saved_minor: goal.saved_minor ?? 0, held_minor: goal.held_minor ?? 0 };
+    const problem = takeOutProblem(parsed, goal);
+    if (problem) throw problem;
     if (parsed.spend && parsed.savings) {
       const available = goal.room?.[parsed.savings.id] ?? 0;
-      const problem = checkTakeOutFrom(saved, taken, available, parsed.savings.name);
-      if (problem) throw problem;
       const currency = parsed.currency ?? "ETB";
       return takeOutOps({
-        goal: { id: goal.id, held_minor: saved.held_minor },
+        goal: { id: goal.id, held_minor: goal.held_minor ?? 0 },
         amount: -parsed.amount,
         spend: { ...parsed.spend, currency },
         savings: { ...parsed.savings, currency },
@@ -279,8 +297,6 @@ function savingOps(
         note: parsed.goal ?? null,
       }).ops.map((op) => withoutBirr(op));
     }
-    const problem = checkTakeOut(saved, taken);
-    if (problem) throw problem;
   }
   // Dollars already in a dollar savings account, with no dollar account to
   // move them from: the goal is given what the account holds (F36).

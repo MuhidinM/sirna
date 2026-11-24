@@ -9,7 +9,7 @@ import { formatAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import { toOps } from "../capture/ops";
 import {
-  approxMark,
+  approxAmount,
   conversionNotes,
   RATES_SQL,
   readRates,
@@ -604,7 +604,7 @@ function SpendingStep({
             title="What did you spend today?"
             sub={
               spent.rows.length > 0
-                ? `${approxMark(notes)}${formatAmount(total)}${leftOut} so far`
+                ? `${approxAmount(total, notes)}${leftOut} so far`
                 : "One line each, comma separated"
             }
           />

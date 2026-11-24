@@ -33,6 +33,19 @@
   height: 100%;
 }
 
+/*
+ * The plant keeps the sky's scale (full card height) and is centred, its
+ * sides cut off by the card on a narrow one. Shrunk to the width (under
+ * ~700 px), its "Goal:" label sank into the stars' band (F111, #174).
+ */
+.goal-scene .tree-plant {
+  right: auto;
+  left: 50%;
+  width: auto;
+  aspect-ratio: 640 / 300;
+  transform: translateX(-50%);
+}
+
 .tree-mark {
   font-family: var(--font-sans);
   font-size: 13px;

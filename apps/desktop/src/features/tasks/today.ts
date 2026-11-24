@@ -96,5 +96,5 @@ export function taskMeta(
 /** The last capture that can still be undone. */
 export const LAST_CAPTURE_SQL = `
   SELECT id, body FROM core_raw_items
-  WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new')
+  WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new', 'failed')
   ORDER BY id DESC LIMIT 1`;

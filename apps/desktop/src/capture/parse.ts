@@ -5,7 +5,7 @@
  */
 import { logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber, parseAmount, type Santim } from "../kernel/money";
-import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
+import { type ClockStyle, type DayWindow, localToEpoch, MONTH_NAMES, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
 import { transferAmounts } from "../features/money/accounts";
@@ -259,6 +259,8 @@ const TRANSFER = new RegExp(
 
 const LOAN_AMOUNT = String.raw`((?:etb\s*)?\d[\d.,]*k?(?:\s?(?:etb|birr|br))?)`;
 const LOAN_PERSON = String.raw`([\p{L}][\p{L}'-]*(?:\s[\p{L}][\p{L}'-]*)?)`;
+/** "i paid back tigist 150" reads as "paid back tigist 150" (#174). */
+const I_SAID = String.raw`(?:i\s+)?`;
 const LOAN_FORMS: [
   RegExp,
   "lent" | "borrowed" | "paid_me" | "i_paid",
@@ -301,17 +303,23 @@ const LOAN_FORMS: [
     "amount-first",
   ],
   [
-    new RegExp(String.raw`^(?:paid back|repaid|returned)\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    new RegExp(
+      String.raw`^${I_SAID}(?:paid back|repaid|returned)\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`,
+      "iu",
+    ),
     "i_paid",
     "person-first",
   ],
   [
-    new RegExp(String.raw`^paid\s+${LOAN_PERSON}\s+back\s+${LOAN_AMOUNT}$`, "iu"),
+    new RegExp(String.raw`^${I_SAID}paid\s+${LOAN_PERSON}\s+back\s+${LOAN_AMOUNT}$`, "iu"),
     "i_paid",
     "person-first",
   ],
   [
-    new RegExp(String.raw`^(?:paid back|repaid)\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`, "iu"),
+    new RegExp(
+      String.raw`^${I_SAID}(?:paid back|repaid)\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`,
+      "iu",
+    ),
     "i_paid",
     "amount-first",
   ],
@@ -443,7 +451,7 @@ function loanIn(
         return repaidIncome(rest.replace(amountText ?? "", " "), amount, account, options);
       // "paid back dawit 300" with nothing borrowed from Dawit is no spending
       // either (F5): kept for tonight. "returned shoes 500" stays a refund.
-      if (owed <= 0 && !/^returned\s/i.test(rest))
+      if (owed <= 0 && !/^(?:i\s+)?returned\s/i.test(rest))
         return looseEnd(text, `You owe ${capitalise(person.trim())} nothing · will ask tonight`);
       if (!open || owed <= 0) continue;
       // With no @account (or currency) typed, pay back in the loan's own
@@ -823,8 +831,14 @@ const isPiece = (parsed: Parsed): parsed is MoneyPiece =>
   parsed.kind === "transfer" ||
   parsed.kind === "saving";
 
-/** Where a several-item line splits: a comma not inside a number (`rent 1,200`). */
-const COMMA_SPLIT = /\s*,\s*(?=\D)/;
+/**
+ * Where a several-item line splits: a comma not inside a number (`rent 1,200`)
+ * and not the one in a date (`dec 25, 2027`, #174).
+ */
+const COMMA_SPLIT = new RegExp(
+  String.raw`\s*,(?!(?<=\b(?:${MONTH_NAMES})\s+\d{1,2}(?:st|nd|rd|th)?,)\s*\d{4}(?!\d))\s*(?=\D)`,
+  "i",
+);
 const LOAN_VERB = /^\s*(lent|loaned|borrowed)\s/i;
 
 /**
@@ -1174,9 +1188,14 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   if (!isMoney(parsed) && account) {
     const whole = parseOne(raw, options);
     // "pay rent 5000 @cbo": a task, titled without the account that ends it
-    // (reg2-10). "call @cbo about the loan" keeps its words.
-    const last = /@[\p{L}\p{N}_-]+\s*$/u.test(raw);
-    if (!isMoney(whole)) return parsed.kind === "task" && last ? parsed : whole;
+    // (reg2-10), or next to its amount ("pay electricity 800 @cash tomorrow",
+    // #174). "call @cbo about the loan" keeps its words.
+    const paying =
+      /@[\p{L}\p{N}_-]+\s*$/u.test(raw) ||
+      /\d\s+@[\p{L}\p{N}_-]+(?=\s|$)|(?:^|\s)@[\p{L}\p{N}_-]+\s+\d+(?!\s*(?:times?|x|hours?|hrs?|h|mins?|minutes?|days?|weeks?)\b)/u.test(
+        raw,
+      );
+    if (!isMoney(whole)) return parsed.kind === "task" && paying ? parsed : whole;
     parsed = {
       ...whole,
       description:

@@ -204,6 +204,17 @@ describe("the last capture (F38)", () => {
     expect(actionable(last)).toBeUndefined();
   });
 
+  it("a refused line is kept as refused, and made nothing to undo (#174)", () => {
+    const c = nodeConn(openTestDb());
+    const refusal = "That's more than this goal holds.";
+    const raw = captureCommit(c, { rawText: "took 3000 from test", refused: refusal }, 1).result;
+    const [row] = c.all("SELECT parse_status, error FROM core_raw_items WHERE id = ?", [raw]);
+    expect(row).toEqual({ parse_status: "failed", error: refusal });
+    const [last] = c.all(LAST_CAPTURE_SQL) as unknown as LastCapture[];
+    expect(last?.id).toBe(raw);
+    expect(actionable(last)).toBeUndefined();
+  });
+
   it("an away line can be undone, and undoing it ends away", () => {
     const c = nodeConn(openTestDb());
     const now = Date.parse("2026-11-24T09:30:00+03:00");

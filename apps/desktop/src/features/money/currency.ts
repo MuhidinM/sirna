@@ -6,7 +6,7 @@
  * page says so. Pure and tested.
  */
 import { type Op } from "../../kernel/db";
-import { formatAmount, type Santim } from "../../kernel/money";
+import { formatAmount, formatWhole, type Santim } from "../../kernel/money";
 
 export const HOME = "ETB";
 export const RATES_KEY = "money.rates";
@@ -250,6 +250,10 @@ export function conversionNotes(conversion: Conversion, rates: Rates): Conversio
 
 /** "≈ " before a total that holds converted money. */
 export const approxMark = (notes: Pick<ConversionNotes, "approx">) => (notes.approx ? "≈ " : "");
+
+/** A birr total: with converted money in it, "≈ " and whole birr (F108, #174). */
+export const approxAmount = (minor: Santim, notes: Pick<ConversionNotes, "approx">) =>
+  notes.approx ? `≈ ${formatWhole(minor)}` : formatAmount(minor);
 
 /**
  * SQL for a row's currency, with its account joined as `acc`: a currency the
