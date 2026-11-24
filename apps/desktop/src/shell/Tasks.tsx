@@ -14,7 +14,7 @@ import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT } from "../features/ai/touchpoints";
-import { formatMinutes } from "../features/plan/now";
+import { formatEstimate } from "../features/plan/now";
 import { AI_CHANGED_EVENT, type AiUsage } from "../features/settings/status";
 import {
   canSplit,
@@ -51,8 +51,6 @@ import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-/** "~2 h 20 min": an estimate, to 5 minutes, in the app's one hour format. */
-const hours = (minutes: number) => `~${formatMinutes(Math.max(5, Math.round(minutes / 5) * 5))}`;
 
 const AREAS_SQL =
   "SELECT id, name, active, color FROM area_items WHERE deleted_at IS NULL ORDER BY active DESC, priority_rank, name";
@@ -330,6 +328,8 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
   const steps = parseSteps(text, task.estimate_min);
   const problem = checkSteps(steps);
   const total = stepsMinutes(steps);
+  // Escape gives focus back to this row's Split button (reg3-4).
+  const onEscape = useEscapeToCancel(onClose);
   const suggest = () => {
     if (strict === null || !task.estimate_min) return;
     setBusy("asking");
@@ -388,10 +388,7 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
             setText(event.target.value);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape" && busy === null) {
-              event.preventDefault();
-              onClose();
-            }
+            if (busy === null) onEscape(event);
           }}
         />
       </label>
@@ -493,7 +490,7 @@ function TaskItem({
       </span>
     ),
     row.project_title && <span key="project">{row.project_title}</span>,
-    row.estimate_min && <span key="estimate">{hours(row.estimate_min)}</span>,
+    row.estimate_min && <span key="estimate">{formatEstimate(row.estimate_min)}</span>,
     row.planned_date && row.planned_date !== row.due_date && (
       <span key="planned">on {showDate(row.planned_date, today)}</span>
     ),
@@ -564,7 +561,11 @@ function TaskItem({
                 Edit
               </Button>
               {splittable && !splitting && (
-                <Button className="btn-ghost" onClick={() => setSplitting(true)}>
+                <Button
+                  className="btn-ghost"
+                  {...returnsFocus(`task-split:${row.id}`)}
+                  onClick={() => setSplitting(true)}
+                >
                   Split
                 </Button>
               )}
@@ -632,7 +633,7 @@ function AreaPanel({
       <PanelHead
         id="task-areas"
         title="Areas"
-        sub={`${rows.length} ${rows.length === 1 ? "task" : "tasks"}${minutes ? ` · ${hours(minutes)}` : ""}`}
+        sub={`${rows.length} ${rows.length === 1 ? "task" : "tasks"}${minutes ? ` · ${formatEstimate(minutes)}` : ""}`}
       />
       <ul className="list-rows">
         {options.map((option) => (

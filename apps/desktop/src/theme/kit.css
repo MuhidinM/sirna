@@ -472,7 +472,18 @@ button.month-day:hover {
    canvas ink so it stays readable (4.5:1) in both themes. */
 .event.faded {
   --tone-ink: var(--canvas-ink);
+  /* A pale fill (cream in Forest) nearly vanishes on the canvas: a faint ink
+     hairline keeps the card's edge (F116). */
+  --faded-edge: inset 0 0 0 1px color-mix(in srgb, var(--canvas-ink) 16%, transparent);
   background: color-mix(in srgb, var(--tone) 35%, var(--canvas));
+  box-shadow: var(--faded-edge);
+}
+
+/* Not on the current block: one marked done while it runs keeps its ring. */
+.event.faded:not(.current):hover {
+  box-shadow:
+    var(--faded-edge),
+    0 8px 22px rgb(0 0 0 / 10%);
 }
 
 .event.faded .event-art {
@@ -737,8 +748,13 @@ button.month-day:hover {
   container-type: inline-size;
 }
 
-/* The title comes first and keeps its room; the time shrinks, then hides in a
-   narrow lane (the editor and the screen reader label still give it). */
+/* The title gives way first, down to its 6em; only then does the time shrink,
+   with an ellipsis, so it stays whole beside a long title and never runs off the
+   card when a "2 tasks" pill shares the row (F22). Flex shrinks by factor times
+   size, so the title's 1000 against the time's 1 leaves the time a fraction of a
+   pixel until the title stops at its min-width; then the time takes the rest.
+   In a narrow lane the time hides (the editor and the screen reader label still
+   give it). */
 .day-lanes .event.short .event-label {
   order: 2;
   flex: 0 1 auto;
@@ -749,7 +765,7 @@ button.month-day:hover {
 }
 
 .day-lanes .event.short .event-title {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   min-width: min(100%, 6em);
   font-size: var(--text-sm);
   white-space: nowrap;

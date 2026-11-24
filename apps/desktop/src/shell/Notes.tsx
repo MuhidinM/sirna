@@ -115,6 +115,8 @@ function CardView({
           <label className="field">
             <span>One line each. Use `code` and **bold**.</span>
             <textarea
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- opened on request; Escape needs focus inside the form
+              autoFocus
               rows={Math.min(14, Math.max(4, editing.text.split("\n").length + 1))}
               value={editing.text}
               onChange={(event) => setEditing({ ...editing, text: event.target.value })}

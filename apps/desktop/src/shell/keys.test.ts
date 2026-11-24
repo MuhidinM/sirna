@@ -7,7 +7,9 @@ import {
   nextDay,
   nextTab,
   returnFocus,
+  markKeyedTablist,
   returnsFocus,
+  takeKeyedTablist,
 } from "./keys";
 
 const key = (k: string, isComposing = false) => {
@@ -103,5 +105,15 @@ describe("arrow keys across the month grid (F94)", () => {
     expect(nextDay("2026-01-31", "PageDown")).toBe("2026-02-28");
     expect(nextDay("2026-01-15", "PageUp")).toBe("2025-12-15");
     expect(nextDay("2026-11-24", "x")).toBeNull();
+  });
+});
+
+describe("a replaced tab strip takes focus after an arrow key (F94)", () => {
+  it("is true once, for the tablist that took the key", () => {
+    expect(takeKeyedTablist("Plan")).toBe(false);
+    markKeyedTablist("Plan");
+    expect(takeKeyedTablist("View")).toBe(false);
+    expect(takeKeyedTablist("Plan")).toBe(true);
+    expect(takeKeyedTablist("Plan")).toBe(false);
   });
 });

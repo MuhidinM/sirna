@@ -938,7 +938,11 @@ export function Projects() {
             ))}
             {!creating && (
               <li className="proj-item">
-                <GhostCard label="Add a project" onClick={() => setCreating(true)} />
+                <GhostCard
+                  label="Add a project"
+                  returnKey="project-new"
+                  onClick={() => setCreating(true)}
+                />
               </li>
             )}
           </ul>

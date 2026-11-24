@@ -2,6 +2,7 @@
 import { type Op } from "../kernel/db";
 import { localDate, logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber } from "../kernel/money";
+import { formatEstimate } from "../features/plan/now";
 import { placeIdea, type Placement } from "../features/projects/idea";
 import { PROJECT_STATUSES } from "../features/projects/projects";
 import { transferOps } from "../features/money/accounts";
@@ -617,9 +618,7 @@ export function echo(
               : " · Someday";
       const size =
         parsed.estimateMin && parsed.dueAt === undefined
-          ? parsed.estimateMin < 60
-            ? ` · ~${parsed.estimateMin} min`
-            : ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
+          ? ` · ${formatEstimate(parsed.estimateMin)}`
           : "";
       const repeat = parsed.repeat ? ` · ${ruleText(parsed.repeat)}` : "";
       return `Task${when}${repeat}${size}${area}`;

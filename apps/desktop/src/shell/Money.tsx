@@ -1302,6 +1302,8 @@ function TxnForm({
         <label className="money-field">
           <span>In or out</span>
           <select
+            // eslint-disable-next-line jsx-a11y/no-autofocus -- opened on request; Escape needs focus inside the form
+            autoFocus
             value={draft.kind}
             onChange={(e) => set({ kind: e.target.value as TxnDraft["kind"], categoryId: "" })}
           >

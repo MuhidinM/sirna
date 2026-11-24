@@ -150,6 +150,27 @@ describe("the loud colours", () => {
     expect(rule(".event.faded {")).not.toContain("opacity");
   });
 
+  it("a faded card's hover leaves the current block's ring alone (F116)", () => {
+    const kit = readFileSync(fileURLToPath(new URL("./kit.css", import.meta.url)), "utf8");
+    expect(kit).not.toMatch(/\.event\.faded:hover/);
+    expect(kit).toContain(".event.faded:not(.current):hover {");
+  });
+
+  it("a short card's time can still shrink, after the title (F22)", () => {
+    const kit = readFileSync(fileURLToPath(new URL("./kit.css", import.meta.url)), "utf8");
+    const rule = (selector: string) => {
+      const start = kit.indexOf(selector);
+      return kit.slice(start, kit.indexOf("}", start));
+    };
+    const shrink = (body: string) => Number(/flex: 0 (\d+) auto/.exec(body)?.[1]);
+    const label = rule(".day-lanes .event.short .event-label {");
+    const title = rule(".day-lanes .event.short .event-title {");
+    expect(label).not.toContain("max-width");
+    expect(label).toContain("text-overflow: ellipsis");
+    expect(shrink(label)).toBeGreaterThan(0);
+    expect(shrink(title)).toBeGreaterThanOrEqual(1000 * shrink(label));
+  });
+
   it("the mint ink reads on mint", () => {
     expect(ratio(shared["mint-ink"] ?? "", shared["mint"] ?? "")).toBeGreaterThanOrEqual(3);
   });

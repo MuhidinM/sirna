@@ -75,7 +75,12 @@ describe("a length is a task's length, never money (F1, F16)", () => {
 
   it("shows a length under an hour in minutes", () => {
     expect(echo(read("buy milk ~45 min"), nowMs)).toBe("Task · planned into free time · ~45 min");
-    expect(echo(read("call mom ~1.5h"), nowMs)).toBe("Task · planned into free time · ~1.5 h");
+    expect(echo(read("call mom ~1.5h"), nowMs)).toBe("Task · planned into free time · ~1 h 30 min");
+  });
+
+  it("echoes a length under an hour as typed, not rounded (F96)", () => {
+    expect(echo(read("read ~7 min"), nowMs)).toBe("Task · planned into free time · ~7 min");
+    expect(echo(read("stretch ~2 min"), nowMs)).toBe("Task · planned into free time · ~2 min");
   });
 });
 

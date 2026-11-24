@@ -83,6 +83,25 @@ export function useEscapeToCancel(cancel: () => void) {
   });
 }
 
+/** The tablist whose arrow key just changed the tab, until a tablist takes it. */
+let keyedTablist: string | null = null;
+
+/** An arrow key in this tablist changed the tab. */
+export function markKeyedTablist(label: string) {
+  keyedTablist = label;
+}
+
+/**
+ * True once, for the tablist named in the last `markKeyedTablist`: it should
+ * focus its selected tab. A tab strip that is part of each page (Plan's) is
+ * replaced when the tab changes, so the new strip takes the focus (F94).
+ */
+export function takeKeyedTablist(label: string): boolean {
+  if (keyedTablist !== label) return false;
+  keyedTablist = null;
+  return true;
+}
+
 /** The tab an arrow key moves to (wrapping), or null for any other key. */
 export function nextTab(index: number, count: number, key: string): number | null {
   if (count <= 0) return null;

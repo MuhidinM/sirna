@@ -7,6 +7,7 @@ import {
   showDate,
 } from "../../kernel/dates";
 import { rowCurrencySql } from "../money/currency";
+import { formatEstimate } from "../plan/now";
 import todayTopSql from "./queries/today_top.sql?raw";
 
 export { todayTopSql };
@@ -78,7 +79,7 @@ export function taskMeta(
   task: { estimate_min: number | null; due_date: string | null; due_at: number | null },
   today: string,
 ): string {
-  const estimate = task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h` : "";
+  const estimate = task.estimate_min ? formatEstimate(task.estimate_min) : "";
   const overdue = task.due_date !== null && task.due_date < today;
   const when = overdue
     ? task.due_at !== null

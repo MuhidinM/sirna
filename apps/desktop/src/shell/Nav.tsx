@@ -5,9 +5,9 @@
  * or two clicks away.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { type KeyboardEvent } from "react";
+import { type KeyboardEvent, useEffect, useRef } from "react";
 
-import { nextTab } from "./keys";
+import { markKeyedTablist, nextTab, takeKeyedTablist } from "./keys";
 import {
   IconDashboard,
   IconMoney,
@@ -154,12 +154,20 @@ export function Segmented<T extends string>({
     const next = to === null ? undefined : options[to];
     if (!next) return;
     event.preventDefault();
+    if (next.value !== value) markKeyedTablist(label);
     onChange(next.value);
     const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]');
     tabs?.[to ?? 0]?.focus();
   };
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Plan's tabs are pages: the tablist that took the arrow key unmounts and
+    // this new one takes the focus back (F94).
+    if (!takeKeyedTablist(label)) return;
+    list.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [label, value]);
   return (
-    <div className="seg" role="tablist" aria-label={label}>
+    <div ref={list} className="seg" role="tablist" aria-label={label}>
       {options.map((option, index) => (
         <button
           key={option.value}
