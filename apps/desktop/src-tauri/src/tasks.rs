@@ -8,8 +8,11 @@ use crate::tx::{self, Op};
 /// Shared with the Today screen, so the tray and the screen agree.
 const TODAY_TOP_SQL: &str = include_str!("../../src/features/tasks/queries/today_top.sql");
 
-const LAST_CAPTURE_SQL: &str = "SELECT id, body FROM core_raw_items
-     WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new')
+/// The newest capture not undone. A newer line that made nothing (`afford`,
+/// `? search`) hides the Undo rather than letting it reach an older capture
+/// (F38); the same rule as LAST_CAPTURE_SQL in src/capture/fix.ts.
+const LAST_CAPTURE_SQL: &str = "SELECT id, body, parse_status FROM core_raw_items
+     WHERE source = 'capture' AND parse_status != 'ignored'
      ORDER BY id DESC LIMIT 1";
 
 const HOUR_MS: i64 = 60 * 60 * 1000;
@@ -170,8 +173,12 @@ pub fn follow_up_later(
 }
 
 pub fn last_capture(conn: &Connection) -> Option<(i64, String)> {
-    conn.query_row(LAST_CAPTURE_SQL, [], |row| Ok((row.get(0)?, row.get(1)?)))
-        .ok()
+    conn.query_row(LAST_CAPTURE_SQL, [], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?))
+    })
+    .ok()
+    .filter(|(_, _, status)| status != "new")
+    .map(|(id, body, _)| (id, body))
 }
 
 #[cfg(test)]
@@ -246,6 +253,18 @@ mod tests {
         )
         .expect("seed");
         assert_eq!(last_capture(&conn), Some((1, "lunch 120".into())));
+    }
+
+    #[test]
+    fn last_capture_stops_at_a_newer_line_that_made_nothing() {
+        let conn = conn();
+        conn.execute_batch(
+            "INSERT INTO core_raw_items (source, received_at, body, parse_status) VALUES
+               ('capture', 1, 'lunch 120', 'parsed'),
+               ('capture', 2, 'afford 4500 shoes', 'new');",
+        )
+        .expect("seed");
+        assert_eq!(last_capture(&conn), None);
     }
 
     #[test]

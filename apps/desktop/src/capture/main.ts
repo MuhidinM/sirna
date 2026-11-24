@@ -9,7 +9,18 @@ import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db"
 import { ulid } from "../kernel/ulid";
 import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
 import { readings } from "./alternatives";
-import { CAPTURE_MADE_SQL, fixBlocked, fixReading, madeKind, type MadeRow } from "./fix";
+import {
+  actionable,
+  type BlockRow,
+  CAPTURE_MADE_SQL,
+  fixReading,
+  LAST_CAPTURE_SQL,
+  type LastCapture,
+  madeKind,
+  type MadeRow,
+  UNDO_BLOCKED_SQL,
+  undoBlocked,
+} from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
 import { matchGoal } from "../features/savings/savings";
@@ -37,9 +48,6 @@ applyTheme(cachedTheme());
 
 const ECHO_MS = 1500;
 const ANSWER_MS = 6000;
-// Same rule as the tray: lines that made no records (search, away) can't be undone.
-const LAST_CAPTURE_SQL =
-  "SELECT id, body FROM core_raw_items WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new') ORDER BY id DESC LIMIT 1";
 
 function element<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -364,31 +372,33 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowUp") {
     event.preventDefault();
     busy = true;
-    void query<{ id: number; body: string }>(LAST_CAPTURE_SQL).then(([last]) => {
+    void query<LastCapture>(LAST_CAPTURE_SQL).then(([newest]) => {
       busy = false;
       // Typed something while we were looking it up: keep what was typed.
       if (input.value !== "") return;
+      const last = actionable(newest);
       if (!last) {
-        output.textContent = "Nothing to fix yet";
+        output.textContent = newest ? "Nothing to fix" : "Nothing to fix yet";
         return;
       }
       // Start on what the capture made (an idea stays an idea), and leave a
-      // project you have changed since alone (r2-7).
-      void query<MadeRow>(CAPTURE_MADE_SQL, [`capture:${last.id}`])
-        .catch(() => [] as MadeRow[])
-        .then((made) => {
-          if (input.value !== "") return;
-          const blocked = fixBlocked(made);
-          if (blocked) {
-            output.textContent = blocked;
-            return;
-          }
-          editing = last;
-          fixKind = madeKind(made);
-          input.value = last.body;
-          refresh();
-          input.setSelectionRange(input.value.length, input.value.length);
-        });
+      // record you have changed since alone (r2-7, F2).
+      void Promise.all([
+        query<MadeRow>(CAPTURE_MADE_SQL, [`capture:${last.id}`]).catch(() => [] as MadeRow[]),
+        query<BlockRow>(UNDO_BLOCKED_SQL, [`capture:${last.id}`]).catch(() => [] as BlockRow[]),
+      ]).then(([made, rows]) => {
+        if (input.value !== "") return;
+        const blocked = undoBlocked(rows, "fix");
+        if (blocked) {
+          output.textContent = blocked;
+          return;
+        }
+        editing = last;
+        fixKind = madeKind(made);
+        input.value = last.body;
+        refresh();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
     });
     return;
   }
@@ -401,18 +411,32 @@ document.addEventListener("keydown", (event) => {
       input.disabled = false;
       input.focus();
     };
-    void query<{ id: number; body: string }>(LAST_CAPTURE_SQL)
-      .then(([last]) => {
+    void query<LastCapture>(LAST_CAPTURE_SQL)
+      .then(async ([newest]) => {
+        const last = actionable(newest);
+        // A newer line that made nothing (afford, search) stops here (F38).
         if (!last) {
           output.textContent = "Nothing to undo";
           release();
           return;
         }
+        // Undoing would throw away a later change (F2, F65): say so instead.
+        // capture_undo refuses the same way, should this read be stale.
+        const blocked = undoBlocked(
+          await query<BlockRow>(UNDO_BLOCKED_SQL, [`capture:${last.id}`]),
+          "undo",
+        );
+        if (blocked) {
+          output.textContent = blocked;
+          release();
+          return;
+        }
         // Stays busy after a successful undo, until the box closes.
-        return undoCapture(last.id).then(() => finish(`Undone: ${last.body}`));
+        await undoCapture(last.id);
+        finish(`Undone: ${last.body}`);
       })
-      .catch(() => {
-        output.textContent = "Couldn't undo. Try again.";
+      .catch((error: unknown) => {
+        output.textContent = typeof error === "string" ? error : "Couldn't undo. Try again.";
         release();
       });
   }
