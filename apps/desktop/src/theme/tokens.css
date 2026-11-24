@@ -1,9 +1,8 @@
 /*
  * Sirna's design tokens (docs/design.md). Two themes, Night (default) and
- * Forest, share one palette of loud colours. Each theme has its own dark
- * working canvas (time-first §5): the canvas, its cream and mint blocks are
- * soft dark tones; only the loud cards stay bright. Components use only these
- * names.
+ * Forest, share one palette of loud colours. Night has a dark working canvas
+ * (its cream and mint blocks are soft dark tones; only the loud cards stay
+ * bright); Forest keeps its white canvas. Components use only these names.
  *
  * The older names (--surface-*, --text-*, --accent…) stay as aliases so every
  * screen keeps working; inside `.canvas` they switch to the canvas surface.
@@ -58,22 +57,22 @@
   --ink-3: #8fb59a;
   --stars: #fef4dc;
 
-  /* The working canvas. */
-  --canvas: #18442a;
-  --canvas-2: #1f5033;
-  --canvas-3: #275a3c;
-  --canvas-line: #2c5c3d;
-  --canvas-strong: #457556;
-  --canvas-ink: #fef4dc;
-  --canvas-ink-2: #c3dcc8;
-  --canvas-ink-3: #9cc2a6;
-  --canvas-bar: #2c5c3d;
-  --canvas-bar-top: #487a58;
-  /* Cream and mint blocks on the canvas: soft dark tones with light ink. */
-  --canvas-cream: #3d5634;
-  --canvas-cream-ink: #fef4dc;
-  --canvas-mint: #1d5a36;
-  --canvas-mint-ink: #a6e3bb;
+  /* The working canvas: white, as before (Forest is the light theme). */
+  --canvas: #ffffff;
+  --canvas-2: #f4f4f1;
+  --canvas-3: #eaeae6;
+  --canvas-line: #e2e2de;
+  --canvas-strong: #cfcfca;
+  --canvas-ink: #141414;
+  --canvas-ink-2: #55554f;
+  --canvas-ink-3: #77776f;
+  --canvas-bar: #e4e4df;
+  --canvas-bar-top: #c9c9c3;
+  /* Cream and mint blocks on the white canvas. */
+  --canvas-cream: #fdf1da;
+  --canvas-cream-ink: #2f2319;
+  --canvas-mint: #dff1e6;
+  --canvas-mint-ink: #1f8f50;
 }
 
 :root {
@@ -192,4 +191,15 @@
   --mint: var(--canvas-mint);
   --mint-ink: var(--canvas-mint-ink);
   --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--yellow);
+}
+
+/* Forest keeps its white canvas: light controls, a darker red, orange
+   warnings (yellow text is unreadable on white), green success. */
+[data-theme="forest"] .canvas,
+[data-theme="forest"] .on-canvas {
+  color-scheme: light;
+  --danger: #c8333a;
+  --warning: var(--orange);
+  --success: var(--mint-ink);
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--canvas-ink);
 }
