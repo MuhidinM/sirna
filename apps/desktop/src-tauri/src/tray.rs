@@ -454,6 +454,7 @@ mod tests {
             paused,
             in_row: 0,
             block_id: None,
+            distractions: 0,
         }
     }
 

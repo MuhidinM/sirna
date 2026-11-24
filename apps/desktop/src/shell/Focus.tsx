@@ -14,6 +14,8 @@ export interface FocusStatus {
   paused: boolean;
   in_row: number;
   block_id: string | null;
+  /** Distracted (+1) taps on this session. */
+  distractions: number;
 }
 
 /** The timer's state from Rust, counted down locally once a second between updates. */
@@ -61,6 +63,10 @@ export async function startFocus(blockId: string | null): Promise<void> {
 
 /** What "Distracted (+1)" does (spec §1 rule 7). */
 export const DISTRACTED_TIP = "Count an interruption; it shows on the Dashboard";
+
+/** The Distracted button's label: the tap count once there is one. */
+export const distractedLabel = (count: number) =>
+  count > 0 ? `Distracted · ${count}` : "Distracted (+1)";
 
 const control = (action: "pause" | "resume" | "stop" | "distracted") =>
   void invoke("focus_control", { action });
@@ -117,7 +123,7 @@ export function FocusPanel({ status }: { status: FocusStatus }) {
           ))}
         {!onBreak && (
           <Button onClick={() => control("distracted")} title={DISTRACTED_TIP}>
-            Distracted (+1)
+            {distractedLabel(status.distractions)}
           </Button>
         )}
         <Button className="btn-ghost" onClick={() => control("stop")}>
