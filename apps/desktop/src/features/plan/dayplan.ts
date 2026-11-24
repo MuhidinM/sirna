@@ -53,19 +53,29 @@ export const AREAS_SQL = `
 /**
  * Minutes done per area from Monday up to (not including) today: a block
  * marked done counts in full, any other block counts the focus time on it
- * (up to its length).
+ * (up to its length). Focus started "For" an area, with no block, counts
+ * too, as on the Week card (the logical day starts 03:00 Addis = 00:00 UTC,
+ * so a session's logical date is its UTC date). ?1/?3 = Monday, ?2/?4 = today.
  */
 export const DONE_THIS_WEEK_SQL = `
-  SELECT area_id, SUM(CASE WHEN status = 'done' THEN length ELSE MIN(length, focused) END) AS minutes
-  FROM (
-    SELECT b.area_id, b.status, (b.end_at - b.start_at) / 60000 AS length,
-           COALESCE((SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
-                     FROM focus_sessions f
-                     WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)
-             AS focused
-    FROM day_blocks b
-    WHERE b.deleted_at IS NULL AND b.area_id IS NOT NULL
-      AND b.logical_date >= ? AND b.logical_date < ?)
+  SELECT area_id, SUM(minutes) AS minutes FROM (
+    SELECT area_id, CASE WHEN status = 'done' THEN length ELSE MIN(length, focused) END AS minutes
+    FROM (
+      SELECT b.area_id, b.status, (b.end_at - b.start_at) / 60000 AS length,
+             COALESCE((SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
+                       FROM focus_sessions f
+                       WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)
+               AS focused
+      FROM day_blocks b
+      WHERE b.deleted_at IS NULL AND b.area_id IS NOT NULL
+        AND b.logical_date >= ? AND b.logical_date < ?)
+    UNION ALL
+    SELECT f.area_id, MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000)
+    FROM focus_sessions f
+    WHERE f.kind = 'focus' AND f.ended_at IS NOT NULL
+      AND f.block_id IS NULL AND f.area_id IS NOT NULL
+      AND date(f.started_at / 1000, 'unixepoch') >= ?
+      AND date(f.started_at / 1000, 'unixepoch') < ?)
   GROUP BY area_id
   HAVING minutes > 0`;
 
@@ -247,7 +257,12 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       priority_rank: number;
       active: number;
     }>(AREAS_SQL),
-    query<{ area_id: string; minutes: number }>(DONE_THIS_WEEK_SQL, [weekStart(date), date]),
+    query<{ area_id: string; minutes: number }>(DONE_THIS_WEEK_SQL, [
+      weekStart(date),
+      date,
+      weekStart(date),
+      date,
+    ]),
     query<OpenTaskRow>(OPEN_TASKS_SQL, [date]),
     query<{ task_id: string }>(CHOSEN_TOP_SQL, [date]),
     query<KeptRow>(KEPT_BLOCKS_SQL, [date]),
