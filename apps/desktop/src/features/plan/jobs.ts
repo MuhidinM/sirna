@@ -135,7 +135,12 @@ export function blockTaskLists(
         block.start_at <= at &&
         at < block.end_at,
     );
-    if (!host) continue;
+    if (!host) {
+      // A time still to come belongs to its own day's block, not to another
+      // day's list (reg1-3); once it has passed it is an open task like any.
+      if (at > nowMs) placed.add(row.id);
+      continue;
+    }
     timed.set(host.id, [...(timed.get(host.id) ?? []), row]);
     placed.add(row.id);
   }
