@@ -397,6 +397,12 @@
   box-shadow: none;
 }
 
+/* The ring goes on the pill, not the bare field inside it. */
+.add-today-field:focus-within {
+  border-style: solid;
+  box-shadow: var(--focus-ring);
+}
+
 .add-today-said {
   flex-basis: 100%;
   margin: 0;
