@@ -5,35 +5,13 @@
  * deadline. Read-only: nothing is written until you act. Pure, plus a loader.
  */
 import { type Op } from "../../kernel/db";
-import { localToEpoch } from "../../capture/when";
-import {
-  FILLABLE_KINDS,
-  generateDay,
-  hasEstimate,
-  type PlanInput,
-  TASK_BLOCK_MIN,
-  type TaskInput,
-} from "./generate";
-import { isAwayOn, loadPlanInput, type Query, shiftDate, weekStart } from "./dayplan";
+import { FILLABLE_KINDS, hasEstimate, type PlanInput } from "./generate";
+import { type PreviewDay, runChain, type SavedDay, shiftDate } from "./carry";
+import { loadChain, type Query } from "./dayplan";
+
+export { fromNow, type PreviewBlock, type PreviewDay } from "./carry";
 
 export const PREVIEW_DAYS = 7;
-
-export interface PreviewBlock {
-  startMin: number;
-  durationMin: number;
-  areaId: string | null;
-  title: string;
-  taskId: string | null;
-}
-
-export interface PreviewDay {
-  date: string;
-  light: boolean;
-  /** Before the away return day: no plan and no time for tasks (plan §3.11). */
-  away?: boolean;
-  /** Focus blocks only: what the planner fills free time with. */
-  blocks: PreviewBlock[];
-}
 
 export interface LateTask {
   id: string;
@@ -51,72 +29,17 @@ export interface WeekPreview {
 }
 
 /**
- * Runs the days in order. A task's minutes planned on one day come off what
- * it still needs the next; a task without an estimate is done after its first
- * block. Area minutes planned earlier in the same week count toward its target.
+ * Runs the days in order (`runChain`): a task's minutes planned on one day
+ * come off what it still needs the next; a day already saved counts as saved.
+ * Then lists the tasks that won't be done by their deadline.
  */
 export function previewWeek(
   inputs: PlanInput[],
   awayDates: ReadonlySet<string> = new Set(),
+  saved: ReadonlyMap<string, SavedDay> = new Map(),
 ): WeekPreview {
-  const left = new Map<string, number | null>(); // task id → minutes still needed (null: one block)
-  const finished = new Map<string, string>(); // task id → day the plan finishes it
-  const plannedByWeek = new Map<string, Record<string, number>>(); // monday → area → minutes
-  const days: PreviewDay[] = [];
-  const allTasks = new Map<string, TaskInput>();
-  /** What each task still needed at the end of each day. */
-  const leftAtEnd = new Map<string, Map<string, number | null>>();
-
-  for (const input of inputs) {
-    for (const task of input.tasks) if (!allTasks.has(task.id)) allTasks.set(task.id, task);
-    // Away: nothing planned, so tasks carry over to the days you are back.
-    if (awayDates.has(input.date)) {
-      leftAtEnd.set(input.date, new Map(left));
-      days.push({ date: input.date, light: false, away: true, blocks: [] });
-      continue;
-    }
-    const monday = weekStart(input.date);
-    const already = plannedByWeek.get(monday) ?? {};
-    const tasks = input.tasks
-      .filter((task) => !finished.has(task.id))
-      .map((task) =>
-        left.has(task.id) ? { ...task, remainingMin: left.get(task.id) ?? null } : task,
-      );
-    const done = { ...input.doneThisWeekMin };
-    for (const [area, minutes] of Object.entries(already)) done[area] = (done[area] ?? 0) + minutes;
-    const plan = generateDay({ ...input, tasks, doneThisWeekMin: done });
-    const blocks = plan.blocks
-      .filter((block) => block.kind === "area")
-      .map((block) => ({
-        startMin: block.startMin,
-        durationMin: block.durationMin,
-        areaId: block.areaId,
-        title: block.title,
-        taskId: block.taskId,
-      }));
-    // A task block you moved or added (kept) covers its task that day too.
-    const keptTaskTime = input.kept.flatMap((kept) =>
-      kept.taskId && tasks.some((t) => t.id === kept.taskId)
-        ? [{ areaId: null, taskId: kept.taskId, durationMin: kept.durationMin }]
-        : [],
-    );
-    for (const block of [...blocks, ...keptTaskTime]) {
-      if (block.areaId) already[block.areaId] = (already[block.areaId] ?? 0) + block.durationMin;
-      if (!block.taskId || finished.has(block.taskId)) continue;
-      const task = tasks.find((t) => t.id === block.taskId);
-      const need = left.has(block.taskId) ? left.get(block.taskId) : (task?.remainingMin ?? null);
-      const rest = need === null || need === undefined ? 0 : need - block.durationMin;
-      if (rest > 0) left.set(block.taskId, rest);
-      else {
-        left.set(block.taskId, 0);
-        finished.set(block.taskId, input.date);
-      }
-    }
-    plannedByWeek.set(monday, already);
-    leftAtEnd.set(input.date, new Map(left));
-    days.push({ date: input.date, light: plan.light, blocks });
-  }
-
+  const { days, carry, allTasks, leftAtEnd } = runChain(inputs, awayDates, saved);
+  const finished = carry.finished;
   const last = inputs[inputs.length - 1]?.date ?? "";
   const late: LateTask[] = [];
   const kinds = new Map(inputs.flatMap((input) => input.areas.map((area) => [area.id, area.kind])));
@@ -152,47 +75,21 @@ export function previewWeek(
 }
 
 /**
- * Today's free slots from now on: time already gone can't be planned. A task
- * whose time has passed is planned like any other; a part of the day starts now.
+ * Loads the next 7 days and runs them, today from `nowMs` on. Days already
+ * saved show what they hold, so a day you open keeps what this showed.
  */
-export function fromNow(input: PlanInput, nowMin: number): PlanInput {
-  return {
-    ...input,
-    notBeforeMin: Math.max(input.notBeforeMin ?? 0, nowMin),
-    tasks: input.tasks.map((task) =>
-      task.atMin !== null &&
-      task.atMin !== undefined &&
-      task.atMin + (task.estimateMin && task.estimateMin > 0 ? task.estimateMin : TASK_BLOCK_MIN) <=
-        nowMin
-        ? { ...task, atMin: null }
-        : task,
-    ),
-    template: input.template.flatMap((block) => {
-      if (block.kind !== "area") return [block];
-      const end = block.startMin + block.durationMin;
-      if (end <= nowMin) return [];
-      if (block.startMin >= nowMin) return [block];
-      return [{ ...block, startMin: nowMin, durationMin: end - nowMin }];
-    }),
-  };
-}
-
-/** Loads the next 7 days' inputs and runs them, today from `nowMs` on. */
 export async function loadPreview(
   query: Query,
   today: string,
   nowMs: number,
 ): Promise<WeekPreview> {
-  const inputs: PlanInput[] = [];
-  const away = new Set<string>();
-  for (let i = 0; i < PREVIEW_DAYS; i++) {
-    const date = shiftDate(today, i);
-    inputs.push(await loadPlanInput(query, date));
-    if (await isAwayOn(query, date)) away.add(date);
-  }
-  const first = inputs[0];
-  if (first) inputs[0] = fromNow(first, Math.round((nowMs - localToEpoch(today, 0)) / 60_000));
-  return previewWeek(inputs, away);
+  const { inputs, away, saved } = await loadChain(
+    query,
+    today,
+    shiftDate(today, PREVIEW_DAYS - 1),
+    nowMs,
+  );
+  return previewWeek(inputs, away, saved);
 }
 
 /** Move earlier: plan the task for today, so it gets the first free time. */
