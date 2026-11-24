@@ -57,7 +57,7 @@ function openLots(events: LoanEvent[]): Map<string, PersonBalance & { lots: Lot[
     let person = people.get(key);
     if (!person) {
       person = {
-        person: event.person.trim(),
+        person: named(event.person),
         owedToMe: 0,
         iOwe: 0,
         since: null,
@@ -135,8 +135,11 @@ export function balances(events: LoanEvent[]): PersonBalance[] {
     );
 }
 
-/** "abel" reads as a name: "Abel" (F108). */
-const named = (person: string) => person.charAt(0).toUpperCase() + person.slice(1);
+/** "abel" reads as a name: "Abel" (F108), wherever it shows and as it is stored (reg0-3). */
+export const named = (person: string) => {
+  const name = person.trim();
+  return name.charAt(0).toUpperCase() + name.slice(1);
+};
 
 const VERB: Record<LoanKind, (person: string) => string> = {
   lent: (person) => `Lent to ${named(person)}`,
@@ -168,7 +171,7 @@ export function loanOps(input: {
       table: "money_loans",
       id: input.id,
       values: {
-        person: input.person.trim(),
+        person: named(input.person),
         kind: input.kind,
         amount_minor: input.amount,
         local_date: input.date,

@@ -7,7 +7,7 @@ import { PROJECT_STATUSES } from "../features/projects/projects";
 import { transferOps } from "../features/money/accounts";
 import { fromEtb, type Rates } from "../features/money/currency";
 import { ruleText } from "../features/money/regulars";
-import { loanEchoText, loanOps } from "../features/money/loans";
+import { loanEchoText, loanOps, named } from "../features/money/loans";
 import {
   checkTakeOut,
   checkTakeOutFrom,
@@ -506,13 +506,13 @@ export function pieceText(piece: MoneyPiece): string {
       const amount = listAmount(piece.amount, piece.currency);
       switch (piece.loanKind) {
         case "lent":
-          return `lent ${piece.person} ${amount}`;
+          return `lent ${named(piece.person)} ${amount}`;
         case "borrowed":
-          return `borrowed ${amount} from ${piece.person}`;
+          return `borrowed ${amount} from ${named(piece.person)}`;
         case "paid_me":
-          return `${piece.person} paid back ${amount}`;
+          return `${named(piece.person)} paid back ${amount}`;
         case "i_paid":
-          return `paid back ${piece.person} ${amount}`;
+          return `paid back ${named(piece.person)} ${amount}`;
       }
     }
   }
