@@ -85,10 +85,15 @@ button.month-day:hover {
     0 0 0 4.5px var(--ink);
 }
 
-/* The keyboard ring wins over the today and selected rings. */
-.month-grid .month-day:focus-visible,
-.panel.calendar .month-grid .month-day:focus-visible {
-  box-shadow: var(--focus-ring);
+/* The keyboard ring is a different shape from the today and selected rings (an
+   ink outline outside them), so a focused day never looks like today. */
+.month-grid .month-day:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 5px;
+}
+
+.month-grid .month-day:focus-visible:not(.today, .selected) {
+  box-shadow: none;
 }
 
 .month-foot {
@@ -147,6 +152,11 @@ button.month-day:hover {
   border-radius: var(--radius);
   background: var(--panel);
   font-size: var(--text-sm);
+}
+
+/* The date on its own line, with the note or the list under it. */
+.month-day-detail strong {
+  display: block;
 }
 
 .month-day-detail ul {
