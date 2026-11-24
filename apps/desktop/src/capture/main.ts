@@ -25,7 +25,14 @@ import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
 import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
-import { affordState, echo as echoLine, ideaInput, toOps } from "./ops";
+import {
+  affordState,
+  echo as echoLine,
+  ideaInput,
+  SAME_PROJECT_SQL,
+  sameProject,
+  toOps,
+} from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
 import { RATES_SQL, readRates } from "../features/money/currency";
 import { affordAnswer } from "../features/money/affordLoad";
@@ -261,14 +268,20 @@ form.addEventListener("submit", (event) => {
             ? query<{ entity_id: string }>(REPLACED_PROJECTS_SQL, [`capture:${fixing.id}`])
             : Promise.resolve([]),
         ])
-          .then(([week, areas, replaced]) => {
+          .then(async ([week, areas, replaced]) => {
             const gone = new Set(replaced.map((row) => row.entity_id));
-            return placeIdea(ideaInput(parsed), {
+            const placement = placeIdea(ideaInput(parsed), {
               week: week.week,
               projects: week.projects.filter((project) => !gone.has(project.id)),
               today: logicalDate(nowMs),
               areaIds: areas.map((area) => area.id),
             });
+            // The same idea twice makes no second project (F91). A failed read saves it anyway.
+            const rows = await query<{ id: string; status: string }>(SAME_PROJECT_SQL, [
+              placement.values.title ?? "",
+            ]).catch(() => []);
+            const same = rows.find((row) => !gone.has(row.id));
+            return same ? sameProject(placement, same) : placement;
           })
           .catch(() => placeIdea(ideaInput(parsed), null))
       : Promise.resolve(undefined);

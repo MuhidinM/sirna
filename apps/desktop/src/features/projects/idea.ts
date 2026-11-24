@@ -47,6 +47,8 @@ export const REPLACED_PROJECTS_SQL = `SELECT entity_id FROM core_activity
 export interface Placement {
   values: Record<string, SqlValue>;
   echo: string;
+  /** An open project with this title already: the capture saves nothing (F91). */
+  existing?: string;
 }
 
 /** "Mon 16 Nov", with the year only when it differs from `today`'s (docs/design.md). */

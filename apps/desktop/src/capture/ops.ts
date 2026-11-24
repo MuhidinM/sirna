@@ -3,6 +3,7 @@ import { type Op } from "../kernel/db";
 import { logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
+import { PROJECT_STATUSES } from "../features/projects/projects";
 import { transferOps } from "../features/money/accounts";
 import { ruleText } from "../features/money/regulars";
 import { loanEchoText, loanOps } from "../features/money/loans";
@@ -26,6 +27,28 @@ export interface OpsContext {
   savingGoal?: { id: string; title: string } | null;
   /** The goal each saving on a several-item line goes to, by its words. */
   goalOf?: (words: string | undefined) => { id: string; title: string } | null;
+}
+
+/**
+ * An open project with the same title, case and spaces aside (F91). Done and
+ * dropped ones don't count: starting one again is a new project.
+ */
+export const SAME_PROJECT_SQL = `SELECT id, status FROM project_items
+  WHERE deleted_at IS NULL AND status NOT IN ('done', 'dropped')
+    AND lower(trim(title)) = lower(trim(?))
+  ORDER BY created_at`;
+
+/** The placement for an idea you already have: nothing is saved, the echo says where it is. */
+export function sameProject(placement: Placement, row: { id: string; status: string }): Placement {
+  const label = PROJECT_STATUSES.find((entry) => entry.status === row.status)?.label ?? row.status;
+  return {
+    ...placement,
+    existing: row.id,
+    echo:
+      row.status === "idea"
+        ? "Already an idea · see Projects"
+        : `Already a project (${label}) · see Projects`,
+  };
 }
 
 /** Sets `currency` on the money rows of some ops, when it isn't birr. */
@@ -262,6 +285,8 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
     case "transfer":
       return transferPieceOps(parsed, context);
     case "idea":
+      // Already a project with this title: the line is kept, no second project (F91).
+      if (idea?.existing) return [];
       return [
         {
           op: "insert",
