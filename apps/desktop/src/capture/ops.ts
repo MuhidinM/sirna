@@ -380,7 +380,6 @@ export function affordState(answer: string): AffordState | undefined {
   return undefined;
 }
 
-/** The short confirmation shown in the capture box. */
 /**
  * `groceries 1200 @wise` with $300 in Wise: the number went in as dollars,
  * more than the account holds, so the chip says so and what 1,200 birr would
@@ -401,6 +400,7 @@ export function balanceNote(
     : `${held}; ${formatNumber(parsed.amount)} birr would be ≈ ${formatAmount(birr, parsed.currency)}`;
 }
 
+/** The short confirmation shown in the capture box. */
 export function echo(
   parsed: Parsed,
   nowMs: number,

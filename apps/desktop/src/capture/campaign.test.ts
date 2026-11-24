@@ -50,6 +50,10 @@ describe("a length is a task's length, never money (F1, F16)", () => {
     expect(read(text)).toEqual({ kind: "task", title, estimateMin });
   });
 
+  it("makes a task from a length alone, with no task verb", () => {
+    expect(read("walk for 45 min")).toEqual({ kind: "task", title: "walk", estimateMin: 45 });
+  });
+
   it("keeps 'tonight' with a length", () => {
     expect(read("walk for 30 min tonight")).toMatchObject({
       kind: "task",
@@ -105,9 +109,24 @@ describe("money in is never booked as spending (F5, F6)", () => {
     expect(read(text)).toMatchObject({ kind: "income", amount, account });
   });
 
-  it.each(["rent paid 5000", "paid salary 3000", "lunch 120"])("%j stays spending", (text) => {
-    expect(read(text)).toMatchObject({ kind: "expense" });
+  it("keeps the words of a repayment as typed", () => {
+    expect(read("client paid me 200")).toMatchObject({
+      kind: "income",
+      description: "client paid me",
+    });
+    expect(read("sara gave back 200")).toMatchObject({ description: "sara gave back" });
   });
+
+  it("reads 'got refunded' as income", () => {
+    expect(read("got refunded 50")).toMatchObject({ kind: "income", amount: 5000 });
+  });
+
+  it.each(["rent paid 5000", "paid salary 3000", "lunch 120", "refunded abel 300"])(
+    "%j stays spending",
+    (text) => {
+      expect(read(text)).toMatchObject({ kind: "expense" });
+    },
+  );
 });
 
 describe("transfers between multi-word accounts (F23)", () => {
@@ -190,6 +209,18 @@ describe("a year on a date (F42)", () => {
     expect(parsed).toMatchObject({ kind: "task", dueDate });
     expect(parsed.kind === "task" && parsed.title).not.toMatch(/\d/);
   });
+
+  it.each([
+    ["taxi 3 nov 1200", 120000, "2026-11-03"],
+    ["school fees 1 dec 2500", 250000, "2025-12-01"],
+    ["rent dec 1 5000", 500000, "2025-12-01"],
+  ])("%j keeps a 4-digit amount as money", (text, amount, date) => {
+    expect(read(text)).toMatchObject({ kind: "expense", amount, date });
+  });
+
+  it("does not read an implausible year on a task", () => {
+    expect(read("call bank 3 dec 1200")).toMatchObject({ dueDate: "2026-12-03" });
+  });
 });
 
 describe("24-hour times after midnight (F44)", () => {
@@ -213,6 +244,8 @@ describe("a named day with a time before 03:00 is that day's night (F46)", () =>
     ["2026-11-25T02:30:00", "call mom tomorrow 2am", "2026-11-26T02:00:00"],
     ["2026-11-24T23:00:00", "call dad today 1am", "2026-11-25T01:00:00"],
     ["2026-11-24T09:30:00", "call dad fri 1am", "2026-11-28T01:00:00"],
+    ["2026-11-24T09:30:00", "call mom 12 dec 1am", "2026-12-13T01:00:00"],
+    ["2026-11-24T09:30:00", "call mom 12/12 1am", "2026-12-13T01:00:00"],
   ])("at %s, %j", (now, text, due) => {
     expect(read(text, { nowMs: at(now) })).toMatchObject({ dueAt: at(due) });
   });
@@ -295,12 +328,22 @@ describe("amounts (F80)", () => {
 });
 
 describe("empty captures (F81)", () => {
-  it.each(["idea:", "pin:", "n:", "fb:", "wait:", "t:", "#jobhunt", "idea: #coding"])(
-    "%j asks for text",
-    (text) => {
-      expect(read(text)).toMatchObject({ kind: "inbox", body: "", why: expect.any(String) });
-    },
-  );
+  it.each([
+    "idea:",
+    "pin:",
+    "n:",
+    "fb:",
+    "wait:",
+    "t:",
+    "#jobhunt",
+    "idea: #coding",
+    "tomorrow",
+    "tomorrow 2am",
+    "t: tomorrow",
+    "fri 4pm",
+  ])("%j asks for text", (text) => {
+    expect(read(text)).toMatchObject({ kind: "inbox", body: "", why: expect.any(String) });
+  });
 });
 
 describe("more ways to say when (F82)", () => {

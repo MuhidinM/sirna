@@ -320,7 +320,7 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
       const owed = open ? (loanKind === "paid_me" ? open.owedToMe : open.iOwe) : 0;
       // Someone who owes you nothing paying you back is still money in, never spending.
       if (owed <= 0 && loanKind === "paid_me")
-        return repaidIncome(person.trim(), amount, account, options);
+        return repaidIncome(rest.replace(amountText ?? "", " "), amount, account, options);
       if (owed <= 0) continue;
     }
     const fallback = (options.accounts ?? []).find((a) => a.kind === "cash");
@@ -339,7 +339,8 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
 
 /** "sara paid back 200" with no loan open: income into the pay account (or `@account`). */
 function repaidIncome(
-  person: string,
+  /** The line without its amount, as typed: "client paid me", "sara gave back". */
+  said: string,
   amount: Santim,
   account: AccountOption | undefined,
   options: ParseOptions,
@@ -347,7 +348,7 @@ function repaidIncome(
   const item = finishMoney(
     {
       kind: "income",
-      description: `${person} paid back`,
+      description: said.replace(/\s+/g, " ").trim(),
       amount,
       categoryId: guessCategory("", true),
       date: logicalDate(options.nowMs),
@@ -459,10 +460,11 @@ const CATEGORY_WORDS: [RegExp, string][] = [
 const INCOME_WORDS: [RegExp, string][] = [[/\b(salary|payroll|wage|wages)\b/i, "cat_salary"]];
 /**
  * Words that say money came in, though not as pay: `income 5000`, `refund 300
- * shoes`, `client paid $200`. Not a bare "paid": "rent paid 5000" is spending.
+ * shoes`, `client paid $200`. Not a bare "paid": "rent paid 5000" is spending,
+ * and not a bare "refunded": "refunded abel 300" is paying someone back.
  */
 const MONEY_IN =
-  /\b(income|refund(?:ed)?|reimburs\w*|cashback|paid me|(?:client|customer)s? paid)\b/i;
+  /\b(income|refund|got refunded|reimburs\w*|cashback|paid me|(?:client|customer)s? paid)\b/i;
 const isMoneyIn = (label: string) =>
   INCOME_WORDS.some(([pattern]) => pattern.test(label)) || MONEY_IN.test(label);
 
@@ -1071,8 +1073,10 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
       if (when.date) task.dueDate = when.date;
       return withArea(task, area);
     }
-    case "t":
-      return withArea(readTask(plain, nowMs, clockStyle, options.areas), area);
+    case "t": {
+      const task = readTask(plain, nowMs, clockStyle, options.areas);
+      return task.title ? withArea(task, area) : NO_TITLE;
+    }
     default:
       break;
   }
@@ -1089,7 +1093,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
       money &&
       (money.amount >= 10_000 ||
         /\d\s*(?:k|etb|birr|br)\b|\b(?:etb|birr|br)\s*\d/i.test(got[1]) ||
-        isMoneyIn(money.label) ||
+        isMoneyIn(`got ${money.label}`) ||
         jobIn(money.label, options.jobs ?? []) !== undefined);
     if (money && looksPaid) {
       return withArea(
@@ -1151,16 +1155,25 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   }
 
   const task = readTask(plain, nowMs, clockStyle, options.areas);
+  // "tomorrow", "tomorrow 2am": only when, nothing to do. Saves nothing.
+  if (!task.title) return NO_TITLE;
   // A time phrase the reader missed: say so and keep it for tonight (ADR-0005),
   // instead of a silent Someday with the words left in the title.
   const unread = task.dueDate ? null : UNREAD_WHEN.exec(task.title);
   if (unread) return looseEnd(raw, `Couldn't read "${unread[0]}" · will ask tonight`);
   const firstWord = plain.split(" ")[0]?.toLowerCase() ?? "";
-  if (task.kind === "task" && (task.dueDate || TASK_VERBS.has(firstWord) || area || task.area)) {
+  // A length ("walk for 45 min") is planned into free time, so it makes a task too.
+  if (
+    task.kind === "task" &&
+    (task.dueDate || task.estimateMin || TASK_VERBS.has(firstWord) || area || task.area)
+  ) {
     return withArea(task, area);
   }
   return withArea({ kind: "inbox", body: plain }, area);
 }
+
+/** A line that only says when: the capture box asks for the what and keeps the line. */
+const NO_TITLE: Stuck = { kind: "inbox", body: "", why: "Type what to do" };
 
 /** Time words that should have given a day: left in a title, they were not read. */
 const UNREAD_WHEN =
@@ -1233,7 +1246,8 @@ function readTask(
   let title = when.date ? when.rest.replace(CONNECTOR_TAIL, "") : when.rest;
   const named = early.area ? { rest: title, area: early.area } : readForArea(title, areas);
   title = named.rest.replace(CONNECTOR_TAIL, "");
-  const task: Extract<Parsed, { kind: "task" }> = { kind: "task", title: title || text };
+  // "tomorrow 2am" alone leaves no title: callers refuse it (F81).
+  const task: Extract<Parsed, { kind: "task" }> = { kind: "task", title };
   // A range (`3-4:30pm`) or `for 45 min` is how long it takes, unless `~2h` said so.
   const length = minutes > 0 ? minutes : (when.durationMin ?? 0);
   if (length > 0) task.estimateMin = length;

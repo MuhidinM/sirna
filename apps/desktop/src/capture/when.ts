@@ -493,22 +493,34 @@ export function readWhen(
       return true;
     });
   }
-  if (!date) {
-    take(/\s(?:on\s+)?(\d{1,2})\s*(?:st|nd|rd|th)?\s+([a-z]{3,9})(?:,?\s+(\d{4}))?(?=\s)/i, (m) => {
-      const month = MONTHS[m[2]?.toLowerCase() ?? ""];
-      if (!month) return false;
-      date = dayIn(today, month, Number(m[1]), m[3], past);
-      return date !== undefined;
-    });
-  }
-  if (!date) {
-    take(/\s(?:on\s+)?([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?(?=\s)/i, (m) => {
-      const month = MONTHS[m[1]?.toLowerCase() ?? ""];
-      if (!month) return false;
-      date = dayIn(today, month, Number(m[2]), m[3], past);
-      return date !== undefined;
-    });
-  }
+  // "25 dec 2027" / "dec 25, 2027": a year only when it is plausible for a plan
+  // (this year to five on) and never on spending, so "taxi 3 nov 1200" keeps
+  // its 1,200 as the amount. Then the same forms without a year.
+  const dayFirst = String.raw`\s(?:on\s+)?(\d{1,2})\s*(?:st|nd|rd|th)?\s+([a-z]{3,9})`;
+  const monthFirst = String.raw`\s(?:on\s+)?([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?`;
+  const YEAR = String.raw`,?\s+(\d{4})`;
+  const plausibleYear = (text: string | undefined) => {
+    const year = Number(text);
+    const [thisYear] = parts(today);
+    return !past && year >= thisYear && year <= thisYear + 5;
+  };
+  const readMonthDay = (withYear: boolean, monthFirstOrder: boolean) =>
+    take(
+      new RegExp(
+        `${monthFirstOrder ? monthFirst : dayFirst}${withYear ? YEAR : ""}${String.raw`(?=\s)`}`,
+        "i",
+      ),
+      (m) => {
+        const [monthText, dayText] = monthFirstOrder ? [m[1], m[2]] : [m[2], m[1]];
+        const month = MONTHS[monthText?.toLowerCase() ?? ""];
+        if (!month) return false;
+        if (withYear && !plausibleYear(m[3])) return false;
+        date = dayIn(today, month, Number(dayText), withYear ? m[3] : undefined, past);
+        return date !== undefined;
+      },
+    );
+  for (const withYear of [true, false])
+    for (const order of [false, true]) if (!date) readMonthDay(withYear, order);
   if (!date) {
     // ISO, as copied from a form or an email: 2026-12-03.
     take(/\s(\d{4})-(\d{2})-(\d{2})(?=\s)/, (m) => {
@@ -539,11 +551,6 @@ export function readWhen(
     }
   }
 
-  // A day you named with a time before 03:00 is that day's night (the
-  // logical day runs to 03:00): "tomorrow 2am" comes after tomorrow's
-  // evening, written 26:00 like a bare "at 1am" after midnight.
-  if (date && minutes !== undefined && minutes < 3 * 60 && !exact && !calendarEvening)
-    minutes += 24 * 60;
   if (!date) {
     // Day first, as written in Ethiopia and the UK: 12/11 = 12 November.
     take(/\s(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?=\s)/, (m) => {
@@ -559,6 +566,13 @@ export function readWhen(
       return date !== undefined;
     });
   }
+
+  // A day you named with a time before 03:00 is that day's night (the
+  // logical day runs to 03:00): "tomorrow 2am" comes after tomorrow's
+  // evening, written 26:00 like a bare "at 1am" after midnight. Every date set
+  // so far was named ("12 dec" and "12/12" alike); a time alone is handled below.
+  if (date && minutes !== undefined && minutes < 3 * 60 && !exact && !calendarEvening)
+    minutes += 24 * 60;
 
   // A time with no day means today, or tomorrow if that time has passed. A
   // range or a part of the day counts as today until it ends: "read from 3pm
