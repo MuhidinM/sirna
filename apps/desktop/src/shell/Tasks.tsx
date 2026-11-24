@@ -222,6 +222,10 @@ function TaskForm({
           <input type="date" value={draft.due} onChange={(e) => set({ due: e.target.value })} />
         </label>
         <label className="field">
+          <span>Time</span>
+          <input type="time" value={draft.time} onChange={(e) => set({ time: e.target.value })} />
+        </label>
+        <label className="field">
           <span>Repeat</span>
           <input
             value={draft.repeat}

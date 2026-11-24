@@ -76,7 +76,7 @@ describe("listing tasks", () => {
 });
 
 describe("editing a task", () => {
-  it("saves a new date, estimate and area, and drops the old reminder time", () => {
+  it("saves a new date, estimate and area; the time and reminder move to the new date", () => {
     const db = seeded();
     const [row] = list(db, "open");
     if (!row) throw new Error("no task");
@@ -99,8 +99,8 @@ describe("editing a task", () => {
     >;
     expect(saved).toMatchObject({
       due_date: "2026-11-20",
-      due_at: null,
-      remind_at: null,
+      due_at: 1794641400000 + 6 * 86_400_000,
+      remind_at: 1794641400000 + 6 * 86_400_000,
       estimate_min: 240,
       area_id: "coding",
     });

@@ -44,12 +44,12 @@ describe("the week ahead (T-069)", () => {
   it("spreads a big task over the days it needs, and flags it when the deadline comes first", () => {
     const big = task({ remainingMin: 300, dueDate: shiftDate(MON, 2) });
     const preview = previewWeek([0, 1, 2, 3, 4, 5, 6].map((i) => day(i, [big])));
-    // 96 + 96 + 96 = 288 by Wednesday; 12 minutes still missing then.
+    // 90 + 90 + 90 = 270 by Wednesday; 30 minutes still missing then.
     expect(
       preview.days.slice(0, 4).map((d) => d.blocks.map((b) => [b.taskId, b.durationMin])),
-    ).toEqual([[["t", 96]], [["t", 96]], [["t", 96]], [["t", 96]]]);
+    ).toEqual([[["t", 90]], [["t", 90]], [["t", 90]], [["t", 90]]]);
     expect(preview.late).toEqual([
-      { id: "t", title: "Portfolio", dueDate: "2026-11-18", shortMin: 12, finishes: "2026-11-19" },
+      { id: "t", title: "Portfolio", dueDate: "2026-11-18", shortMin: 30, finishes: "2026-11-19" },
     ]);
   });
 

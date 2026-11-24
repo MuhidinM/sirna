@@ -195,6 +195,17 @@ function overlaps(
 const QUARTER = 15;
 
 /**
+ * What the buffer leaves of a slot (`minutes`) ends on the quarter hour, so a
+ * plan reads 17:15-18:00, not 17:15-18:12; the minutes cut off join the
+ * buffer. A slot the buffer doesn't reach is used whole.
+ */
+function onGrid(startMin: number, minutes: number, slotMin: number): number {
+  if (minutes >= slotMin) return slotMin;
+  const end = Math.floor((startMin + minutes) / QUARTER) * QUARTER;
+  return Math.max(0, end - startMin);
+}
+
+/**
  * The first start in [from, until) where `length` minutes fit between the busy
  * blocks, on a quarter hour. Null when nothing that long is free.
  */
@@ -319,6 +330,12 @@ export function generateDay(input: PlanInput): DayPlan {
   ]);
   const tasksLeft = input.tasks.filter((task) => !keptTasks.has(task.id));
   const planned: Record<string, number> = {};
+  // A focus block kept from earlier today (over, edited or focused in) is
+  // today's time for its area: a replan doesn't give that area a second slot
+  // ahead of an area with a task due (F12).
+  for (const block of input.kept)
+    if (block.kind === "area" && block.areaId)
+      planned[block.areaId] = (planned[block.areaId] ?? 0) + block.durationMin;
   /** Time tasks took for themselves: it comes out of the focus slots. */
   const taken: { startMin: number; durationMin: number }[] = [];
   const addTaskBlock = (task: TaskInput, startMin: number, durationMin: number) => {
@@ -422,7 +439,7 @@ export function generateDay(input: PlanInput): DayPlan {
     ].filter((id): id is string => id !== null);
     let used = 0;
     for (const slot of areaSlots) {
-      const duration = Math.min(slot.durationMin, budget - used);
+      const duration = onGrid(slot.startMin, budget - used, slot.durationMin);
       if (duration < MIN_BLOCK_MIN) {
         leftover.push(slot);
         continue;
@@ -501,7 +518,10 @@ export function generateDay(input: PlanInput): DayPlan {
         const after = task.step ? (stepEnds.get(task.step.parentId) ?? 0) : 0;
         if (piece.startMin < after) continue;
         const need = left.get(task.id) ?? task.remainingMin ?? task.estimateMin ?? 0;
-        const minutes = Math.min(need, piece.durationMin, budget - used);
+        const minutes =
+          budget - used < Math.min(need, piece.durationMin)
+            ? onGrid(piece.startMin, budget - used, piece.durationMin)
+            : Math.min(need, piece.durationMin);
         // A short task (a 15-minute step) gets a block of its own length.
         if (minutes < Math.min(MIN_BLOCK_MIN, need)) continue;
         addTaskBlock(task, piece.startMin, minutes);

@@ -157,6 +157,26 @@ describe("tasks with an estimate get planned", () => {
     });
     expect(later[0]).toMatchObject({ values: { status: "someday", estimate_min: null } });
   });
+
+  it("makes an undated task with an area a to-do for that area's blocks (F57)", async () => {
+    const { toOps, echo } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    const areas = [{ id: "joba", name: "Job A" }];
+    const parsed = parseCapture("#joba send report", { nowMs: now, areas });
+    const ops = toOps(parsed, { nowMs: now, newId: () => "t1" });
+    expect(ops[0]).toMatchObject({ values: { status: "todo", area_id: "joba", due_date: null } });
+    expect(echo(parsed, now)).toBe("Task · in its area's blocks · #joba");
+  });
+
+  it("keeps a task tagged with a #tag that names no area as someday", async () => {
+    const { toOps, echo } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    const areas = [{ id: "joba", name: "Job A" }];
+    const parsed = parseCapture("#urgent call mom", { nowMs: now, areas });
+    const ops = toOps(parsed, { nowMs: now, newId: () => "t1" });
+    expect(ops[0]).toMatchObject({ values: { status: "someday" } });
+    expect(echo(parsed, now)).toBe("Task · Someday · #urgent");
+  });
 });
 
 describe("the echo for an estimated task", () => {

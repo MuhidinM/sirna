@@ -73,6 +73,45 @@ describe("a task's day apart from its deadline (T-050)", () => {
     ).toEqual({ due_date: "2026-11-20", planned_date: null, deadline_stale: 0 });
   });
 
+  it("keeps a task's time when its date moves, and its reminder with it (F13)", () => {
+    const db = withTask("2026-11-24");
+    const at = (iso: string) => Date.parse(`${iso}+03:00`);
+    db.prepare("UPDATE task_items SET due_at = ?, remind_at = ?").run(
+      at("2026-11-24T14:00:00"),
+      at("2026-11-24T13:50:00"),
+    );
+    const read = () => {
+      const [row] = db.prepare(TASKS_SQL).all('["todo"]', 0) as unknown as TaskListRow[];
+      if (!row) throw new Error("no row");
+      return row;
+    };
+    const draft = taskDraftOf(read());
+    expect(draft.time).toBe("14:00");
+    apply(db, taskEditOps(read(), { ...draft, due: "2026-11-25" }, 0));
+    expect(db.prepare("SELECT due_date, due_at, remind_at FROM task_items").get()).toEqual({
+      due_date: "2026-11-25",
+      due_at: at("2026-11-25T14:00:00"),
+      remind_at: at("2026-11-25T13:50:00"),
+    });
+    // A new time moves the reminder too; no time, no reminder.
+    apply(db, taskEditOps(read(), { ...taskDraftOf(read()), time: "16:30" }, 0));
+    expect(db.prepare("SELECT due_at, remind_at FROM task_items").get()).toEqual({
+      due_at: at("2026-11-25T16:30:00"),
+      remind_at: at("2026-11-25T16:20:00"),
+    });
+    apply(db, taskEditOps(read(), { ...taskDraftOf(read()), time: "" }, 0));
+    expect(db.prepare("SELECT due_at, remind_at FROM task_items").get()).toEqual({
+      due_at: null,
+      remind_at: null,
+    });
+    // Giving an untimed task a time reminds you at that time.
+    apply(db, taskEditOps(read(), { ...taskDraftOf(read()), time: "09:00" }, 0));
+    expect(db.prepare("SELECT due_at, remind_at FROM task_items").get()).toEqual({
+      due_at: at("2026-11-25T09:00:00"),
+      remind_at: at("2026-11-25T09:00:00"),
+    });
+  });
+
   it("saving the form without a new date only confirms the deadline", () => {
     const db = withTask("2026-11-12");
     db.prepare("UPDATE task_items SET planned_date = '2026-11-14', deadline_stale = 1").run();

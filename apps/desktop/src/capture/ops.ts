@@ -336,10 +336,13 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
           values: {
             title: parsed.title,
             // An undated task with an estimate is meant to be done soon: the day
-            // planner fits it into free slots. Without either, it waits as someday.
+            // planner fits it into free slots. One tagged with one of your areas
+            // goes on that area's list inside its blocks (time first, rule 6); a
+            // `#tag` that names no area doesn't. Without any of these, it waits
+            // as someday.
             status: parsed.waitingOn
               ? "waiting"
-              : parsed.dueDate || parsed.estimateMin
+              : parsed.dueDate || parsed.estimateMin || parsed.areaKnown
                 ? "todo"
                 : "someday",
             due_date: parsed.dueDate ?? null,
@@ -562,7 +565,9 @@ export function echo(
           ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
           : parsed.estimateMin
             ? " · planned into free time"
-            : " · Someday";
+            : parsed.areaKnown
+              ? " · in its area's blocks"
+              : " · Someday";
       const size =
         parsed.estimateMin && parsed.dueAt === undefined
           ? parsed.estimateMin < 60

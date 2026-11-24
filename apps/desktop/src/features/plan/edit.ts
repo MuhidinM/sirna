@@ -65,6 +65,32 @@ export interface EditBlock {
   area_id: string | null;
   task_id: string | null;
   status: string;
+  /** The block's task as it is now (TODAY_BLOCKS_SQL); absent where not read. */
+  task_title?: string | null;
+  task_due_at?: number | null;
+  task_remind_at?: number | null;
+  task_status?: string | null;
+  task_completed_at?: number | null;
+}
+
+/**
+ * A task's own block (the task's title, not a focus slot "Coding skills: …"
+ * that holds it): moving it moves the task's time, marking it done ticks the
+ * task, so the lists and the board agree.
+ */
+export function isOwnBlock(block: EditBlock): boolean {
+  return !!block.task_id && block.task_title === block.title;
+}
+
+/** The task's time follows its own block to `start` (its reminder keeps its lead). */
+function taskTimeOps(block: EditBlock, start: number): Op[] {
+  const due = block.task_due_at;
+  if (!block.task_id || !isOwnBlock(block) || due === null || due === undefined || due === start)
+    return [];
+  const values: Record<string, SqlValue> = { due_at: start };
+  const remind = block.task_remind_at;
+  if (remind !== null && remind !== undefined) values.remind_at = remind + (start - due);
+  return [{ op: "update", table: "task_items", id: block.task_id, values }];
 }
 
 export function spanOf(date: string, block: Pick<EditBlock, "start_at" | "end_at">): Span {
@@ -93,6 +119,7 @@ function timeOps(date: string, block: EditBlock, span: Span): Op[] {
   if (start === block.start_at && end === block.end_at) return [];
   return [
     { op: "update", table: "day_blocks", id: block.id, values: { start_at: start, end_at: end } },
+    ...(start === block.start_at ? [] : taskTimeOps(block, start)),
   ];
 }
 
@@ -197,7 +224,34 @@ export function changeOps(
   // A rest band given an area or a task becomes a block you work in.
   if (block.kind === "rest" && (draft.areaId || draft.taskId)) values.kind = "area";
   if (Object.keys(values).length === 0) return [];
-  return [{ op: "update", table: "day_blocks", id: block.id, values }];
+  const sameTask = draft.taskId === block.task_id && title === block.title;
+  return [
+    { op: "update", table: "day_blocks", id: block.id, values },
+    ...(sameTask && start !== block.start_at ? taskTimeOps(block, start) : []),
+  ];
+}
+
+/** Mark done / Not done: the block, and the task too when it is the task's own block. */
+export function markDoneOps(block: EditBlock, nowMs: number): Op[] {
+  const done = block.status === "done";
+  const ops: Op[] = [
+    {
+      op: "update",
+      table: "day_blocks",
+      id: block.id,
+      values: { status: done ? "planned" : "done" },
+    },
+  ];
+  if (block.task_id && isOwnBlock(block) && block.task_status === (done ? "done" : "todo"))
+    ops.push({
+      op: "update",
+      table: "task_items",
+      id: block.task_id,
+      values: done
+        ? { status: "todo", completed_at: null }
+        : { status: "done", completed_at: nowMs },
+    });
+  return ops;
 }
 
 /** A block you add: yours (`source = 'user'`), so the planner keeps it. */
@@ -272,6 +326,19 @@ export function undoOps(ops: Op[], before: Record<string, Record<string, SqlValu
     for (const key of Object.keys(op.values)) values[key] = old[key] ?? null;
     return [{ op: "update", table: op.table, id: op.id, values }];
   });
+}
+
+/** What an edit of `block` may change, for `undoOps`: the block, and its own task. */
+export function beforeOf(block: EditBlock): Record<string, Record<string, SqlValue>> {
+  const before: Record<string, Record<string, SqlValue>> = { [block.id]: blockBefore(block) };
+  if (block.task_id && isOwnBlock(block))
+    before[block.task_id] = {
+      due_at: block.task_due_at ?? null,
+      remind_at: block.task_remind_at ?? null,
+      status: block.task_status ?? null,
+      completed_at: block.task_completed_at ?? null,
+    };
+  return before;
 }
 
 /** A block's own values, for `undoOps`. */

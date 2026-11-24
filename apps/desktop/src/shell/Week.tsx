@@ -32,7 +32,7 @@ import {
   updateBlockOps,
   WEEKDAYS,
 } from "../features/plan/editor";
-import { isoWeekday, replanDay, shiftDate } from "../features/plan/dayplan";
+import { isoWeekday, replanFromToday } from "../features/plan/dayplan";
 import { toHhmm, type Weekday } from "../features/plan/routine";
 import { IconArrowUpRight, IconClock, IconPlus } from "./icons";
 import { EventCard, PanelHead, type Tone, toneOf } from "./kit";
@@ -46,19 +46,18 @@ const kindLabel = (kind: string) => BLOCK_KINDS.find((k) => k.kind === kind)?.la
 const hours = (minutes: number) => Math.round((minutes / 60) * 100) / 100;
 
 /**
- * Saves routine changes, then plans today again (and tomorrow, if the night
- * review already planned it) around the blocks you touched.
+ * Saves routine changes, then plans again every day from today on that
+ * already has a plan (opening a day in Plan → Day saves one), around the
+ * blocks you touched.
  */
 async function saveRoutine(ops: Op[]): Promise<void> {
   await transact("user", ops, "routine");
-  const today = logicalDate(systemClock.now());
-  for (const date of [today, shiftDate(today, 1)])
-    await replanDay(
-      query,
-      (plan) => transact("system", plan, "day-plan"),
-      date,
-      () => ulid(),
-    );
+  await replanFromToday(
+    query,
+    (plan) => transact("system", plan, "day-plan"),
+    systemClock.now(),
+    () => ulid(),
+  );
 }
 
 function DayPicker({ value, onChange }: { value: Weekday[]; onChange: (days: Weekday[]) => void }) {
