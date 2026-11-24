@@ -275,6 +275,8 @@ form.addEventListener("submit", (event) => {
   let idea: Placement | undefined;
   // A saving goes to the goal it names, or the only one (plan §3.13).
   let savingGoal: { id: string; title: string } | null | undefined;
+  /** With goals but none named, the echo says so rather than "no goal yet" (F76). */
+  let hasGoals = false;
   type Goal = { id: string; title: string; status: "active" | "done" | "paused" };
   // A transfer into or out of a savings account is saving too (time-first §4).
   const savesSomething = (item: Parsed) =>
@@ -299,6 +301,7 @@ form.addEventListener("submit", (event) => {
   const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, goals]) => {
     idea = placement;
     savingGoal = goal;
+    hasGoals = goals.some((row) => row.status === "active");
     const ops = toOps(parsed, {
       nowMs,
       newId: () => ulid(),
@@ -339,7 +342,7 @@ form.addEventListener("submit", (event) => {
           .catch(() => finish("Couldn't set away. Try again."));
         return;
       }
-      finish(fixed + echoLine(parsed, nowMs, idea, savingGoal));
+      finish(fixed + echoLine(parsed, nowMs, idea, savingGoal, { hasGoals }));
     })
     .catch((error: unknown) => {
       busy = false;

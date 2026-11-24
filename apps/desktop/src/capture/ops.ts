@@ -302,6 +302,7 @@ function dayLabel(date: string, nowMs: number): string {
   if (date === today) return "Today";
   const tomorrow = logicalDate(nowMs + 24 * 60 * 60 * 1000);
   if (date === tomorrow) return "Tomorrow";
+  if (date === logicalDate(nowMs - 24 * 60 * 60 * 1000)) return "Yesterday";
   const [, month = "", day = ""] = date.split("-");
   const months = [
     "Jan",
@@ -342,13 +343,23 @@ const arrived = (piece: TransferItem) =>
 const savingNote = (piece: TransferItem) =>
   piece.saving ? (piece.saving.minor > 0 ? " · counts as saving" : " · taken from savings") : "";
 
+/** " (telebirr)" after a piece when it isn't the usual account, as accountOf (F109). */
+const pieceAccount = (item: MoneyItem) =>
+  item.accountName && !(item.kind === "expense" && item.account === "cash")
+    ? ` (${item.accountName})`
+    : "";
+
+/** " · Yesterday" when money is booked on another day than today (F79). */
+const bookedOn = (item: MoneyItem, nowMs: number) =>
+  item.date && item.date !== logicalDate(nowMs) ? ` · ${dayLabel(item.date, nowMs)}` : "";
+
 /** One record of a several-item line, short: `lunch 120`, `lent Abel 1,500`. */
 export function pieceText(piece: MoneyPiece): string {
   switch (piece.kind) {
     case "expense":
-      return `${piece.description} ${listAmount(piece.amount, piece.currency)}`;
+      return `${piece.description} ${listAmount(piece.amount, piece.currency)}${pieceAccount(piece)}`;
     case "income":
-      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}`;
+      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}${pieceAccount(piece)}`;
     case "saving":
       return `${piece.amount > 0 ? "saved" : "took out"} ${listAmount(Math.abs(piece.amount), piece.currency)}${piece.goal ? ` ${piece.goal}` : ""}${piece.unbacked ? ` (${piece.unbacked}, money stays put)` : ""}`;
     case "transfer":
@@ -379,12 +390,18 @@ export function affordState(answer: string): AffordState | undefined {
   return undefined;
 }
 
+/** "tomorrow" mid-line; a dated day ("Fri 27 Nov") keeps its capitals. */
+const midLine = (label: string) =>
+  label === "Today" || label === "Tomorrow" || label === "Yesterday" ? label.toLowerCase() : label;
+
 /** The short confirmation shown in the capture box. */
 export function echo(
   parsed: Parsed,
   nowMs: number,
   idea?: Placement,
   savingGoal?: { id: string; title: string } | null,
+  /** Whether you have an active savings goal: "no goal yet" or "no goal named" (F76). */
+  goals: { hasGoals?: boolean } = {},
 ): string {
   const area = "area" in parsed && parsed.area ? ` · #${parsed.area}` : "";
   switch (parsed.kind) {
@@ -424,10 +441,11 @@ export function echo(
         : loanEchoText(parsed.loanKind, parsed.person, parsed.amount, null);
       return `${text}${parsed.accountName && parsed.account !== "cash" ? ` · ${parsed.accountName}` : ""}`;
     }
+    // No `#area` here: a money line doesn't save one, so the echo doesn't claim it (F78).
     case "expense":
-      return `${formatAmount(parsed.amount, parsed.currency)} · ${categoryOf(parsed)}${accountOf(parsed)}${area}`;
+      return `${formatAmount(parsed.amount, parsed.currency)} · ${categoryOf(parsed)}${bookedOn(parsed, nowMs)}${accountOf(parsed)}`;
     case "income":
-      return `Income · ${formatAmount(parsed.amount, parsed.currency)} · ${parsed.jobName ?? categoryOf(parsed)}${accountOf(parsed)}${area}`;
+      return `Income · ${formatAmount(parsed.amount, parsed.currency)} · ${parsed.jobName ?? categoryOf(parsed)}${bookedOn(parsed, nowMs)}${accountOf(parsed)}`;
     case "money": {
       // Birr spending adds up; other currencies are listed with their sign.
       const out = parsed.items.filter(
@@ -446,11 +464,13 @@ export function echo(
     case "feedback":
       return "Feedback noted";
     case "inbox":
-      return parsed.why ?? "Saved · will ask tonight";
+      // "Inbox", not "Saved": after `saved 300 car` that read as money saved (F76).
+      return parsed.why ?? "Inbox · will ask tonight";
     case "search":
       return `Search: ${parsed.query}`;
     case "away":
-      return parsed.until ? `Away until ${dayLabel(parsed.until, nowMs)}` : "Away";
+      // With no day, set_away keeps you away until tomorrow (F41).
+      return `Away until ${midLine(parsed.until ? dayLabel(parsed.until, nowMs) : "Tomorrow")}`;
     case "focus":
       return "Focus";
     case "saving": {
@@ -458,7 +478,9 @@ export function echo(
       const where = savingGoal
         ? ` · ${savingGoal.title}`
         : savingGoal === null
-          ? " · no goal yet: add one on the Dashboard"
+          ? goals.hasGoals
+            ? " · no goal named: give it one on the Dashboard"
+            : " · no goal yet: add one on the Dashboard"
           : "";
       const moved =
         parsed.spend && parsed.savings
