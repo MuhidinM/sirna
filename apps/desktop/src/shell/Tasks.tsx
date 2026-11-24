@@ -95,7 +95,13 @@ const areaStyle = (color: string | null | undefined) =>
   ({ "--dot": `var(--area-${color ?? "admin"})` }) as CSSProperties;
 
 /** Adds a task the way the capture box does: the line is kept as typed, then parsed. */
-function QuickAdd({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }) {
+function QuickAdd({
+  inputRef,
+  areas,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  areas: Named[];
+}) {
   const clock = useLiveQuery<{ value_json: string }>(CLOCK_SQL);
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
@@ -108,15 +114,18 @@ function QuickAdd({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }
         const line = text.trim();
         if (!line) return;
         const nowMs = systemClock.now();
+        // "update cv for Job A" reads and echoes the area by name (F78).
+        const names = areas.map(({ id, name }) => ({ id, name }));
         // Here every line is a task (or a wait:); ideas and notes go through the capture box.
         const parsed = parseCapture(/^(t|wait)\s*:/i.test(line) ? line : `t: ${line}`, {
           nowMs,
           clockStyle: style,
+          areas: names,
         });
         commitCapture(line, toOps(parsed, { nowMs, newId: () => ulid() }), PARSER_ID)
           .then(() => {
             setText("");
-            setNote(`Added · ${echo(parsed, nowMs)}`);
+            setNote(`Added · ${echo(parsed, nowMs, undefined, undefined, { areas: names })}`);
           })
           .catch((failure: unknown) => setNote(`Couldn't add it: ${message(failure)}`));
       }}
@@ -729,7 +738,7 @@ export function Tasks() {
                 ))}
               </select>
             </div>
-            <QuickAdd inputRef={addRef} />
+            <QuickAdd inputRef={addRef} areas={areas.rows} />
             {tasks.error && (
               <p role="alert" className="error">
                 Couldn&apos;t load tasks: {tasks.error}

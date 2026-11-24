@@ -30,6 +30,10 @@ describe("paying back someone you owe nothing is never spending (F5)", () => {
     });
   });
 
+  it("repaying a card is spending, not a loan (F5)", () => {
+    expect(read("repaid credit card 3000")).toMatchObject({ kind: "expense", amount: 300000 });
+  });
+
   it("still pays back a loan you have", () => {
     const loanPeople = [{ name: "dawit", owedToMe: 0, iOwe: 50000 }];
     expect(read("paid back dawit 300", { loanPeople })).toMatchObject({
@@ -126,6 +130,18 @@ describe("common phrasings (F82)", () => {
       body: "pay iddir every month 200",
       why: "Say which day, as in “monthly 24” · will ask tonight",
     });
+  });
+
+  it.each([
+    ["write monthly report", { kind: "task", title: "write monthly report" }],
+    ["prepare monthly report friday", { kind: "task", dueDate: "2026-11-27" }],
+    ["pay rent every month friday", { kind: "task", dueDate: "2026-11-27" }],
+  ])("%j: 'monthly' that isn't the repeat stays a task", (text, want) => {
+    expect(read(text)).toMatchObject(want);
+  });
+
+  it("'pay iddir monthly' with no day asks for the day", () => {
+    expect(read("pay iddir monthly")).toMatchObject({ kind: "inbox" });
   });
 
   it("'pay iddir monthly 5 200' repeats with its amount in the title", () => {

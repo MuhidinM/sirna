@@ -177,6 +177,38 @@ describe("a pinned line and a cheat sheet saved since (reg2-7)", () => {
     expect(blocked(raw)).toBeNull();
   });
 
+  it("fixing another line leaves a later pin undoable", () => {
+    const { c, blocked } = setup();
+    captureCommit(
+      c,
+      { rawText: "pin: a", ops: [{ ...pin, id: "a", values: { ...pin.values, body: "a" } }] },
+      T,
+    );
+    applyOps(
+      c,
+      "user",
+      "notes:1",
+      editOps(card(c), "A", () => "x"),
+      T + 1,
+    );
+    const raw = captureCommit(
+      c,
+      {
+        rawText: "pin: git stash pop",
+        ops: [{ ...pin, id: "p", values: { ...pin.values, body: "git stash pop" } }],
+      },
+      T + 2,
+    ).result;
+    const fixed = editOps(card(c), "A!\ngit stash pop\nnew", () => "n1");
+    expect(fixed).toEqual([
+      { op: "update", table: "note_items", id: "a", values: { body: "A!", sort_order: 0 } },
+      expect.objectContaining({ id: "n1", values: expect.objectContaining({ sort_order: null }) }),
+    ]);
+    applyOps(c, "user", "notes:2", fixed, T + 3);
+    expect(card(c).lines.map((line) => line.body)).toEqual(["A!", "git stash pop", "new"]);
+    expect(blocked(raw)).toBeNull();
+  });
+
   it("editing the pinned line blocks it, and says where to edit", () => {
     const { c, blocked } = setup();
     const raw = captureCommit(

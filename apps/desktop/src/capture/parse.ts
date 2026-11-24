@@ -320,7 +320,7 @@ const LOAN_FORMS: [
 /** `lent 1000 abel`, `borrowed 500 from sara`, `abel paid back 400`, `paid back sara 500`. */
 /** Words that are never a person: days, fillers, things. */
 const NOT_A_PERSON =
-  /^(?:today|tonight|tomorrow|yesterday|now|later|next|this|last|week|month|morning|evening|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|the|a|an|my|your|his|her|their|it|him|them|me|you|loan|money|back|cash|some|all|shoes|book|books|item|items|order)$/i;
+  /^(?:today|tonight|tomorrow|yesterday|now|later|next|this|last|week|month|morning|evening|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|the|a|an|my|your|his|her|their|it|him|them|me|you|loan|money|back|cash|some|all|shoes|book|books|item|items|order|card|credit|bill|bills|rent|debt|mortgage|fee|fees|tax|taxes)$/i;
 
 function isPerson(name: string, options: ParseOptions): boolean {
   const words = name.trim().split(/\s+/);
@@ -1389,7 +1389,8 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   const unread = task.dueDate ? null : UNREAD_WHEN.exec(task.title);
   if (unread) return looseEnd(raw, `Couldn't read "${unread[0]}" · will ask tonight`);
   // "pay iddir every month 200": a month with no day can't repeat (F82). Say how.
-  if (!task.repeat && /\b(?:every month|monthly)\b/i.test(task.title))
+  // Only the repeat's place counts: "write monthly report" is a task.
+  if (!task.repeat && !task.dueDate && MONTH_WITH_NO_DAY.test(task.title))
     return looseEnd(
       raw,
       `Say which day, as in “monthly ${Number(logicalDate(nowMs).slice(8))}” · will ask tonight`,
@@ -1405,6 +1406,10 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   }
   return withArea({ kind: "inbox", body: plain }, area);
 }
+
+/** `every month` or `monthly` ending a line, alone or before an amount. */
+const MONTH_WITH_NO_DAY =
+  /\s(?:every\s+month|monthly)(?:\s+(?:etb\s*)?\d[\d,]*(?:\.\d{1,2})?k?(?:\s?(?:etb|birr|br))?)?$/i;
 
 /** A line that only says when: the capture box asks for the what and keeps the line. */
 const NO_TITLE: Stuck = { kind: "inbox", body: "", why: "Type what to do" };

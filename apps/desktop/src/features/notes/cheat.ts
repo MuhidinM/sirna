@@ -157,10 +157,9 @@ export function cardText(card: Card): string {
 /**
  * The writes that turn a card into `text`: line i updates row i, new lines are
  * inserted, missing lines deleted (soft, so undo can bring them back). A kept
- * line gets its position, so the order sticks. A line you didn't change that
- * is already in its place isn't written (reg2-7): a save that only adds a
- * line leaves a pinned line as the capture made it, so the pin can still be
- * undone.
+ * line gets its position, so the order sticks. A line you didn't change isn't
+ * written when it already sits in its place (reg2-7): a pinned line with no
+ * position stays as the capture made it, so the pin can still be undone.
  */
 export function editOps(card: Card, text: string, newId: () => string): Op[] {
   const next = text
@@ -174,10 +173,22 @@ export function editOps(card: Card, text: string, newId: () => string): Op[] {
   const kept = card.lines.slice(0, next.length);
   const untouched = kept.every((line, index) => line.body === next[index]);
   const lastOrder = card.lines[card.lines.length - 1]?.sort_order;
+  // Unchanged pins with no position at the end of the card stay last without
+  // one (lines with a position come first), and so do new lines after them.
+  let tail = next.length;
+  let tailHasPin = false;
+  while (tail > 0) {
+    const existing = card.lines[tail - 1];
+    if (existing && (existing.body !== next[tail - 1] || existing.sort_order !== null)) break;
+    if (existing) tailHasPin = true;
+    tail -= 1;
+  }
+  if (!tailHasPin) tail = next.length;
   next.forEach((body, index) => {
     const existing = card.lines[index];
     if (existing) {
-      if (untouched || (existing.body === body && existing.sort_order === index)) return;
+      if (untouched || index >= tail) return;
+      if (existing.body === body && existing.sort_order === index) return;
       ops.push({
         op: "update",
         table: "note_items",
@@ -195,7 +206,7 @@ export function editOps(card: Card, text: string, newId: () => string): Op[] {
           body,
           area_id: card.key === "" ? null : card.key,
           sort_order:
-            untouched && lastOrder === null
+            (untouched && lastOrder === null) || index >= tail
               ? null
               : Math.max(index, untouched && typeof lastOrder === "number" ? lastOrder + 1 : 0),
           origin: "notes",
