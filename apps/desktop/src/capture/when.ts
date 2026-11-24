@@ -339,6 +339,8 @@ export function readWhen(
       const minute = Number(m[2]);
       if (hour === undefined || minute > 59) return false;
       minutes = hour * 60 + minute;
+      // "tonight at 8:30" is 20:30; "08:30" is the 24-hour clock and stays.
+      bareHour = !m[3] && !/^0\d/.test(m[1] ?? "");
       return true;
     });
   if (minutes === undefined) {
@@ -354,6 +356,7 @@ export function readWhen(
         const minute = Number(minuteText);
         if (hour === undefined || minute > 59) return false;
         minutes = hour * 60 + minute;
+        bareHour = !ampm;
         return true;
       },
     );
@@ -562,7 +565,11 @@ export function readWhen(
   // "tomorrow 9", "fri 4", "tomorrow 9 call abel": a bare hour right after the day.
   if (date && dayAt !== undefined && minutes === undefined && !past) {
     const hour = DAY_HOUR.exec(rest.slice(dayAt));
-    const read = hour ? readHour(Number(hour[1]), undefined, style) : undefined;
+    // With words after the hour, only a day that opens the line: "tomorrow 9
+    // call abel" is a time, "buy eggs tomorrow 12 pieces" is a count.
+    const opens = rest.slice(0, dayAt).trim() === "";
+    const ends = hour ? rest.slice(dayAt + hour[0].length).trim() === "" : false;
+    const read = hour && (opens || ends) ? readHour(Number(hour[1]), undefined, style) : undefined;
     if (hour && read !== undefined) {
       minutes = read * 60;
       rest = rest.slice(0, dayAt) + " " + rest.slice(dayAt + hour[0].length);

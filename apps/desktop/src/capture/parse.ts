@@ -1184,7 +1184,9 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
     // #174). "call @cbo about the loan" keeps its words.
     const paying =
       /@[\p{L}\p{N}_-]+\s*$/u.test(raw) ||
-      /\d\s+@[\p{L}\p{N}_-]+(?=\s|$)|(?:^|\s)@[\p{L}\p{N}_-]+\s+\d/u.test(raw);
+      /\d\s+@[\p{L}\p{N}_-]+(?=\s|$)|(?:^|\s)@[\p{L}\p{N}_-]+\s+\d+(?!\s*(?:times?|x|hours?|hrs?|h|mins?|minutes?|days?|weeks?)\b)/u.test(
+        raw,
+      );
     if (!isMoney(whole)) return parsed.kind === "task" && paying ? parsed : whole;
     parsed = {
       ...whole,

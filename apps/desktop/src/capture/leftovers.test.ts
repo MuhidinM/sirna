@@ -103,3 +103,28 @@ describe("the @account never stays in the title (#174)", () => {
     });
   });
 });
+
+describe("review of #174: nearby lines", () => {
+  it("'tonight at 8:30' is 20:30, '08:30' stays the 24-hour clock", () => {
+    expect(read("call mom tonight at 8:30")).toMatchObject({
+      dueAt: localToEpoch("2026-11-24", 20 * 60 + 30),
+    });
+    expect(read("call mom tonight at 08:30")).toMatchObject({
+      dueAt: localToEpoch("2026-11-24", 8 * 60 + 30),
+    });
+  });
+
+  it("a count after a day mid-line is not a time", () => {
+    const parsed = read("buy eggs tomorrow 12 pieces");
+    expect(parsed).toMatchObject({
+      kind: "task",
+      title: "buy eggs 12 pieces",
+      dueDate: "2026-11-25",
+    });
+    expect(parsed).not.toHaveProperty("dueAt", expect.any(Number));
+  });
+
+  it("an @account before a count keeps its words", () => {
+    expect(read("call @cbo 2 times")).toMatchObject({ kind: "task", title: "call @cbo 2 times" });
+  });
+});
