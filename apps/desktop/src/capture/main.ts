@@ -59,6 +59,10 @@ let moneyContext: Pick<
   ParseOptions,
   "categories" | "learned" | "jobs" | "accounts" | "loanPeople" | "areas" | "rates"
 > = {};
+/** Today's blocks, so `gym done` and `skipped gym` record one (plan §3.5). */
+let todayBlocks: NonNullable<ParseOptions["blocks"]> = [];
+const TODAY_BLOCKS_SQL = `SELECT id, title FROM day_blocks
+  WHERE logical_date = ? AND deleted_at IS NULL AND kind != 'rest' ORDER BY start_at`;
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
@@ -100,6 +104,12 @@ function loadContext() {
   ])
     .then(([row]) => {
       if (row && JSON.parse(row.value_json) === "ethiopian") clockStyle = "ethiopian";
+    })
+    .catch(() => undefined);
+
+  void query<{ id: string; title: string }>(TODAY_BLOCKS_SQL, [logicalDate(systemClock.now())])
+    .then((rows) => {
+      todayBlocks = rows;
     })
     .catch(() => undefined);
 
@@ -175,7 +185,13 @@ function refresh() {
   const nowMs = systemClock.now();
   options = text
     ? readings(
-        parseCapture(text, { nowMs, clockStyle, goals: goalNames, ...moneyContext }),
+        parseCapture(text, {
+          nowMs,
+          clockStyle,
+          goals: goalNames,
+          blocks: todayBlocks,
+          ...moneyContext,
+        }),
         text,
         nowMs,
       )
@@ -234,7 +250,13 @@ form.addEventListener("submit", (event) => {
   const nowMs = systemClock.now();
   const parsed =
     options[picked] ??
-    parseCapture(rawText, { nowMs, clockStyle, goals: goalNames, ...moneyContext });
+    parseCapture(rawText, {
+      nowMs,
+      clockStyle,
+      goals: goalNames,
+      blocks: todayBlocks,
+      ...moneyContext,
+    });
   const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
   input.disabled = true;
   busy = true;

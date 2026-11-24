@@ -32,12 +32,12 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
     tables
 }
 
-/// A capture may only add tasks, notes and money. Anything else (updates,
-/// deletes, settings) goes through db_tx, which the capture window can't call.
+/// A capture may only add tasks, notes and money, and tick or skip a block
+/// (`gym done`, plan §3.5: its status and nothing else). Anything else
+/// (deletes, settings) goes through db_tx, which the capture window can't call.
 pub fn capture_ops_allowed(ops: &[Op]) -> bool {
-    ops.iter().all(|op| {
-        matches!(op, Op::Insert { table, .. }
-        if matches!(
+    ops.iter().all(|op| match op {
+        Op::Insert { table, .. } => matches!(
             table.as_str(),
             "task_items"
                 | "note_items"
@@ -45,9 +45,26 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
                 | "money_loans"
                 | "project_items"
                 | "savings_entries"
-        ))
+        ),
+        Op::Update { table, values, .. } => {
+            table == "day_blocks"
+                && !values.is_empty()
+                && values.iter().all(|(key, value)| {
+                    key == "status" && matches!(value.as_str(), Some("done" | "skipped"))
+                })
+        }
+        _ => false,
     })
 }
+
+/// What a capture's undo or fix can change, for `data-changed`.
+pub const CAPTURE_TABLES: [&str; 5] = [
+    "core_raw_items",
+    "task_items",
+    "note_items",
+    "money_txns",
+    "day_blocks",
+];
 
 /// Stores the raw line and its records inside an open transaction.
 fn store_capture(
@@ -124,15 +141,7 @@ pub fn capture_replace(
         txn.commit().map_err(|error| error.to_string())?;
         new_id
     };
-    emit_changed(
-        &app,
-        vec![
-            "core_raw_items".into(),
-            "task_items".into(),
-            "note_items".into(),
-            "money_txns".into(),
-        ],
-    );
+    emit_changed(&app, CAPTURE_TABLES.map(String::from).to_vec());
     Ok(new_id)
 }
 
@@ -334,15 +343,7 @@ pub fn capture_undo(raw_id: i64, app: AppHandle, db: State<'_, Db>) -> Result<us
         txn.commit().map_err(|error| error.to_string())?;
         undone
     };
-    emit_changed(
-        &app,
-        vec![
-            "core_raw_items".into(),
-            "task_items".into(),
-            "note_items".into(),
-            "money_txns".into(),
-        ],
-    );
+    emit_changed(&app, CAPTURE_TABLES.map(String::from).to_vec());
     Ok(undone)
 }
 
@@ -399,6 +400,20 @@ mod tests {
             id: "x".into(),
             values: Map::new()
         }]));
+        // `gym done`: a block's status, and nothing else about it.
+        let block = |key: &str, value: &str| {
+            let mut values = Map::new();
+            values.insert(key.into(), value.into());
+            Op::Update {
+                table: "day_blocks".into(),
+                id: "b".into(),
+                values,
+            }
+        };
+        assert!(capture_ops_allowed(&[block("status", "done")]));
+        assert!(capture_ops_allowed(&[block("status", "skipped")]));
+        assert!(!capture_ops_allowed(&[block("status", "planned")]));
+        assert!(!capture_ops_allowed(&[block("title", "x")]));
     }
 
     #[test]

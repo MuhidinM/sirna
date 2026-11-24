@@ -58,6 +58,31 @@ function setup(extra: Partial<ParseOptions> = {}) {
 const all = (db: Db, sql: string, ...params: (string | number)[]) =>
   db.prepare(sql).all(...params) as Record<string, string | number | null>[];
 
+describe("a bare account word at the end (F118)", () => {
+  it("names the account and leaves the description", () => {
+    const { save } = setup();
+    const rent = save("paid rent 8000 cash");
+    expect(rent.parsed).toMatchObject({ kind: "expense", description: "rent", account: "cash" });
+    const lunch = save("lunch 300 telebirr");
+    expect(lunch.parsed).toMatchObject({
+      kind: "expense",
+      description: "lunch",
+      account: "telebirr",
+    });
+    expect(lunch.echo).toBe("300 ETB · Food · telebirr");
+  });
+
+  it("names the account on a loan too, and leaves a lone word alone", () => {
+    const { save } = setup();
+    expect(save("lent abel 500 telebirr").parsed).toMatchObject({
+      kind: "loan",
+      person: "abel",
+      account: "telebirr",
+    });
+    expect(save("lunch 300").parsed).toMatchObject({ description: "lunch", account: "cash" });
+  });
+});
+
 describe("an entry's currency is its account's", () => {
   it("puts a dollar amount with no @account in the first dollar account", () => {
     const { save } = setup();

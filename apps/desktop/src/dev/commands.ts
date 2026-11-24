@@ -128,20 +128,32 @@ export function dbTx(
 
 // --- Captures (commands.rs, db.rs) ------------------------------------------------
 
-/** capture_ops_allowed: a capture may only insert tasks, notes, money and ideas. */
+/**
+ * capture_ops_allowed: a capture may only insert tasks, notes, money and
+ * ideas, and set a block's status to done or skipped (`gym done`).
+ */
 export function captureOpsAllowed(ops: readonly Op[]): boolean {
-  return ops.every(
-    (op) =>
-      op.op === "insert" &&
-      [
+  return ops.every((op) => {
+    if (op.op === "insert")
+      return [
         "task_items",
         "note_items",
         "money_txns",
         "money_loans",
         "project_items",
         "savings_entries",
-      ].includes(op.table),
-  );
+      ].includes(op.table);
+    if (op.op === "update" && op.table === "day_blocks") {
+      const entries = Object.entries(op.values);
+      return (
+        entries.length > 0 &&
+        entries.every(
+          ([key, value]) => key === "status" && (value === "done" || value === "skipped"),
+        )
+      );
+    }
+    return false;
+  });
 }
 
 function checkCapture(rawText: string, ops: readonly Op[]) {
@@ -212,7 +224,7 @@ export function captureCommit(conn: Conn, args: CaptureArgs, now: number): Done<
   return { result: rawId, changed: [...tablesOf(ops), "core_raw_items"] };
 }
 
-const CAPTURE_TABLES = ["core_raw_items", "task_items", "note_items", "money_txns"];
+const CAPTURE_TABLES = ["core_raw_items", "task_items", "note_items", "money_txns", "day_blocks"];
 
 export function captureReplace(
   conn: Conn,

@@ -168,3 +168,42 @@ describe("the echo for an estimated task", () => {
     );
   });
 });
+
+describe("a habit block by name (F54, plan §3.5)", () => {
+  const blocks = [
+    { id: "b-gym", title: "Gym" },
+    { id: "b-quran", title: "Quran" },
+    { id: "b-email", title: "Check email" },
+  ];
+  const read = (text: string) => parseCapture(text, { nowMs, blocks });
+
+  it("ticks or skips one of today's blocks", () => {
+    expect(read("gym done")).toEqual({
+      kind: "block",
+      blockId: "b-gym",
+      title: "Gym",
+      status: "done",
+    });
+    expect(read("skipped gym")).toMatchObject({ blockId: "b-gym", status: "skipped" });
+    expect(read("Skip the gym today")).toMatchObject({ blockId: "b-gym", status: "skipped" });
+    expect(read("quran ✓")).toMatchObject({ blockId: "b-quran", status: "done" });
+    expect(read("did gym")).toMatchObject({ blockId: "b-gym", status: "done" });
+    expect(read("email done")).toMatchObject({ blockId: "b-email", status: "done" });
+  });
+
+  it("leaves lines that name no block as they were", () => {
+    expect(read("report done").kind).toBe("inbox");
+    expect(read("n: gym done").kind).toBe("note");
+    expect(parseCapture("gym done", { nowMs }).kind).toBe("inbox");
+    expect(read("lunch 120").kind).toBe("expense");
+  });
+
+  it("writes only the block's status, and echoes it", () => {
+    const done = read("gym done");
+    expect(toOps(done, { nowMs, newId: () => "x" })).toEqual([
+      { op: "update", table: "day_blocks", id: "b-gym", values: { status: "done" } },
+    ]);
+    expect(echo(done, nowMs)).toBe("Gym ✓");
+    expect(echo(read("skipped gym"), nowMs)).toBe("Gym skipped");
+  });
+});
