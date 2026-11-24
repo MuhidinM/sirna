@@ -14,9 +14,10 @@ import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
 import { matchGoal } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
-import { affordState, echo as echoLine, ideaInput, toOps } from "./ops";
+import { affordState, balanceNote, echo as echoLine, ideaInput, toOps } from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
 import { RATES_SQL, readRates } from "../features/money/currency";
+import { type AccountRow, ACCOUNTS_SQL, balanceOf } from "../features/money/accounts";
 import { affordAnswer } from "../features/money/affordLoad";
 import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
@@ -59,6 +60,8 @@ let moneyContext: Pick<
   ParseOptions,
   "categories" | "learned" | "jobs" | "accounts" | "loanPeople" | "areas" | "rates"
 > = {};
+/** Each account's balance (null until typed), so `1200 @wise` past Wise's dollars is flagged. */
+let accountBalances: Record<string, number | null> = {};
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
@@ -117,16 +120,7 @@ function loadContext() {
     query<{ id: string; name: string }>(
       "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
     ),
-    query<{
-      id: string;
-      name: string;
-      kind: string;
-      pays_in: number;
-      currency: string;
-      is_savings: number;
-    }>(
-      "SELECT id, name, kind, pays_in, currency, is_savings FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
-    ),
+    query<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL),
     query<LoanEvent & Record<string, string | number | null>>(LOANS_SQL),
     // Areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3).
     query<{ id: string; name: string }>(
@@ -143,18 +137,12 @@ function loadContext() {
       { id: string; name: string; kind: "expense" | "income" }[],
       { id: string; category_id: string }[],
       { id: string; name: string }[],
-      {
-        id: string;
-        name: string;
-        kind: string;
-        pays_in: number;
-        currency: string;
-        is_savings: number;
-      }[],
+      AccountRow[],
       (LoanEvent & Record<string, string | number | null>)[],
       { id: string; name: string }[],
       { value_json: string }[],
     ];
+    accountBalances = Object.fromEntries(accounts.map((row) => [row.id, balanceOf(row)]));
     moneyContext = {
       areas,
       categories,
@@ -216,7 +204,8 @@ function showChip() {
     return;
   }
   const hint = options.length > 1 ? "  ·  Tab: change" : "";
-  output.textContent = `${editing ? "Fix · " : ""}${echoLine(current, systemClock.now())}${hint}`;
+  const note = balanceNote(current, accountBalances, moneyContext.rates ?? {});
+  output.textContent = `${editing ? "Fix · " : ""}${echoLine(current, systemClock.now())}${note}${hint}`;
 }
 
 function finish(message: string, ms = ECHO_MS) {
@@ -237,6 +226,11 @@ form.addEventListener("submit", (event) => {
   const parsed =
     options[picked] ??
     parseCapture(rawText, { nowMs, clockStyle, goals: goalNames, ...moneyContext });
+  // "idea:" or "#jobhunt" alone: nothing to save, so say what's missing and keep the box open.
+  if (parsed.kind === "inbox" && parsed.body === "" && parsed.why) {
+    output.textContent = parsed.why;
+    return;
+  }
   const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
   input.disabled = true;
   busy = true;

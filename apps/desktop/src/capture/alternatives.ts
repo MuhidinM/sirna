@@ -18,6 +18,8 @@ export function readings(parsed: Parsed, raw: string, nowMs: number): Parsed[] {
 
   const options: Parsed[] = [parsed];
   if (parsed.kind === "search" || parsed.kind === "away" || parsed.kind === "focus") return options;
+  // "idea:" with nothing after it: nothing to read another way.
+  if (parsed.kind === "inbox" && parsed.body === "") return options;
 
   const title =
     parsed.kind === "task" ? parsed.title : "description" in parsed ? parsed.description : text;
@@ -28,7 +30,9 @@ export function readings(parsed: Parsed, raw: string, nowMs: number): Parsed[] {
     const amount = formatAmount(parsed.amount, "").trim();
     options.push(withArea({ kind: "task", title: `${parsed.description} ${amount}`.trim() }));
   }
-  if (parsed.kind !== "task") options.push(withArea({ kind: "task", title }));
+  // An expense already offered its task, amount kept: a second one would look the same.
+  if (parsed.kind !== "task" && parsed.kind !== "expense")
+    options.push(withArea({ kind: "task", title }));
   if (parsed.kind !== "idea") options.push(withArea(readIdea(text, nowMs)));
   if (parsed.kind !== "note") options.push(withArea({ kind: "note", body: text }));
   if (parsed.kind !== "cheat") options.push(withArea({ kind: "cheat", body: text }));

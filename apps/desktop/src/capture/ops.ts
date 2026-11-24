@@ -1,9 +1,10 @@
 /** Turns a parsed capture into database ops and a one-line echo (plan §3.5). */
 import { type Op } from "../kernel/db";
-import { logicalDate } from "../kernel/dates";
+import { localDate, logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber } from "../kernel/money";
 import { placeIdea, type Placement } from "../features/projects/idea";
 import { transferOps } from "../features/money/accounts";
+import { fromEtb, type Rates } from "../features/money/currency";
 import { ruleText } from "../features/money/regulars";
 import { loanEchoText, loanOps } from "../features/money/loans";
 import { moveOps, transferSavingOps } from "../features/savings/savings";
@@ -380,6 +381,26 @@ export function affordState(answer: string): AffordState | undefined {
 }
 
 /** The short confirmation shown in the capture box. */
+/**
+ * `groceries 1200 @wise` with $300 in Wise: the number went in as dollars,
+ * more than the account holds, so the chip says so and what 1,200 birr would
+ * be. Only a hint: the line still saves as typed.
+ */
+export function balanceNote(
+  parsed: Parsed,
+  balances: Record<string, number | null>,
+  rates: Rates,
+): string {
+  if (parsed.kind !== "expense" || !parsed.bare || !parsed.account || !parsed.currency) return "";
+  const balance = balances[parsed.account];
+  if (balance === null || balance === undefined || parsed.amount <= balance) return "";
+  const held = ` · only ${formatAmount(balance, parsed.currency)} there`;
+  const birr = fromEtb(parsed.amount, parsed.currency, rates);
+  return birr === null
+    ? held
+    : `${held}; ${formatNumber(parsed.amount)} birr would be ≈ ${formatAmount(birr, parsed.currency)}`;
+}
+
 export function echo(
   parsed: Parsed,
   nowMs: number,
@@ -402,14 +423,24 @@ export function echo(
             : parsed.plannedWindow
               ? ` ${parsed.plannedWindow}`
               : "";
-      const when = parsed.dueDate
-        ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
-        : parsed.estimateMin
-          ? " · planned into free time"
-          : " · Someday";
+      // "tonight" typed after midnight is the calendar evening: say Tonight, not Tomorrow.
+      const tonight =
+        parsed.plannedWindow === "evening" &&
+        parsed.dueAt === undefined &&
+        parsed.dueDate === localDate(nowMs) &&
+        parsed.dueDate !== logicalDate(nowMs);
+      const when = tonight
+        ? " · Tonight"
+        : parsed.dueDate
+          ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
+          : parsed.estimateMin
+            ? " · planned into free time"
+            : " · Someday";
       const size =
         parsed.estimateMin && parsed.dueAt === undefined
-          ? ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
+          ? parsed.estimateMin < 60
+            ? ` · ~${parsed.estimateMin} min`
+            : ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
           : "";
       const repeat = parsed.repeat ? ` · ${ruleText(parsed.repeat)}` : "";
       return `Task${when}${repeat}${size}${area}`;
