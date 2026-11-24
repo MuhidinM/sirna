@@ -335,6 +335,7 @@ form.addEventListener("submit", (event) => {
         unclaimed: context.unclaimed,
         unset: context.unset,
         ...(context.transferGoal ? { transferGoal: context.transferGoal } : {}),
+        ...(context.waiting ? { waiting: context.waiting } : {}),
         ...(placement ? { idea: placement } : {}),
         ...(goal !== undefined ? { savingGoal: goal } : {}),
       });

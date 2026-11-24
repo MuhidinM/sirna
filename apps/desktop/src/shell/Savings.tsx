@@ -21,7 +21,6 @@ import {
   addGoalOps,
   assignOps,
   checkBringBack,
-  claimOps,
   GOAL_HELD_SQL,
   type GoalHeld,
   giveOps,
@@ -55,6 +54,7 @@ import {
   WAITING_SQL,
   waitingForNewGoal,
   waitingSplit,
+  type WaitingEntry,
   writeOffOps,
 } from "../features/savings/savings";
 import { IconPencil, IconPlus } from "./icons";
@@ -269,6 +269,7 @@ function GoalCard({
   accounts,
   goalHeld,
   free,
+  waiting,
 }: {
   goal: GoalRow;
   /** The other goals, so an edit can't reuse a name. */
@@ -279,6 +280,8 @@ function GoalCard({
   goalHeld: { goal_id: string; account: string; minor: number }[];
   /** What each savings account holds that no goal has (ETB worth, by id). */
   free: Record<string, number>;
+  /** Savings waiting for a goal: part of `free`, given first (reg0-2). */
+  waiting: WaitingEntry[];
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -331,7 +334,7 @@ function GoalCard({
       const now = systemClock.now();
       transact(
         "user",
-        claimOps(goal.id, savings.id, worth, now, logicalDate(now), ulid()),
+        giveOps(goal.id, savings.id, worth, waiting, now, logicalDate(now), ulid),
         `savings:${goal.id}`,
       )
         .then(() => {
@@ -776,9 +779,7 @@ function Unclaimed({
 /** Savings goals with their plants, and a garden of finished ones (plan §3.13). */
 export function Savings() {
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
-  const waiting = useLiveQuery<{ id: string; amount_minor: number; account: string | null }>(
-    WAITING_SQL,
-  );
+  const waiting = useLiveQuery<WaitingEntry & Record<string, string | number | null>>(WAITING_SQL);
   const heldBy = useLiveQuery<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL);
   const goalHeld = useLiveQuery<{ goal_id: string; account: string; minor: number }>(GOAL_HELD_SQL);
   const accounts = useMoneyAccounts();
@@ -904,6 +905,7 @@ export function Savings() {
             accounts={accounts}
             goalHeld={goalHeld.rows}
             free={Object.fromEntries(free.map((row) => [row.account.id, row.minor]))}
+            waiting={waiting.rows}
           />
         ))}
       </ul>

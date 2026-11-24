@@ -133,10 +133,9 @@ import {
   type GoalRow,
   GOALS_SQL,
   transferGoal,
+  transferPartsOps,
   transferSaving,
-  transferSavingOps,
   UNASSIGNED_SQL,
-  UNHELD,
 } from "../features/savings/savings";
 import {
   addCategoryOps,
@@ -2909,7 +2908,11 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
           rates,
         });
         // Out of savings, only a goal holding it there pays, a finished one first (F32, F33).
-        const pays = saving && transferGoal(goals.rows, saving, goalHeld.rows);
+        if (saving && saving.minor < 0 && (goals.loading || goalHeld.loading)) {
+          setNote("Still loading what your goals hold. Try again in a moment.");
+          return;
+        }
+        const parts = saving ? transferGoal(goals.rows, saving, goalHeld.rows) : [];
         void transact(
           "user",
           [
@@ -2923,14 +2926,14 @@ function TransferForm({ accounts, today }: { accounts: AccountRow[]; today: stri
               ids: [ulid(), ulid()],
               transferId,
             }),
-            ...transferSavingOps({
+            ...transferPartsOps({
               saving,
-              goalId: pays?.goalId ?? null,
+              parts,
               transferId,
               nowMs,
               date: today,
-              id: ulid(),
-              origin: pays?.unheld ? UNHELD : "transfer",
+              newId: ulid,
+              origin: "transfer",
             }),
           ],
           "transfer",

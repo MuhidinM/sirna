@@ -11,11 +11,12 @@ import { loanEchoText, loanOps, named } from "../features/money/loans";
 import {
   checkTakeOut,
   checkTakeOutFrom,
-  claimOps,
+  giveOps,
   moveOps,
   takeOutOps,
-  transferSavingOps,
-  UNHELD,
+  type TransferPart,
+  transferPartsOps,
+  type WaitingEntry,
 } from "../features/savings/savings";
 import {
   type LoanItem,
@@ -57,14 +58,13 @@ export interface OpsContext {
   unclaimed?: Record<string, number>;
   /** Savings accounts with no balance set yet (by id). */
   unset?: string[];
+  /** Savings waiting for a goal: a saving of money already there takes them first. */
+  waiting?: WaitingEntry[];
   /**
-   * The goal a transfer into or out of a savings account goes to, and the
-   * saving it counts (0: no goal had the money there). See transferGoal.
+   * Where a transfer into or out of a savings account goes: the goal (or
+   * goals) charged, and any part no goal had. See transferGoal.
    */
-  transferGoal?: (saving: { account: string; minor: number }) => {
-    goalId: string | null;
-    unheld: boolean;
-  };
+  transferGoal?: (saving: { account: string; minor: number }) => TransferPart[];
 }
 
 /**
@@ -212,20 +212,23 @@ function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
   }).map((op) => withoutBirr(op));
   if (!parsed.saving) return ops;
   // Out of savings, only a goal holding it there is charged (F32, F33).
-  const target = context.transferGoal?.(parsed.saving) ?? {
-    goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
-    unheld: false,
-  };
+  const parts = context.transferGoal?.(parsed.saving) ?? [
+    {
+      goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
+      minor: parsed.saving.minor,
+      unheld: false,
+    },
+  ];
   return [
     ...ops,
-    ...transferSavingOps({
+    ...transferPartsOps({
       saving: parsed.saving,
-      goalId: target.goalId,
+      parts,
       transferId,
       nowMs,
       date: parsed.date,
-      id: newId(),
-      origin: target.unheld ? UNHELD : "capture",
+      newId,
+      origin: "capture",
     }),
   ];
 }
@@ -288,7 +291,8 @@ function savingOps(
     if (worth > free)
       throw `${parsed.savings.name} holds ${formatAmount(free)} no goal has yet: save that much or less`;
     if (!goal) throw "Name the goal: saved $50 laptop";
-    return claimOps(goal.id, parsed.savings.id, worth, nowMs, date, newId());
+    // Savings waiting there for a goal go first, so none is counted twice (reg0-2).
+    return giveOps(goal.id, parsed.savings.id, worth, context.waiting ?? [], nowMs, date, newId);
   }
   if (parsed.spend && parsed.savings) {
     const currency = parsed.currency ?? "ETB";

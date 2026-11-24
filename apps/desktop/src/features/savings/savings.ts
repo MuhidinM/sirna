@@ -88,7 +88,8 @@ export const UNASSIGNED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor,
  * Waiting entries one by one: money put aside (+) waits for a goal to go to;
  * money taken out (−) waits for the goal it came from (F33).
  */
-export const WAITING_SQL = `SELECT id, amount_minor, account FROM savings_entries
+export const WAITING_SQL = `SELECT id, amount_minor, account, occurred_at, local_date, origin,
+    note, transfer_id FROM savings_entries
   WHERE goal_id IS NULL AND deleted_at IS NULL AND ${NOT_UNHELD} ORDER BY occurred_at, id`;
 
 /** What each goal holds in each savings account (ETB worth of its entries there). */
@@ -475,28 +476,85 @@ export function savingGoal(
   return onlyActiveGoal(goals);
 }
 
+/** One goal's share of a transfer's saving (see transferGoal). */
+export interface TransferPart {
+  /** null: waits for "Give it to…", or (unheld) no goal had it. */
+  goalId: string | null;
+  minor: Santim;
+  unheld: boolean;
+}
+
 /**
- * The goal a transfer's saving goes to (F32, F33, reg0-1). Money going in:
- * the only active goal, else it waits. Money coming out of a savings account
+ * Where a transfer's saving goes (F32, F33, reg0-1). Money going in: the
+ * only active goal, else it waits. Money coming out of a savings account
  * comes from a goal that holds that much in that account, a finished one
  * first; with two such goals it waits for "Give it to…". When no goal holds
- * it there, it was money no goal had (or the account's balance is unknown):
- * no goal is charged and the entry is `unheld` (see UNHELD).
+ * all of it there, each goal holding some there gives what it holds (a
+ * finished one first, then the one holding most), so no goal keeps counting
+ * money that left; only the rest, money no goal had, is `unheld` (see UNHELD).
  */
 export function transferGoal(
   goals: Pick<GoalRow, "id" | "status" | "saved_minor">[],
   saving: { account: string; minor: Santim },
   held: GoalHeld[],
-): { goalId: string | null; unheld: boolean } {
-  if (saving.minor >= 0) return { goalId: onlyActiveGoal(goals), unheld: false };
+): TransferPart[] {
+  if (saving.minor >= 0)
+    return [{ goalId: onlyActiveGoal(goals), minor: saving.minor, unheld: false }];
   const need = -saving.minor;
-  const holders = goals.filter(
-    (goal) => goal.saved_minor >= need && heldIn(held, goal.id, saving.account) >= need,
+  const holds = (goal: Pick<GoalRow, "id" | "saved_minor">) =>
+    Math.min(Math.max(0, goal.saved_minor), heldIn(held, goal.id, saving.account));
+  const holders = goals.filter((goal) => holds(goal) >= need);
+  if (holders.length > 0) {
+    const ripe = holders.filter((goal) => goal.status === "done");
+    const pick = ripe.length > 0 ? ripe : holders;
+    const goalId = pick.length === 1 ? (pick[0]?.id ?? null) : null;
+    return [{ goalId, minor: saving.minor, unheld: false }];
+  }
+  const parts: TransferPart[] = [];
+  let left = need;
+  const some = goals
+    .filter((goal) => holds(goal) > 0)
+    .sort(
+      (a, b) => Number(b.status === "done") - Number(a.status === "done") || holds(b) - holds(a),
+    );
+  for (const goal of some) {
+    if (left === 0) break;
+    const take = Math.min(holds(goal), left);
+    parts.push({ goalId: goal.id, minor: -take, unheld: false });
+    left -= take;
+  }
+  if (left > 0) parts.push({ goalId: null, minor: -left, unheld: true });
+  return parts;
+}
+
+/**
+ * The saving entries a transfer writes, one per part of transferGoal, all
+ * tied to the transfer; `origin` for the parts a goal or "Give it to…" gets.
+ */
+export function transferPartsOps(input: {
+  saving: { account: string; minor: Santim } | null;
+  parts: TransferPart[];
+  transferId: string;
+  nowMs: number;
+  date: string;
+  newId: () => string;
+  origin: string;
+}): Op[] {
+  const { saving } = input;
+  if (!saving) return [];
+  return input.parts.flatMap((part) =>
+    part.minor === 0
+      ? []
+      : transferSavingOps({
+          saving: { account: saving.account, minor: part.minor },
+          goalId: part.goalId,
+          transferId: input.transferId,
+          nowMs: input.nowMs,
+          date: input.date,
+          id: input.newId(),
+          origin: part.unheld ? UNHELD : input.origin,
+        }),
   );
-  const ripe = holders.filter((goal) => goal.status === "done");
-  const pick = ripe.length > 0 ? ripe : holders;
-  if (pick.length === 0) return { goalId: null, unheld: true };
-  return { goalId: pick.length === 1 ? (pick[0]?.id ?? null) : null, unheld: false };
 }
 
 /** Put aside and take out need two accounts in the same currency. */
@@ -576,25 +634,29 @@ export function savingsSyncOps(input: {
     if (minor === null || minor === 0) continue;
     // A saving brought back keeps its goal while that goal is still there.
     const kept = half.entry_goal && goals.has(half.entry_goal) ? half.entry_goal : null;
-    const target = input.held
-      ? transferGoal(input.goals, { account: half.account, minor }, input.held)
-      : { goalId: savingGoal(input.goals, minor), unheld: false };
-    const goalId = half.entry_id ? (kept ?? target.goalId) : target.goalId;
-    const values = {
-      goal_id: goalId,
-      occurred_at: half.occurred_at,
-      local_date: half.local_date,
-      amount_minor: minor,
-      note: null,
-      origin: target.unheld && !goalId ? UNHELD : "transfer",
-      account: half.account,
-      transfer_id: half.transfer_id,
-    };
-    ops.push(
-      half.entry_id
-        ? { op: "upsert", table: "savings_entries", id: half.entry_id, values }
-        : { op: "insert", table: "savings_entries", id: input.newId(), values },
-    );
+    const parts: TransferPart[] =
+      half.entry_id && kept
+        ? [{ goalId: kept, minor, unheld: false }]
+        : input.held
+          ? transferGoal(input.goals, { account: half.account, minor }, input.held)
+          : [{ goalId: savingGoal(input.goals, minor), minor, unheld: false }];
+    parts.forEach((part, index) => {
+      const values = {
+        goal_id: part.goalId,
+        occurred_at: half.occurred_at,
+        local_date: half.local_date,
+        amount_minor: part.minor,
+        note: null,
+        origin: part.unheld ? UNHELD : "transfer",
+        account: half.account,
+        transfer_id: half.transfer_id,
+      };
+      ops.push(
+        index === 0 && half.entry_id
+          ? { op: "upsert", table: "savings_entries", id: half.entry_id, values }
+          : { op: "insert", table: "savings_entries", id: input.newId(), values },
+      );
+    });
   }
   return ops;
 }
@@ -916,10 +978,9 @@ export interface SavingsContext {
   /** The goal money taken out of savings with no goal named comes from. */
   ripe: (minor: number) => string | null;
   /** The goal a transfer into or out of a savings account goes to (see transferGoal). */
-  transferGoal?: (saving: { account: string; minor: Santim }) => {
-    goalId: string | null;
-    unheld: boolean;
-  };
+  transferGoal?: (saving: { account: string; minor: Santim }) => TransferPart[];
+  /** Savings waiting for a goal, with their account: Give hands them over first. */
+  waiting?: WaitingEntry[];
   /** Savings accounts with no balance set yet (by id): what they hold is unknown. */
   unset: string[];
 }
@@ -939,11 +1000,12 @@ export function goalFinder(context: SavingsContext) {
 }
 
 export async function loadSavingsContext(read: Query, rates: Rates): Promise<SavingsContext> {
-  const [goals, goalHeld, accounts, held] = await Promise.all([
+  const [goals, goalHeld, accounts, held, waiting] = await Promise.all([
     read<GoalRow & Record<string, string | number | null>>(GOALS_SQL),
     read<GoalHeld & Record<string, string | number>>(GOAL_HELD_SQL),
     read<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL),
     read<{ account: string; minor: number }>(HELD_BY_ACCOUNT_SQL),
+    read<WaitingEntry & Record<string, string | number | null>>(WAITING_SQL),
   ]);
   const savings = accounts.filter(isSavingsAccount);
   return {
@@ -958,6 +1020,7 @@ export async function loadSavingsContext(read: Query, rates: Rates): Promise<Sav
     ),
     ripe: (minor) => savingGoal(goals, minor),
     transferGoal: (saving) => transferGoal(goals, saving, goalHeld),
+    waiting,
     unset: savings.filter((account) => account.opening_date === null).map((row) => row.id),
   };
 }
@@ -989,29 +1052,71 @@ export function claimOps(
   ];
 }
 
+/** A saving waiting for a goal (WAITING_SQL); the rest is there to split it. */
+export interface WaitingEntry {
+  id: string;
+  amount_minor: number;
+  account?: string | null;
+  occurred_at?: number;
+  local_date?: string;
+  origin?: string | null;
+  note?: string | null;
+  transfer_id?: string | null;
+}
+
 /**
  * Gives `minor` of what a savings account holds that no goal has (reg0-2):
- * savings made into it with no goal go first, whole and oldest first, as the
- * real saving they were; the rest is a claim of money already there.
+ * savings made into it with no goal go first, oldest first, as the real
+ * saving they were; one bigger than what is left is split, the given part
+ * to the goal and the rest still waiting, so no waiting saving is left
+ * behind to be given twice. Only what is given beyond the waiting savings
+ * is a claim of money already there.
  */
 export function giveOps(
   goalId: string,
   account: string,
   minor: Santim,
-  waiting: { id: string; amount_minor: number }[],
+  waiting: WaitingEntry[],
   nowMs: number,
   localDate: string,
   newId: () => string,
 ): Op[] {
   let left = minor;
-  const taken: string[] = [];
+  const ops: Op[] = [];
   for (const entry of waiting) {
-    if (entry.amount_minor <= 0 || entry.amount_minor > left) continue;
-    taken.push(entry.id);
-    left -= entry.amount_minor;
+    if (left === 0) break;
+    if (entry.amount_minor <= 0) continue;
+    if (entry.account !== undefined && entry.account !== account) continue;
+    if (entry.amount_minor <= left) {
+      ops.push(...assignOps([entry.id], goalId));
+      left -= entry.amount_minor;
+      continue;
+    }
+    // Split: the goal gets what is left to give, the rest waits as it was.
+    ops.push(
+      {
+        op: "update",
+        table: "savings_entries",
+        id: entry.id,
+        values: { goal_id: goalId, amount_minor: left },
+      },
+      {
+        op: "insert",
+        table: "savings_entries",
+        id: newId(),
+        values: {
+          goal_id: null,
+          occurred_at: entry.occurred_at ?? nowMs,
+          local_date: entry.local_date ?? localDate,
+          amount_minor: entry.amount_minor - left,
+          note: entry.note ?? null,
+          origin: entry.origin ?? null,
+          account: entry.account ?? account,
+          transfer_id: entry.transfer_id ?? null,
+        },
+      },
+    );
+    left = 0;
   }
-  return [
-    ...assignOps(taken, goalId),
-    ...(left > 0 ? claimOps(goalId, account, left, nowMs, localDate, newId()) : []),
-  ];
+  return [...ops, ...(left > 0 ? claimOps(goalId, account, left, nowMs, localDate, newId()) : [])];
 }
