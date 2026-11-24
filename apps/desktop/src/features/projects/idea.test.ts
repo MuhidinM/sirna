@@ -53,7 +53,7 @@ describe("placing an idea", () => {
       weekly_min: 350,
     });
     expect(placed.echo).toBe(
-      "learn Go · starts Mon 16 Nov · 5 h 50/week · ~2 weeks · Ctrl+Z undoes",
+      "learn Go · starts Mon 16 Nov · 5 h 50 min/week · ~2 weeks · Ctrl+Z undoes",
     );
   });
 
@@ -71,7 +71,7 @@ describe("placing an idea", () => {
       verdict: "good",
       weeklyNeeded: 315,
     });
-    expect(placed.echo).toBe("Good · 5 h 15/week · load 50% → 82% · see Projects");
+    expect(placed.echo).toBe("Good · 5 h 15 min/week · load 50% → 82% · see Projects");
   });
 
   it("waits for an estimate", () => {

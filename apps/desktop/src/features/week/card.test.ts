@@ -170,7 +170,7 @@ describe("one change", () => {
     const change = oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: true });
     // 80 min done × 1.25 = 100 → rounded up to 120 (2 h), under the 4 h target.
     expect(change?.text).toBe(
-      "Coding skills got 1 h 20 of 4 h this week. Set its target to 2 h so it's one you can meet?",
+      "Coding skills got 1 h 20 min of 4 h this week. Set its target to 2 h so it's one you can meet?",
     );
     expect(
       oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: false }),

@@ -61,7 +61,7 @@ describe("insights from seeded sessions", () => {
       at("2026-11-09", 9),
     ];
     expect(insights(sessions).find((i) => i.key === "weekday")?.text).toBe(
-      "Tuesdays are your strongest day (2 h 30 of focus on average).",
+      "Tuesdays are your strongest day (2 h 30 min of focus on average).",
     );
   });
 

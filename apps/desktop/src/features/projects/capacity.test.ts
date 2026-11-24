@@ -139,7 +139,7 @@ describe("ideas with a date", () => {
 
   it("explains itself with the numbers", () => {
     expect(checkWithDate(1800, "2026-12-20", TODAY, WEEK, twoActive).reasons).toEqual([
-      "Needs 5 h 15 a week for 5.5 weeks.",
+      "Needs 5 h 15 min a week for 5.5 weeks.",
       "Your load would go 70% → 101%.",
       "2 active projects already; this would be number 3.",
     ]);
@@ -319,7 +319,9 @@ describe("helpers", () => {
   });
 
   it("labels hours", () => {
-    expect(hoursLabel(315)).toBe("5 h 15");
+    // The same format as Today and Routine (F96).
+    expect(hoursLabel(315)).toBe("5 h 15 min");
+    expect(hoursLabel(1118.4)).toBe("18 h 38 min");
     expect(hoursLabel(120)).toBe("2 h");
     expect(hoursLabel(45)).toBe("45 min");
   });

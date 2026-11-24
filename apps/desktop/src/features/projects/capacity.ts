@@ -11,6 +11,7 @@
  */
 import { showDate } from "../../kernel/dates";
 import { shiftDate, weekStart } from "../plan/dayplan";
+import { formatMinutes } from "../plan/now";
 
 export const BUFFER = 0.2;
 export const LOAD_LIMIT = 0.85;
@@ -227,11 +228,9 @@ export function verdictOf(after: number, limitBroken: boolean): Verdict {
 
 const percent = (value: number) => (Number.isFinite(value) ? `${Math.round(value * 100)}%` : "∞");
 
+/** "18 h 38 min": the app's one hour format (formatMinutes), rounded to the minute. */
 export function hoursLabel(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const rest = Math.round(minutes % 60);
-  if (!hours) return `${rest} min`;
-  return rest ? `${hours} h ${String(rest).padStart(2, "0")}` : `${hours} h`;
+  return formatMinutes(Math.round(minutes));
 }
 
 /**

@@ -33,6 +33,7 @@ import {
   WEEKDAYS,
 } from "../features/plan/editor";
 import { isoWeekday, replanDay, shiftDate } from "../features/plan/dayplan";
+import { formatMinutes } from "../features/plan/now";
 import { toHhmm, type Weekday } from "../features/plan/routine";
 import { IconArrowUpRight, IconClock, IconPlus } from "./icons";
 import { EventCard, PanelHead, type Tone, toneOf } from "./kit";
@@ -43,7 +44,8 @@ import { useLiveQuery } from "./useLiveQuery";
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const dayName = (day: number) => WEEKDAYS.find(([d]) => d === day)?.[1] ?? "";
 const kindLabel = (kind: string) => BLOCK_KINDS.find((k) => k.kind === kind)?.label ?? kind;
-const hours = (minutes: number) => Math.round((minutes / 60) * 100) / 100;
+/** "2 h 18 min", as on Today: one hour format across the app. */
+const hours = (minutes: number) => formatMinutes(Math.round(minutes));
 
 /**
  * Saves routine changes, then plans today again (and tomorrow, if the night
@@ -304,7 +306,7 @@ function RoutineTab({
               >
                 <header className="rt-col-head">
                   <span className="rt-day">{name}</span>
-                  <span className="rt-col-hours">{hours(minutes)} h</span>
+                  <span className="rt-col-hours">{hours(minutes)}</span>
                 </header>
                 {onDay.length === 0 ? (
                   <p className="rt-none">Nothing on {name} yet.</p>
@@ -540,7 +542,7 @@ function AreasTab({
                 className={form?.editing?.id === area.id ? "rt-card editing" : "rt-card"}
               >
                 <span className="rt-card-meta">
-                  {hours(area.weekly_target_min)} h/week · {blocks} block
+                  {hours(area.weekly_target_min)}/week · {blocks} block
                   {blocks === 1 ? "" : "s"}
                   {area.capped ? " · capped" : ""}
                   {area.protected ? " · protected" : ""}
@@ -624,13 +626,13 @@ function AreaTargets({
                   <span className="grow">{area.name}</span>
                   <span className="rt-target-num">
                     {hours(planned)}
-                    <span className="soft"> / {hours(target)} h</span>
+                    <span className="soft"> / {hours(target)}</span>
                   </span>
                 </div>
                 <Bar
                   value={target > 0 ? planned / target : 0}
                   area={area.color as AreaColor}
-                  label={`${area.name}: ${hours(planned)} of ${hours(target)} hours in the routine`}
+                  label={`${area.name}: ${hours(planned)} of ${hours(target)} in the routine`}
                 />
               </li>
             );
@@ -638,7 +640,7 @@ function AreaTargets({
         </ul>
       )}
       <p className="hint rt-target-foot">
-        {hours(total)} h of blocks a week. Grow and Admin areas also fill free slots.
+        {hours(total)} of blocks a week. Grow and Admin areas also fill free slots.
       </p>
     </section>
   );
@@ -762,7 +764,7 @@ export function Week({ onStartOver }: { onStartOver: () => void }) {
                 My week
                 {loaded && (
                   <span className="soft">
-                    , {rows.rows.length} blocks · {hours(total)} h
+                    , {rows.rows.length} blocks · {hours(total)}
                   </span>
                 )}
               </h1>
