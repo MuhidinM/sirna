@@ -5,7 +5,7 @@
  */
 import { logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber, parseAmount, type Santim } from "../kernel/money";
-import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
+import { type ClockStyle, type DayWindow, localToEpoch, MONTH_NAMES, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
 import { transferAmounts } from "../features/money/accounts";
@@ -823,8 +823,14 @@ const isPiece = (parsed: Parsed): parsed is MoneyPiece =>
   parsed.kind === "transfer" ||
   parsed.kind === "saving";
 
-/** Where a several-item line splits: a comma not inside a number (`rent 1,200`). */
-const COMMA_SPLIT = /\s*,\s*(?=\D)/;
+/**
+ * Where a several-item line splits: a comma not inside a number (`rent 1,200`)
+ * and not the one in a date (`dec 25, 2027`, #174).
+ */
+const COMMA_SPLIT = new RegExp(
+  String.raw`\s*,(?!(?<=\b(?:${MONTH_NAMES})\s+\d{1,2}(?:st|nd|rd|th)?,)\s*\d{4}(?!\d))\s*(?=\D)`,
+  "i",
+);
 const LOAN_VERB = /^\s*(lent|loaned|borrowed)\s/i;
 
 /**
@@ -1174,9 +1180,12 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   if (!isMoney(parsed) && account) {
     const whole = parseOne(raw, options);
     // "pay rent 5000 @cbo": a task, titled without the account that ends it
-    // (reg2-10). "call @cbo about the loan" keeps its words.
-    const last = /@[\p{L}\p{N}_-]+\s*$/u.test(raw);
-    if (!isMoney(whole)) return parsed.kind === "task" && last ? parsed : whole;
+    // (reg2-10), or next to its amount ("pay electricity 800 @cash tomorrow",
+    // #174). "call @cbo about the loan" keeps its words.
+    const paying =
+      /@[\p{L}\p{N}_-]+\s*$/u.test(raw) ||
+      /\d\s+@[\p{L}\p{N}_-]+(?=\s|$)|(?:^|\s)@[\p{L}\p{N}_-]+\s+\d/u.test(raw);
+    if (!isMoney(whole)) return parsed.kind === "task" && paying ? parsed : whole;
     parsed = {
       ...whole,
       description:
