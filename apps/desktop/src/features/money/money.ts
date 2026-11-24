@@ -213,8 +213,10 @@ export function monthSummary(input: {
   for (const txn of input.txns) {
     // Moving money between your own accounts is neither in nor out.
     if (txn.transfer_id) continue;
-    const amount = convert(conversion, rates, txn.amount_minor, txn.currency);
-    if (amount === null) continue;
+    // Converted as a size, then signed: what is left out reads "$20", not "-$20" (F108).
+    const size = convert(conversion, rates, Math.abs(txn.amount_minor), txn.currency);
+    if (size === null) continue;
+    const amount = txn.amount_minor < 0 ? -size : size;
     if (amount > 0) {
       income += amount;
       // By job when the capture named one (`got 18k job a`), else by category.

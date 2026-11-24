@@ -198,7 +198,8 @@ describe("totals in ETB", () => {
     expect(summary.in).toBe(1_800_000 + 6_625_000);
     expect(summary.out).toBe(0);
     expect(summary.notes?.approx).toBe(true);
-    expect(summary.notes?.missing).toMatch(/€20/);
+    // Money left out is an amount, not "-€20" (F108).
+    expect(summary.notes?.missing).toMatch(/^Left out: €20 /);
     // ETB alone: the same numbers as before, nothing to say.
     const plain = monthSummary({
       txns: [row({ amount_minor: 1_800_000 })],
