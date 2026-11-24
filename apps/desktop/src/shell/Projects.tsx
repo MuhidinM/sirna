@@ -32,6 +32,7 @@ import {
   hoursLabel,
   LOAD_LIMIT,
   loadWeek,
+  MAX_ACTIVE,
   noRoomText,
   type PlannedProject,
   type Query,
@@ -77,8 +78,9 @@ function useWeek(): WeekState | null {
   const [state, setState] = useState<WeekState | null>(null);
   useEffect(() => {
     const load = () => {
-      loadWeek(query as Query)
-        .then((loaded) => setState({ ...loaded, today: logicalDate(systemClock.now()) }))
+      const today = logicalDate(systemClock.now());
+      loadWeek(query as Query, today)
+        .then((loaded) => setState({ ...loaded, today }))
         .catch(() => setState(null));
     };
     load();
@@ -198,8 +200,11 @@ function ProjectForm({
       saving.values,
       dropCards,
     );
+    const active = (plan?.projects ?? []).filter(
+      (p) => p.status === "active" && p.id !== selfId,
+    ).length;
     const note = saving.held
-      ? "Two projects are already active, so this one waits in Next up."
+      ? `${active} active projects already (limit ${MAX_ACTIVE}), so this one waits in Next up.`
       : undefined;
     transact("user", ops, `project:${projectId}`)
       .then(() => onSaved(projectId, note))

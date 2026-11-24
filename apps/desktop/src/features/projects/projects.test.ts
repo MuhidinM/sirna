@@ -225,6 +225,10 @@ describe("projects", () => {
       {},
       true,
     );
+    // Dropped as statusOps drops a card, so a restored one comes back in To do.
+    expect(close.ops.find((op) => op.table === "task_items")).toMatchObject({
+      values: { status: "dropped", started_at: null, completed_at: null },
+    });
     apply(db, close.ops);
     project = first(projects(db));
     expect(project.status).toBe("dropped");

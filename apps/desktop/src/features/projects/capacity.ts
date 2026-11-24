@@ -109,8 +109,19 @@ export interface PlannedProject {
   weekly_min: number | null;
   start_date: string | null;
   forecast_finish: string | null;
-  /** The end when there is no forecast yet (a project saved without an estimate). */
+  /**
+   * The end when there is no forecast yet (a project saved without an
+   * estimate). loadWeek keeps it only while it is still ahead: an active
+   * project past its deadline is still running.
+   */
   deadline?: string | null;
+}
+
+/** Drops a deadline that ended before this week, so an overdue project keeps counting. */
+export function liveDeadline(project: PlannedProject, today: string): PlannedProject {
+  return project.deadline && project.deadline < weekStart(today)
+    ? { ...project, deadline: null }
+    : project;
 }
 
 /**
@@ -393,6 +404,7 @@ export function windowOf(rows: { key: string; value_json: string | null }[]): Wi
 
 export async function loadWeek(
   query: Query,
+  today: string,
 ): Promise<{ week: WeekModel; projects: PlannedProject[] }> {
   const [blocks, settings, areas, projects] = await Promise.all([
     query<TemplateBlock & Row>(WEEK_BLOCKS_SQL),
@@ -405,6 +417,6 @@ export async function loadWeek(
       capacity: weeklyCapacity(blocks, windowOf(settings)),
       areaCommitted: areaCommitted(areas, blocks),
     },
-    projects,
+    projects: projects.map((project) => liveDeadline(project, today)),
   };
 }

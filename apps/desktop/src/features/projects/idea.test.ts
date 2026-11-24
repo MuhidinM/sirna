@@ -93,7 +93,7 @@ describe("placing an idea", () => {
     const full = { ...PLAN, week: { capacity: 1000, areaCommitted: 900 } };
     const placed = placeIdea(ideaInput(idea("idea: learn Go ~10h")), full);
     expect(placed.values.status).toBe("idea");
-    expect(placed.echo).toBe("Idea · no room in the next year at 85% load");
+    expect(placed.echo).toBe("Idea · saved · no room in the next year at 85% load");
   });
 
   it("still saves when the week can't be read", () => {
@@ -220,7 +220,7 @@ describe("user-test fixes", () => {
     const placed = placeIdea(ideaInput(idea("idea: learn Go ~2h")), { ...PLAN, projects });
     expect(placed.values.status).toBe("idea");
     expect(placed.echo).toBe(
-      "Idea · saved · 3 projects run all year (limit 2); finish, pause or date one to place it",
+      "Idea · saved · 3 projects run every week for the next year (limit 2); finish, pause or date one to place it",
     );
     const undated = { id: "me", estimate_min: 120, deadline: null };
     expect(ideaAction(undated, { kind: "place" }, { ...PLAN, projects })).toEqual({

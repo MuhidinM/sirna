@@ -239,7 +239,13 @@ export function projectOps(
 
   if (dropOpenCards && closesProject(draft, existing))
     for (const task of openTasks)
-      ops.push({ op: "update", table: "task_items", id: task.id, values: { status: "dropped" } });
+      // As statusOps (tasks/list.ts) drops a card: a restored card goes back to To do.
+      ops.push({
+        op: "update",
+        table: "task_items",
+        id: task.id,
+        values: { status: "dropped", completed_at: null, started_at: null },
+      });
 
   let nextStepId: string | null = existing?.next_step_task_id ?? null;
   const currentStep = existing ? openStep(existing) : "";

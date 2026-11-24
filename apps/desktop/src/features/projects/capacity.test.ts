@@ -9,6 +9,7 @@ import {
   firstMonday,
   freeMinutes,
   hoursLabel,
+  liveDeadline,
   noRoom,
   noRoomText,
   type PlannedProject,
@@ -18,6 +19,7 @@ import {
   weeklyCapacity,
   weekLoad,
 } from "./capacity";
+import { weekStart } from "../plan/dayplan";
 
 /**
  * Hand-checked fixtures (T-034). One week model throughout: 1000 minutes of
@@ -367,7 +369,7 @@ describe("loading the week from the database", () => {
     const query: Query = (sql, params = []) =>
       Promise.resolve(db.prepare(sql).all(...params) as never);
     const { loadWeek } = await import("./capacity");
-    const { week, projects } = await loadWeek(query);
+    const { week, projects } = await loadWeek(query, TODAY);
     expect(week.capacity).toBe(2148);
     expect(projects).toEqual([]);
   });
@@ -409,6 +411,23 @@ describe("user-test fixes", () => {
     // Two dated projects only block the finder until the earlier one ends.
     const both = [dated, project({ id: "e", deadline: "2026-12-17" })];
     expect(findSlot(600, TODAY, WEEK, both)).toMatchObject({ start: "2026-12-07" });
+  });
+
+  it("F43: an overdue project with no forecast still counts", () => {
+    const today = "2026-11-24";
+    const overdue = project({ id: "m", weekly_min: 300, deadline: "2026-11-20" });
+    const live = liveDeadline(overdue, today);
+    expect(live.deadline).toBeNull();
+    expect(weekLoad(WEEK, [live], weekStart(today)).activeProjects).toBe(1);
+    expect(weekLoad(WEEK, [live], "2027-03-01").activeProjects).toBe(1);
+    // A deadline in this week or later is kept as the end.
+    expect(liveDeadline(project({ id: "w", deadline: "2026-11-23" }), today).deadline).toBe(
+      "2026-11-23",
+    );
+    // With it and one more running, a new project can't start.
+    const two = [live, project({ id: "a" })];
+    expect(findSlot(600, today, WEEK, two)).toBeNull();
+    expect(noRoom(today, WEEK, two).kind).toBe("limit");
   });
 
   it("F43: names the project limit, not load, when the limit blocks every week", () => {

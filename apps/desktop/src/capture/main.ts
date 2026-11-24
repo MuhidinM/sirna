@@ -246,7 +246,7 @@ form.addEventListener("submit", (event) => {
   const placed: Promise<Placement | undefined> =
     parsed.kind === "idea"
       ? Promise.all([
-          loadWeek(query as Query),
+          loadWeek(query as Query, logicalDate(nowMs)),
           query<{ id: string }>("SELECT id FROM area_items WHERE deleted_at IS NULL"),
           // A fix replaces the old capture: its project mustn't count against the new one.
           fixing

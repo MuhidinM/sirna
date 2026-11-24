@@ -72,7 +72,7 @@ function useNextWeek(monday: string): NextWeek | null {
   const [next, setNext] = useState<NextWeek | null>(null);
   useEffect(() => {
     const load = () => {
-      loadWeek(query as Query)
+      loadWeek(query as Query, logicalDate(systemClock.now()))
         .then(({ week, projects }) => setNext(nextWeek(week, projects, monday)))
         .catch(() => setNext(null));
     };

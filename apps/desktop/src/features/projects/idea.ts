@@ -125,8 +125,8 @@ export function placeIdea(idea: IdeaInput, plan: WeekPlan | null): Placement {
       values,
       echo:
         reason.kind === "limit"
-          ? `Idea · saved · ${reason.running} projects run all year (limit ${MAX_ACTIVE}); finish, pause or date one to place it`
-          : "Idea · no room in the next year at 85% load",
+          ? `Idea · saved · ${reason.running} projects run every week for the next year (limit ${MAX_ACTIVE}); finish, pause or date one to place it`
+          : "Idea · saved · no room in the next year at 85% load",
     };
   }
   values.status = placedStatus(slot, plan);
