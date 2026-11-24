@@ -5,6 +5,7 @@
 import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
 import { localToEpoch } from "../../capture/when";
+import { type PlannedProject, runsIn } from "../projects/capacity";
 import {
   type AreaInput,
   cut,
@@ -45,6 +46,11 @@ export const PLAN_EXISTS_SQL =
 export const TEMPLATE_SQL = `
   SELECT start_min, duration_min, kind, area_id, title FROM routine_blocks
   WHERE weekday = ? AND active = 1 AND deleted_at IS NULL ORDER BY start_min`;
+
+/** Projects with weekly hours and an area: their hours add to the area's target (plan §3.8). */
+export const PROJECT_TIME_SQL = `
+  SELECT id, status, weekly_min, start_date, forecast_finish, area_id FROM project_items
+  WHERE deleted_at IS NULL AND area_id IS NOT NULL AND weekly_min > 0`;
 
 export const AREAS_SQL = `
   SELECT id, name, kind, weekly_target_min, capped, protected, priority_rank, active
@@ -272,6 +278,15 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       localToEpoch(date, DAY_START_MIN),
     ]),
   ]);
+  const projects = await query<PlannedProject & { area_id: string }>(PROJECT_TIME_SQL);
+  /** Weekly minutes of the projects running this week, per area. */
+  const projectMin = new Map<string, number>();
+  for (const project of projects)
+    if (runsIn(project, weekStart(date)))
+      projectMin.set(
+        project.area_id,
+        (projectMin.get(project.area_id) ?? 0) + (project.weekly_min ?? 0),
+      );
   const removed = await query<{ task_id: string }>(REMOVED_TASK_BLOCKS_SQL, [date]);
   const removedBlocks = await query<{
     start_at: number;
@@ -322,16 +337,21 @@ export async function loadPlanInput(query: Query, date: string): Promise<PlanInp
       kind: block.kind as PlanInput["template"][number]["kind"],
       title: block.title,
     })),
-    areas: areas.map((area): AreaInput => ({
-      id: area.id,
-      name: area.name,
-      kind: area.kind as AreaInput["kind"],
-      weeklyTargetMin: area.weekly_target_min,
-      capped: area.capped === 1,
-      protected: area.protected === 1,
-      priorityRank: area.priority_rank,
-      active: area.active === 1,
-    })),
+    // A running project's weekly hours are its area's time too, so the
+    // planner gives them slots (an area switched off still gets them).
+    areas: areas.map((area): AreaInput => {
+      const extra = projectMin.get(area.id) ?? 0;
+      return {
+        id: area.id,
+        name: area.name,
+        kind: area.kind as AreaInput["kind"],
+        weeklyTargetMin: area.weekly_target_min + extra,
+        capped: area.capped === 1,
+        protected: area.protected === 1,
+        priorityRank: area.priority_rank,
+        active: area.active === 1 || extra > 0,
+      };
+    }),
     doneThisWeekMin: Object.fromEntries(done.map((row) => [row.area_id, row.minutes])),
     tasks: tasks.flatMap((task) => {
       const planned = taskOnDay(task, date);

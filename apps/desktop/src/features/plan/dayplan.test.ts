@@ -248,6 +248,25 @@ describe("ensureDayPlan", () => {
     expect(input.doneThisWeekMin).toEqual({ quran: 30 });
   });
 
+  it("adds a running project's weekly hours to its area's target (F50)", async () => {
+    const h = harness();
+    h.db.exec(
+      `INSERT INTO project_items (id, title, area_id, weekly_min, start_date, forecast_finish, status, created_at, updated_at) VALUES
+       ('go', 'learn Go', 'coding', 600, '2026-11-09', '2026-11-15', 'active', 0, 0),
+       ('later', 'learn Rust', 'coding', 300, '2026-11-16', '2026-11-22', 'next_up', 0, 0),
+       ('idea', 'a game', 'experiments', 300, NULL, NULL, 'idea', 0, 0)`,
+    );
+    h.db.exec("UPDATE area_items SET active = 0 WHERE id = 'coding'");
+    const areas = (await loadPlanInput(h.query, "2026-11-11")).areas;
+    expect(areas.find((a) => a.id === "coding")).toMatchObject({
+      weeklyTargetMin: 240 + 600,
+      active: true,
+    });
+    expect(areas.find((a) => a.id === "experiments")?.weeklyTargetMin).toBe(180);
+    const nextWeek = (await loadPlanInput(h.query, "2026-11-17")).areas;
+    expect(nextWeek.find((a) => a.id === "coding")?.weeklyTargetMin).toBe(240 + 300);
+  });
+
   it("counts focus started for an area with no block, this week only (F21)", async () => {
     const h = harness();
     const tue = Date.parse("2026-11-10T19:00:00+03:00");
