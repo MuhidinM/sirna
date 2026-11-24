@@ -32,12 +32,12 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
     tables
 }
 
-/// A capture may only add tasks, notes and money. Anything else (updates,
-/// deletes, settings) goes through db_tx, which the capture window can't call.
+/// A capture may only add tasks, notes and money, and tick or skip a block
+/// (`gym done`, plan §3.5: its status and nothing else). Anything else
+/// (deletes, settings) goes through db_tx, which the capture window can't call.
 pub fn capture_ops_allowed(ops: &[Op]) -> bool {
-    ops.iter().all(|op| {
-        matches!(op, Op::Insert { table, .. }
-        if matches!(
+    ops.iter().all(|op| match op {
+        Op::Insert { table, .. } => matches!(
             table.as_str(),
             "task_items"
                 | "note_items"
@@ -45,9 +45,26 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
                 | "money_loans"
                 | "project_items"
                 | "savings_entries"
-        ))
+        ),
+        Op::Update { table, values, .. } => {
+            table == "day_blocks"
+                && !values.is_empty()
+                && values.iter().all(|(key, value)| {
+                    key == "status" && matches!(value.as_str(), Some("done" | "skipped"))
+                })
+        }
+        _ => false,
     })
 }
+
+/// What a capture's undo or fix can change, for `data-changed`.
+pub const CAPTURE_TABLES: [&str; 5] = [
+    "core_raw_items",
+    "task_items",
+    "note_items",
+    "money_txns",
+    "day_blocks",
+];
 
 /// Stores the raw line and its records inside an open transaction.
 fn store_capture(
@@ -124,15 +141,7 @@ pub fn capture_replace(
         txn.commit().map_err(|error| error.to_string())?;
         new_id
     };
-    emit_changed(
-        &app,
-        vec![
-            "core_raw_items".into(),
-            "task_items".into(),
-            "note_items".into(),
-            "money_txns".into(),
-        ],
-    );
+    emit_changed(&app, CAPTURE_TABLES.map(String::from).to_vec());
     Ok(new_id)
 }
 
@@ -152,6 +161,9 @@ fn replace_in(
     now: i64,
 ) -> Result<i64, String> {
     let old_context = format!("capture:{raw_id}");
+    if let Some(blocked) = undo_blocked(txn, raw_id, "fix")? {
+        return Err(blocked);
+    }
     let links = match captured_task(txn, &old_context)? {
         Some(old) => Some(task_links(txn, &old)?),
         None => None,
@@ -321,6 +333,77 @@ fn carry_task_links(links: &TaskLinks, ops: &[Op]) -> Vec<Op> {
     out
 }
 
+/// Shared with the capture bar (src/capture/fix.ts).
+const UNDO_BLOCKED_SQL: &str = include_str!("../../src/capture/queries/undo_blocked.sql");
+
+/// Why undoing or fixing a capture would throw something away, or None
+/// (F2, F65): a record you have changed since (ticked, edited, deleted), or an
+/// account it moved that you have checked since. The same words as
+/// `undoBlocked` in src/capture/fix.ts, which the capture bar checks first.
+pub(crate) fn undo_blocked(
+    conn: &rusqlite::Connection,
+    raw_id: i64,
+    verb: &str,
+) -> Result<Option<String>, String> {
+    let mut statement = conn
+        .prepare(UNDO_BLOCKED_SQL)
+        .map_err(|error| error.to_string())?;
+    let rows: Vec<(String, bool, bool, bool, Option<String>)> = statement
+        .query_map([format!("capture:{raw_id}")], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .and_then(Iterator::collect)
+        .map_err(|error| error.to_string())?;
+    let inserted: Vec<_> = rows.iter().filter(|row| row.1).collect();
+    if !inserted.is_empty() && inserted.iter().all(|row| row.2) {
+        return Ok(Some(format!("Nothing to {verb}: you've deleted it since.")));
+    }
+    if let Some((table, ..)) = rows.iter().find(|row| row.3) {
+        let text = match table.as_str() {
+            "project_items" => "You've changed this project since. Edit it on Projects.",
+            "task_items" => "You've changed this task since. Edit it on Plan > Tasks.",
+            "money_txns" => "You've changed this entry since. Edit it on Money.",
+            "money_loans" => "This loan has changed since. Edit it on Money > Lent and owed.",
+            "note_items" => "You've changed this note since. Edit it on Notes.",
+            "note_items:cheat" => "You've changed this line since. Edit it on Plan > Cheat sheets.",
+            "day_blocks" => "You've changed this block since. Edit it on Today.",
+            "savings_entries" => "You've changed this saving since. Edit it on Money.",
+            "core_settings" => "Away has changed since. Set it on Today.",
+            _ => "You've changed this since.",
+        };
+        return Ok(Some(text.to_string()));
+    }
+    if let Some(account) = rows.iter().find_map(|row| row.4.as_ref()) {
+        let action = if verb == "undo" { "Undo" } else { "Fix" };
+        return Ok(Some(format!(
+            "You checked {account} since. {action} it on Money > Ledger, then check {account} again."
+        )));
+    }
+    Ok(None)
+}
+
+/// Undoes a capture inside an open transaction and marks it ignored, unless
+/// that would throw away a later change (the capture bar and the tray).
+pub(crate) fn undo_capture_in(
+    txn: &rusqlite::Transaction<'_>,
+    raw_id: i64,
+    now: i64,
+) -> Result<usize, String> {
+    if let Some(blocked) = undo_blocked(txn, raw_id, "undo")? {
+        return Err(blocked);
+    }
+    let undone = tx::undo_context(txn, "user", &format!("capture:{raw_id}"), now)
+        .map_err(|error| error.to_string())?;
+    db::mark_ignored(txn, raw_id).map_err(|error| error.to_string())?;
+    Ok(undone)
+}
+
 /// Undoes everything a capture created or changed, and marks it ignored.
 #[tauri::command]
 pub fn capture_undo(raw_id: i64, app: AppHandle, db: State<'_, Db>) -> Result<usize, String> {
@@ -328,21 +411,11 @@ pub fn capture_undo(raw_id: i64, app: AppHandle, db: State<'_, Db>) -> Result<us
     let undone = {
         let mut conn = db.write.lock();
         let txn = conn.transaction().map_err(|error| error.to_string())?;
-        let undone = tx::undo_context(&txn, "user", &format!("capture:{raw_id}"), now)
-            .map_err(|error| error.to_string())?;
-        db::mark_ignored(&txn, raw_id).map_err(|error| error.to_string())?;
+        let undone = undo_capture_in(&txn, raw_id, now)?;
         txn.commit().map_err(|error| error.to_string())?;
         undone
     };
-    emit_changed(
-        &app,
-        vec![
-            "core_raw_items".into(),
-            "task_items".into(),
-            "note_items".into(),
-            "money_txns".into(),
-        ],
-    );
+    emit_changed(&app, CAPTURE_TABLES.map(String::from).to_vec());
     Ok(undone)
 }
 
@@ -371,8 +444,8 @@ fn is_read_query(sql: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{capture_ops_allowed, is_read_query};
-    use crate::tx::Op;
-    use serde_json::Map;
+    use crate::tx::{self, Op};
+    use serde_json::{Map, Value};
 
     #[test]
     fn captures_may_only_insert_tasks_notes_money_and_ideas() {
@@ -399,6 +472,20 @@ mod tests {
             id: "x".into(),
             values: Map::new()
         }]));
+        // `gym done`: a block's status, and nothing else about it.
+        let block = |key: &str, value: &str| {
+            let mut values = Map::new();
+            values.insert(key.into(), value.into());
+            Op::Update {
+                table: "day_blocks".into(),
+                id: "b".into(),
+                values,
+            }
+        };
+        assert!(capture_ops_allowed(&[block("status", "done")]));
+        assert!(capture_ops_allowed(&[block("status", "skipped")]));
+        assert!(!capture_ops_allowed(&[block("status", "planned")]));
+        assert!(!capture_ops_allowed(&[block("title", "x")]));
     }
 
     #[test]
@@ -510,14 +597,124 @@ mod tests {
     }
 
     #[test]
+    fn undo_and_fix_refuse_a_task_changed_since() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw = super::store_capture(&txn, "buy stamps", &task_op("t1", "buy stamps"), None, 1)
+            .unwrap();
+        assert_eq!(super::undo_blocked(&txn, raw, "undo").unwrap(), None);
+        let mut values = Map::new();
+        values.insert("status".into(), "done".into());
+        let tick = Op::Update {
+            table: "task_items".into(),
+            id: "t1".into(),
+            values,
+        };
+        tx::apply_ops(&txn, "user", Some("tray"), &[tick], 2).unwrap();
+        let error = super::undo_capture_in(&txn, raw, 3).unwrap_err();
+        assert_eq!(
+            error,
+            "You've changed this task since. Edit it on Plan > Tasks."
+        );
+        assert!(
+            super::replace_in(&txn, raw, "buy stamps 5pm", &task_op("t2", "x"), None, 3).is_err()
+        );
+        let live: Vec<(String, String)> = txn
+            .prepare("SELECT id, status FROM task_items WHERE deleted_at IS NULL")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(live, vec![("t1".to_string(), "done".to_string())]);
+    }
+
+    #[test]
+    fn undo_refuses_an_entry_deleted_or_checked_since() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let spend = |id: &str, account: &str, amount: i64, origin: Option<&str>| {
+            let mut values = Map::new();
+            values.insert("account".into(), account.into());
+            values.insert("occurred_at".into(), 1.into());
+            values.insert("local_date".into(), "2026-11-24".into());
+            values.insert("amount_minor".into(), amount.into());
+            values.insert("description".into(), id.into());
+            values.insert("origin".into(), origin.map_or(Value::Null, Value::from));
+            Op::Insert {
+                table: "money_txns".into(),
+                id: id.into(),
+                values,
+            }
+        };
+        let taxi = super::store_capture(
+            &txn,
+            "taxi 60",
+            &[spend("m1", "cash", -6000, None)],
+            None,
+            1,
+        )
+        .unwrap();
+        let delete = Op::Delete {
+            table: "money_txns".into(),
+            id: "m1".into(),
+        };
+        tx::apply_ops(&txn, "user", None, &[delete], 2).unwrap();
+        assert_eq!(
+            super::undo_blocked(&txn, taxi, "undo").unwrap().as_deref(),
+            Some("Nothing to undo: you've deleted it since.")
+        );
+        let moved = super::store_capture(
+            &txn,
+            "moved 120 cash to telebirr",
+            &[
+                spend("o", "cash", -12000, None),
+                spend("i", "telebirr", 12000, None),
+            ],
+            None,
+            3,
+        )
+        .unwrap();
+        tx::apply_ops(
+            &txn,
+            "user",
+            None,
+            &[spend("r", "cash", 635_000, Some("reconcile"))],
+            4,
+        )
+        .unwrap();
+        assert_eq!(
+            super::undo_capture_in(&txn, moved, 5).unwrap_err(),
+            "You checked Cash since. Undo it on Money > Ledger, then check Cash again."
+        );
+    }
+
+    #[test]
     fn fixing_a_fixed_capture_still_keeps_its_project_parent_and_steps() {
         let mut conn = capture_db();
         let txn = conn.transaction().unwrap();
         let raw =
             super::store_capture(&txn, "read ch 5", &task_op("t5", "read ch 5"), None, 1).unwrap();
+        // Put into a project and under a parent the way Plan > Tasks does it:
+        // a logged update. Links alone don't count as changing the task.
+        let mut links = Map::new();
+        links.insert("project_id".into(), "p1".into());
+        links.insert("parent_id".into(), "big".into());
+        links.insert("step_no".into(), 2.into());
+        crate::tx::apply_ops(
+            &txn,
+            "user",
+            None,
+            &[Op::Update {
+                table: "task_items".into(),
+                id: "t5".into(),
+                values: links,
+            }],
+            1,
+        )
+        .unwrap();
         txn.execute_batch(
-            "UPDATE task_items SET project_id = 'p1', parent_id = 'big', step_no = 2 WHERE id = 't5';
-             INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
+            "INSERT INTO task_items (id, title, parent_id, step_no, created_at, updated_at)
                VALUES ('s1', 'take notes', 't5', 1, 0, 0);",
         )
         .unwrap();
@@ -1011,18 +1208,29 @@ pub fn set_away(
     // Logged under the capture that asked for it: undoing or fixing that
     // capture (capture_undo, capture_replace, tray Undo) undoes away too.
     let context = raw_id.map_or_else(|| "away".to_string(), |id| format!("capture:{id}"));
-    write_away(&app, &db, &date, &context, now)?;
+    write_away(&app, &db, &date, &context, now, raw_id)?;
     Ok(date)
 }
 
-/// "I'm back" on Today.
+/// "I'm back" on Today, or `back` in the capture bar (`raw_id`): logged
+/// under that capture, so undoing or fixing it puts away back (F41).
 #[tauri::command]
-pub fn clear_away(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+pub fn clear_away(raw_id: Option<i64>, app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+    let context = raw_id.map_or_else(|| "away".to_string(), |id| format!("capture:{id}"));
     // An empty date is never later than today, so it means "not away".
-    write_away(&app, &db, "", "away", clock::now_ms())
+    write_away(&app, &db, "", &context, clock::now_ms(), raw_id)
 }
 
-fn write_away(app: &AppHandle, db: &Db, date: &str, context: &str, now: i64) -> Result<(), String> {
+/// Stores the return day. The capture line that asked for it, if any, is
+/// marked parsed: it made a record, so Ctrl+Z, Up and the tray find it (F38).
+fn write_away(
+    app: &AppHandle,
+    db: &Db,
+    date: &str,
+    context: &str,
+    now: i64,
+    raw_id: Option<i64>,
+) -> Result<(), String> {
     {
         let mut conn = db.write.lock();
         let txn = conn.transaction().map_err(|error| error.to_string())?;
@@ -1038,9 +1246,12 @@ fn write_away(app: &AppHandle, db: &Db, date: &str, context: &str, now: i64) -> 
         };
         tx::apply_ops(&txn, "user", Some(context), &[op], now)
             .map_err(|error| error.to_string())?;
+        if let Some(raw_id) = raw_id {
+            db::mark_parsed(&txn, raw_id, Some("away"), now).map_err(|error| error.to_string())?;
+        }
         txn.commit().map_err(|error| error.to_string())?;
     }
-    emit_changed(app, vec!["core_settings".into()]);
+    emit_changed(app, vec!["core_settings".into(), "core_raw_items".into()]);
     crate::tray::rebuild(app);
     Ok(())
 }

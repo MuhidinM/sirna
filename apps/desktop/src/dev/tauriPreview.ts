@@ -139,7 +139,7 @@ export async function install(): Promise<void> {
     capture_undo: command((a, time) => captureUndo(store.conn, a, time)),
     notes_undo: command((a, time) => notesUndo(store.conn, a, time)),
     set_away: command((a, time) => setAway(store.conn, a, time)),
-    clear_away: command((_a, time) => clearAway(store.conn, time)),
+    clear_away: command((a, time) => clearAway(store.conn, a, time)),
     hotkey_set: (a) =>
       store.write((_state, emit) => {
         const key = String(a.key ?? "").trim();

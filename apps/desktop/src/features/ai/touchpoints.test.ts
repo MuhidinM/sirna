@@ -35,7 +35,7 @@ describe("timing reasons", () => {
       verdict: "Good",
       estimateH: 30,
       deadline: "2026-12-20",
-      weeklyNeeded: "5 h 15",
+      weeklyNeeded: "5 h 15 min",
       loadBefore: 50,
       loadAfter: 82,
       activeProjects: ["Portfolio site"],

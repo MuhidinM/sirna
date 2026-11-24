@@ -11,6 +11,7 @@
  */
 import { showDate } from "../../kernel/dates";
 import { shiftDate, weekStart } from "../plan/dayplan";
+import { formatMinutes } from "../plan/now";
 
 export const BUFFER = 0.2;
 export const LOAD_LIMIT = 0.85;
@@ -105,19 +106,39 @@ export interface WeekModel {
 
 export interface PlannedProject {
   id: string;
+  /** Its name, for a message that says which projects are in the way. */
+  title?: string | null;
   status: string; // idea | next_up | active | paused | done | dropped
   weekly_min: number | null;
   start_date: string | null;
   forecast_finish: string | null;
+  /**
+   * The end when there is no forecast yet (a project saved without an
+   * estimate). loadWeek keeps it only while it is still ahead: an active
+   * project past its deadline is still running.
+   */
+  deadline?: string | null;
 }
 
-/** Whether a project takes time in the week starting `monday`. */
+/** Drops a deadline that ended before this week, so an overdue project keeps counting. */
+export function liveDeadline(project: PlannedProject, today: string): PlannedProject {
+  return project.deadline && project.deadline < weekStart(today)
+    ? { ...project, deadline: null }
+    : project;
+}
+
+/**
+ * Whether a project takes time in the week starting `monday`. It ends at its
+ * forecast finish, or at its deadline when it has no forecast; with neither it
+ * runs on.
+ */
 export function runsIn(project: PlannedProject, monday: string): boolean {
   if (project.status !== "active" && project.status !== "next_up") return false;
   if (project.status === "next_up" && !project.start_date) return false;
   const sunday = shiftDate(monday, 6);
   if (project.start_date && project.start_date > sunday) return false;
-  if (project.forecast_finish && project.forecast_finish < monday) return false;
+  const end = project.forecast_finish ?? project.deadline ?? null;
+  if (end && end < monday) return false;
   return true;
 }
 
@@ -205,6 +226,41 @@ export function findSlot(
   };
 }
 
+export interface NoRoom {
+  /** "limit": the 2-project limit is full every week; "load": 85% is. */
+  kind: "limit" | "load";
+  /** Projects running in the first week the finder looks at. */
+  running: number;
+  /** Their names (F43). */
+  names: string[];
+}
+
+/** Why findSlot found nothing, so the message names the real cause. */
+export function noRoom(today: string, week: WeekModel, projects: PlannedProject[]): NoRoom {
+  let monday = firstMonday(today);
+  const first = monday;
+  const running = weekLoad(week, projects, monday).activeProjects;
+  const names = projects
+    .filter((project) => runsIn(project, first) && project.title)
+    .map((project) => project.title as string);
+  for (let i = 0; i < HORIZON_WEEKS; i++, monday = shiftDate(monday, 7))
+    if (weekLoad(week, projects, monday).activeProjects < MAX_ACTIVE)
+      return { kind: "load", running, names };
+  return { kind: "limit", running, names };
+}
+
+/** " (Fix the car, Move flat)" naming the projects in the way, or nothing. */
+export function namesText(reason: NoRoom): string {
+  return reason.names.length > 0 ? ` (${reason.names.join(", ")})` : "";
+}
+
+/** The sentence for a project or idea the finder can't place. */
+export function noRoomText(reason: NoRoom): string {
+  return reason.kind === "limit"
+    ? `${reason.running} projects run every week for the next year${namesText(reason)}, and the limit is ${MAX_ACTIVE} at once. Finish, pause or give one a deadline to make room.`
+    : "No room in the next year at 85% load. Pause a project or lower a target.";
+}
+
 export type Verdict = "good" | "tight" | "too_much";
 
 export interface DateCheck {
@@ -227,11 +283,9 @@ export function verdictOf(after: number, limitBroken: boolean): Verdict {
 
 const percent = (value: number) => (Number.isFinite(value) ? `${Math.round(value * 100)}%` : "∞");
 
+/** "18 h 38 min": the app's one hour format (formatMinutes), rounded to the minute. */
 export function hoursLabel(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const rest = Math.round(minutes % 60);
-  if (!hours) return `${rest} min`;
-  return rest ? `${hours} h ${String(rest).padStart(2, "0")}` : `${hours} h`;
+  return formatMinutes(Math.round(minutes));
 }
 
 /**
@@ -282,7 +336,9 @@ export function checkWithDate(
       : `Your load would go ${percent(now.ratio)} → ${percent(after)} in the week of ${showDate(worst.monday, today)}.`,
   ];
   if (crowded)
-    reasons.push(`${MAX_ACTIVE} active projects already; this would be number ${mostActive + 1}.`);
+    reasons.push(
+      `${mostActive} active projects already (limit ${MAX_ACTIVE}); this would be number ${mostActive + 1}.`,
+    );
   return {
     verdict: verdictOf(after, crowded),
     weeksLeft,
@@ -337,8 +393,8 @@ export const WINDOW_SQL = `SELECT key, value_json FROM core_settings
   WHERE key IN ('day.wake', 'day.review', 'day.hard_stop')`;
 export const AREA_TARGETS_SQL = `SELECT id, weekly_target_min, active FROM area_items
   WHERE deleted_at IS NULL`;
-export const PLANNED_PROJECTS_SQL = `SELECT id, status, weekly_min, start_date, forecast_finish
-  FROM project_items WHERE deleted_at IS NULL`;
+export const PLANNED_PROJECTS_SQL = `SELECT id, title, status, weekly_min, start_date,
+  forecast_finish, deadline FROM project_items WHERE deleted_at IS NULL`;
 
 /** Defaults match the setup's (routine.ts DEFAULT_ANSWERS). */
 export function windowOf(rows: { key: string; value_json: string | null }[]): Window {
@@ -360,6 +416,7 @@ export function windowOf(rows: { key: string; value_json: string | null }[]): Wi
 
 export async function loadWeek(
   query: Query,
+  today: string,
 ): Promise<{ week: WeekModel; projects: PlannedProject[] }> {
   const [blocks, settings, areas, projects] = await Promise.all([
     query<TemplateBlock & Row>(WEEK_BLOCKS_SQL),
@@ -372,6 +429,6 @@ export async function loadWeek(
       capacity: weeklyCapacity(blocks, windowOf(settings)),
       areaCommitted: areaCommitted(areas, blocks),
     },
-    projects,
+    projects: projects.map((project) => liveDeadline(project, today)),
   };
 }

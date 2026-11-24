@@ -63,6 +63,8 @@ pub struct Session {
     pub extended: bool,
     /// Break length to use after this focus session.
     pub break_min: i64,
+    /// Distracted (+1) taps on this session; the card shows them.
+    pub distractions: u32,
 }
 
 impl Session {
@@ -163,8 +165,9 @@ impl Machine {
             Event::Pause => self.pause(now),
             Event::Resume => self.resume(now),
             Event::Stop => self.stop(now),
-            Event::Distracted => match &self.current {
+            Event::Distracted => match &mut self.current {
                 Some(session) if session.kind == Kind::Focus => {
+                    session.distractions += 1;
                     vec![Effect::AddDistraction {
                         id: session.id.clone(),
                     }]
@@ -208,6 +211,7 @@ impl Machine {
             title: context.title,
             extended: false,
             break_min: context.break_min.max(0),
+            distractions: 0,
         };
         effects.push(Effect::Save(session.clone()));
         self.current = Some(session);
@@ -265,6 +269,7 @@ impl Machine {
                     title: session.title.clone(),
                     extended: session.extended,
                     break_min: session.break_min,
+                    distractions: 0,
                 };
                 effects.push(Effect::Save(rest.clone()));
                 effects.push(Effect::BreakStarted {
@@ -312,15 +317,22 @@ impl Machine {
 
     fn stop(&mut self, now: i64) -> Vec<Effect> {
         match self.current.take() {
-            Some(session) => {
+            Some(mut session) => {
                 if session.kind == Kind::Focus {
                     self.last_focus_end = Some(now);
                 }
-                vec![Effect::Close {
+                let mut effects = Vec::new();
+                // An open pause is pause time, not focus: fold it in before closing.
+                if let Some(paused_at) = session.paused_at.take() {
+                    session.paused_ms += now - paused_at;
+                    effects.push(Effect::Save(session.clone()));
+                }
+                effects.push(Effect::Close {
                     id: session.id,
                     at: now,
                     outcome: Outcome::Stopped,
-                }]
+                });
+                effects
             }
             None => vec![],
         }
@@ -346,6 +358,7 @@ impl Machine {
             title: current.title.clone(),
             extended: true,
             break_min: current.break_min,
+            distractions: 0,
         };
         // The extra minutes don't count as another session in the row.
         self.in_row = self.in_row.saturating_sub(1);
@@ -375,6 +388,7 @@ pub struct Status {
     pub paused: bool,
     pub in_row: u32,
     pub block_id: Option<String>,
+    pub distractions: u32,
 }
 
 pub fn status(machine: &Machine, now: i64) -> Status {
@@ -387,6 +401,7 @@ pub fn status(machine: &Machine, now: i64) -> Status {
             paused: session.paused_at.is_some(),
             in_row: machine.in_row,
             block_id: session.block_id.clone(),
+            distractions: session.distractions,
         },
         None => Status {
             kind: None,
@@ -396,6 +411,7 @@ pub fn status(machine: &Machine, now: i64) -> Status {
             paused: false,
             in_row: machine.in_row,
             block_id: None,
+            distractions: 0,
         },
     }
 }
@@ -643,7 +659,8 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
         .query_row(
             "SELECT s.id, s.kind, s.started_at, s.planned_min, s.paused_at, s.paused_ms, s.block_id,
                     s.area_id, s.task_id, s.extended,
-                    COALESCE(f.intent_text, b.title, a.name, 'Focus'), COALESCE(a.break_min, 5)
+                    COALESCE(f.intent_text, b.title, a.name, 'Focus'), COALESCE(a.break_min, 5),
+                    s.distractions
              FROM focus_sessions AS s
              LEFT JOIN day_blocks AS b ON b.id = s.block_id
              LEFT JOIN area_items AS a ON a.id = s.area_id
@@ -670,6 +687,7 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
                     extended: row.get::<_, i64>(9)? == 1,
                     title: row.get(10)?,
                     break_min: row.get(11)?,
+                    distractions: row.get(12)?,
                 })
             },
         )
@@ -1228,6 +1246,41 @@ mod tests {
     }
 
     #[test]
+    fn stopping_while_paused_keeps_the_pause_out_of_focus_time() {
+        let mut m = Machine::default();
+        start(&mut m, T0, 1);
+        m.handle(Event::Pause, T0 + minutes(5));
+        let effects = m.handle(Event::Stop, T0 + minutes(50));
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::Save(s) if s.paused_ms == minutes(45) && s.paused_at.is_none()
+            )),
+            "{effects:?}"
+        );
+        assert_eq!(
+            effects.last(),
+            Some(&Effect::Close {
+                id: "s1".into(),
+                at: T0 + minutes(50),
+                outcome: Outcome::Stopped
+            })
+        );
+    }
+
+    #[test]
+    fn counts_distractions_on_the_session() {
+        let mut m = Machine::default();
+        start(&mut m, T0, 1);
+        assert_eq!(status(&m, T0).distractions, 0);
+        m.handle(Event::Distracted, T0 + 1);
+        m.handle(Event::Distracted, T0 + 2);
+        assert_eq!(status(&m, T0 + 3).distractions, 2);
+        m.handle(Event::Stop, T0 + 4);
+        assert_eq!(status(&m, T0 + 5).distractions, 0);
+    }
+
+    #[test]
     fn extend_once_from_a_short_break() {
         let mut m = Machine::default();
         start(&mut m, T0, 1);
@@ -1294,6 +1347,45 @@ mod tests {
             .expect("outcome");
         assert_eq!(outcome, "completed");
         assert_eq!(restore(&conn, T0 + minutes(26)).expect("row").in_row, 1);
+    }
+
+    fn start_plain(machine: &mut Machine, now: i64) -> Vec<Effect> {
+        machine.handle(
+            Event::Start {
+                context: plain(),
+                force: false,
+                id: "s1".into(),
+            },
+            now,
+        )
+    }
+
+    #[test]
+    fn a_session_stopped_while_paused_counts_only_the_time_before_the_pause() {
+        let conn = conn();
+        let mut m = Machine::default();
+        apply_db(&conn, &start_plain(&mut m, T0)).expect("start");
+        apply_db(&conn, &m.handle(Event::Pause, T0 + minutes(5))).expect("pause");
+        apply_db(&conn, &m.handle(Event::Stop, T0 + minutes(50))).expect("stop");
+        let (focus, paused_at): (i64, Option<i64>) = conn
+            .query_row(
+                "SELECT (ended_at - started_at - paused_ms) / 60000, paused_at FROM focus_sessions WHERE id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("row");
+        assert_eq!((focus, paused_at), (5, None));
+    }
+
+    #[test]
+    fn the_distraction_count_survives_a_restart() {
+        let conn = conn();
+        let mut m = Machine::default();
+        apply_db(&conn, &start_plain(&mut m, T0)).expect("start");
+        apply_db(&conn, &m.handle(Event::Distracted, T0 + 1)).expect("one");
+        apply_db(&conn, &m.handle(Event::Distracted, T0 + 2)).expect("two");
+        let restored = restore(&conn, T0 + minutes(1)).expect("restore");
+        assert_eq!(status(&restored, T0 + minutes(1)).distractions, 2);
     }
 
     #[test]

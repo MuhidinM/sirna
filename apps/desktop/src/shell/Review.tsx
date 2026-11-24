@@ -4,26 +4,46 @@ import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
-import { commitCapture, query, transact } from "../kernel/db";
+import { commitCapture, type Op, query, transact } from "../kernel/db";
 import { formatAmount } from "../kernel/money";
 import { ulid } from "../kernel/ulid";
 import { toOps } from "../capture/ops";
-import { ensureDayPlan } from "../features/plan/dayplan";
-import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import {
+  approxMark,
+  conversionNotes,
+  RATES_SQL,
+  readRates,
+  sumInEtb,
+} from "../features/money/currency";
+import { loadMoneyContext } from "../features/money/parseContext";
+import { ensureDayPlan, replanAround, replanUndoOps } from "../features/plan/dayplan";
+import {
+  type BlockRow,
+  blockProgress,
+  doneToggle,
+  skipToggle,
+  TODAY_BLOCKS_SQL,
+} from "../features/plan/now";
 import {
   asksToShrink,
   carryOps,
   CHIPS_SQL,
   chipOps,
   chipsSince,
+  finishOps,
+  INBOX_COUNT_SQL,
   INBOX_TWO_SQL,
+  inboxBadge,
+  isReviewBlock,
   nextDate,
   OPEN_DUE_SQL,
   readSpending,
   REVIEW_PARSER,
   REVIEW_SQL,
   reviewOps,
-  sortInboxOps,
+  sortInbox,
+  type SortChoice,
+  SORTED,
   SPENT_LIST_SQL,
 } from "../features/review/review";
 import {
@@ -89,7 +109,9 @@ export function Review({ onClose }: { onClose: () => void }) {
   // Unknown counts as strict: nothing is sent until the setting has loaded.
   const strict = strictOrNull(useLiveQuery<{ value_json: string | null }>(STRICT_SQL)) ?? true;
   const finish = async (status: "done" | "skipped", values: Row = {}) => {
-    await save(today, { ...values, status });
+    // A finished review also ticks tonight's Night review block, in one write.
+    const blocks = await query<BlockRow & Row>(TODAY_BLOCKS_SQL, [today]);
+    await transact("user", finishOps(today, { ...values, status }, blocks), "review");
     // Something on your mind gets a short reply before the review closes (§7.3).
     // Strict mode sends no free text.
     if (status === "done" && typeof values.mind === "string" && values.mind && !strict)
@@ -156,8 +178,9 @@ export function Review({ onClose }: { onClose: () => void }) {
                 <Button
                   key={value}
                   className={`rv-energy-pick tone-${tone}`}
-                  onClick={() => {
-                    void save(today, { energy: value });
+                  onClick={async () => {
+                    // Saved first: the next step plans tomorrow with tonight's energy.
+                    await save(today, { energy: value });
                     setEnergy(value);
                     setStep(4);
                   }}
@@ -185,19 +208,65 @@ const ENERGY: [number, string, string, Tone][] = [
   [3, "3", "good", "leaf"],
 ];
 
-/** A block of the day as a small event card. */
-function BlockCard({ block, label }: { block: BlockRow; label: string }) {
-  const done = block.status === "done";
+/** Where a block of today got to, as Today's board counts it. */
+function blockState(block: BlockRow): string {
+  const progress = blockProgress(block);
+  if (progress.done) return "done";
+  if (block.status === "skipped") return "skipped";
+  if (progress.focusedMin > 0) return `${progress.focusedMin} of ${progress.lengthMin} min focused`;
+  return "planned";
+}
+
+/** Writes a tick on a block; ticking again takes it back. */
+function setBlockStatus(block: BlockRow, status: string) {
+  void transact(
+    "user",
+    [{ op: "update", table: "day_blocks", id: block.id, values: { status } }],
+    `review:block:${block.id}`,
+  );
+}
+
+/**
+ * A block of the day as a small event card. With `tick`, it can be marked
+ * done or skipped (plan §3.9 step 1); done counts focus the way Today does.
+ */
+function BlockCard({ block, label, tick }: { block: BlockRow; label: string; tick?: boolean }) {
+  const progress = blockProgress(block);
+  const done = progress.done;
+  const skipped = block.status === "skipped";
   return (
     <li>
       <EventCard
         tone={toneOf(block.color ?? "admin")}
         label={label}
-        title={<span className={done ? "done" : undefined}>{block.title}</span>}
+        title={<span className={done || skipped ? "done" : undefined}>{block.title}</span>}
+        faded={skipped}
       >
         {done && (
           <span className="rv-done-mark" aria-hidden="true">
             <IconCheck size={14} />
+          </span>
+        )}
+        {tick && (
+          <span className="rv-block-ticks">
+            <Button
+              className="rv-pill"
+              aria-pressed={done}
+              aria-label={`${block.title}: ${done ? "not done" : "done"}`}
+              onClick={() => setBlockStatus(block, doneToggle(block))}
+            >
+              {done ? "Not done" : "Done"}
+            </Button>
+            {!done && (
+              <Button
+                className="rv-pill"
+                aria-pressed={skipped}
+                aria-label={`${block.title}: ${skipped ? "unskip" : "skip"}`}
+                onClick={() => setBlockStatus(block, skipToggle(block))}
+              >
+                {skipped ? "Unskip" : "Skip"}
+              </Button>
+            )}
           </span>
         )}
       </EventCard>
@@ -217,11 +286,26 @@ function TodayStep({
   next: () => void;
 }) {
   const blocks = useLiveQuery<BlockRow & Row>(TODAY_BLOCKS_SQL, [today]);
-  const open = useLiveQuery<{ id: string; title: string; carries: number; due_date: string }>(
-    OPEN_DUE_SQL,
-    [today],
-  );
+  const open = useLiveQuery<{
+    id: string;
+    title: string;
+    carries: number;
+    due_date: string;
+    due_at: number | null;
+  }>(OPEN_DUE_SQL, [today]);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_TWO_SQL);
+  const inboxTotal = useLiveQuery<{ n: number }>(INBOX_COUNT_SQL).rows[0]?.n ?? 0;
+  const [lastSort, setLastSort] = useState<{ body: string; choice: SortChoice; undo: Op[] }>();
+  const sort = (note: { id: string; body: string }, choice: SortChoice) => {
+    const sorted = sortInbox(note, choice, () => ulid());
+    void transact("user", sorted.ops, `review:sort:${note.id}`).then(() =>
+      setLastSort({ body: note.body, choice, undo: sorted.undo }),
+    );
+  };
+  const undoSort = () => {
+    if (!lastSort) return;
+    void transact("user", lastSort.undo, "review:sort:undo").then(() => setLastSort(undefined));
+  };
   const areas = useLiveQuery<{ id: string; name: string }>(
     "SELECT id, name FROM area_items WHERE deleted_at IS NULL AND active = 1",
   );
@@ -278,7 +362,8 @@ function TodayStep({
                 <BlockCard
                   key={block.id}
                   block={block}
-                  label={`${time.format(block.start_at)} · ${block.status}`}
+                  label={`${time.format(block.start_at)} · ${blockState(block)}`}
+                  tick={block.kind !== "fixed" && !isReviewBlock(block)}
                 />
               ))}
             </ul>
@@ -370,14 +455,26 @@ function TodayStep({
           </section>
         )}
 
-        {inbox.rows.length > 0 && (
+        {(inbox.rows.length > 0 || lastSort) && (
           <section className="card rv-card" aria-labelledby="loose-ends">
             <PanelHead
               id="loose-ends"
               title="Loose ends"
               sub="Make each one a task, a note, or drop it"
-              action={<span className="badge">{inbox.rows.length}</span>}
+              action={
+                inbox.rows.length > 0 ? (
+                  <span className="badge">{inboxBadge(inbox.rows.length, inboxTotal)}</span>
+                ) : undefined
+              }
             />
+            {lastSort && (
+              <p className="meta rv-sorted" role="status">
+                {SORTED[lastSort.choice]}: {lastSort.body}{" "}
+                <button type="button" className="link-btn" onClick={undoSort}>
+                  Undo
+                </button>
+              </p>
+            )}
             {(!strict && guesses === null) || guesses === "asking" || guessNote ? (
               <p className="rv-ai">
                 {!strict && guesses === null && (
@@ -405,12 +502,7 @@ function TodayStep({
                       <Button
                         key={choice}
                         className={`rv-pick rv-pick-${choice}${choice === "drop" ? " btn-ghost btn-danger" : ""}`}
-                        onClick={() =>
-                          void transact(
-                            "user",
-                            sortInboxOps(note, choice, () => ulid()),
-                          )
-                        }
+                        onClick={() => sort(note, choice)}
                       >
                         {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
                       </Button>
@@ -450,24 +542,34 @@ function SpendingStep({
   nowMs: number;
   next: (none: boolean) => void;
 }) {
-  const spent = useLiveQuery<{ id: string; description: string; amount_minor: number }>(
-    SPENT_LIST_SQL,
-    [today],
-  );
+  const spent = useLiveQuery<{
+    id: string;
+    description: string;
+    amount_minor: number;
+    currency: string;
+  }>(SPENT_LIST_SQL, [today]);
   const chips = useLiveQuery<{
     description: string;
     amount_minor: number;
     category_id: string | null;
+    account: string;
+    currency: string;
   }>(CHIPS_SQL, [chipsSince(today)]);
+  const rateRows = useLiveQuery<{ value_json: string }>(RATES_SQL);
   const [text, setText] = useState("");
   const [unread, setUnread] = useState<string[]>([]);
+  const [why, setWhy] = useState<string[]>([]);
 
   const add = async () => {
-    const lines = readSpending(text, nowMs);
+    // The same accounts, rates and categories as the capture bar (F3).
+    const context = await loadMoneyContext(query);
+    const lines = readSpending(text, { nowMs, ...context });
     const left: string[] = [];
+    const reasons: string[] = [];
     for (const line of lines) {
       if (!line.parsed) {
         left.push(line.text);
+        if (line.why) reasons.push(line.why);
         continue;
       }
       // Store first, parse second: each line lands as a raw capture too.
@@ -478,10 +580,20 @@ function SpendingStep({
       );
     }
     setUnread(left);
+    setWhy(reasons);
     setText(left.join(", "));
   };
 
-  const total = spent.rows.reduce((sum, txn) => sum + txn.amount_minor, 0);
+  // Dollars count at the saved rate, not as birr; without a rate they are listed apart (F4).
+  const rates = readRates(rateRows.rows[0]?.value_json);
+  const { total, conversion } = sumInEtb(
+    spent.rows.map((txn) => ({ minor: -txn.amount_minor, currency: txn.currency })),
+    rates,
+  );
+  const notes = conversionNotes(conversion, rates);
+  const leftOut = [...conversion.missing.entries()]
+    .map(([code, minor]) => ` + ${formatAmount(minor, code)}`)
+    .join("");
 
   return (
     <div className="rv-step-body">
@@ -492,7 +604,7 @@ function SpendingStep({
             title="What did you spend today?"
             sub={
               spent.rows.length > 0
-                ? `${formatAmount(-total)} so far`
+                ? `${approxMark(notes)}${formatAmount(total)}${leftOut} so far`
                 : "One line each, comma separated"
             }
           />
@@ -501,7 +613,7 @@ function SpendingStep({
               {spent.rows.map((txn) => (
                 <li key={txn.id} className="task">
                   <span>{txn.description}</span>
-                  <span className="rv-amount">{formatAmount(-txn.amount_minor)}</span>
+                  <span className="rv-amount">{formatAmount(-txn.amount_minor, txn.currency)}</span>
                 </li>
               ))}
             </ul>
@@ -525,7 +637,8 @@ function SpendingStep({
           </form>
           {unread.length > 0 && (
             <p role="alert" className="error">
-              Couldn&apos;t read: {unread.join(", ")}. Write it as “what amount”.
+              Couldn&apos;t read: {unread.join(", ")}.{" "}
+              {why.length > 0 ? why.join(" ") : "Write it as “what amount”."}
             </p>
           )}
         </section>
@@ -542,7 +655,7 @@ function SpendingStep({
                     void transact("user", chipOps(chip, today, systemClock.now(), ulid()))
                   }
                 >
-                  {chip.description} {formatAmount(-chip.amount_minor)}
+                  {chip.description} {formatAmount(-chip.amount_minor, chip.currency)}
                 </Button>
               ))}
             </div>
@@ -564,6 +677,9 @@ function SpendingStep({
   );
 }
 
+/** A command that ran, with the undo of the replan it caused (F15), if any. */
+type Ran = CommandResult & { undoReplan?: Op[] };
+
 /**
  * Plain commands in the free text (time-first §1 rule 9), each against the
  * plan as it is after the one before. Lines that aren't commands, or name
@@ -573,9 +689,9 @@ async function runCommands(
   text: string,
   today: string,
   tomorrow: string,
-): Promise<{ done: CommandResult[]; rest: string[] }> {
+): Promise<{ done: Ran[]; rest: string[] }> {
   const { commands, rest } = readLines(text);
-  const done: CommandResult[] = [];
+  const done: Ran[] = [];
   for (const { line, command } of commands) {
     const [todayBlocks, tomorrowBlocks, tasks] = await Promise.all([
       query<CommandBlock & Row>(TODAY_BLOCKS_SQL, [today]),
@@ -594,6 +710,22 @@ async function runCommands(
       continue;
     }
     if (result.ops.length > 0) await transact("user", result.ops, "review:command");
+    // A block moved onto the planner's blocks: they make room around it (F15).
+    const placed = result.ops.find(
+      (op) => op.table === "day_blocks" && op.op !== "delete" && "start_at" in op.values,
+    );
+    if (command.kind === "move" && placed && placed.op !== "delete") {
+      const undoReplan = await replanAround(
+        query,
+        (ops) => transact("system", ops, "day-plan"),
+        logicalDate(placed.values.start_at as number),
+        placed.id,
+        () => ulid(),
+        systemClock.now(),
+      );
+      done.push(undoReplan ? { ...result, undoReplan } : result);
+      continue;
+    }
     done.push(result);
   }
   return { done, rest };
@@ -603,9 +735,7 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
   const start = logicalDayStart(tomorrow);
   const [ready, setReady] = useState(false);
   const [mind, setMind] = useState("");
-  const [results, setResults] = useState<{ id: string; result: CommandResult; undone: boolean }[]>(
-    [],
-  );
+  const [results, setResults] = useState<{ id: string; result: Ran; undone: boolean }[]>([]);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   // The text left after the last run: pressing again sends it on unchanged,
@@ -647,7 +777,12 @@ function TomorrowStep({ tomorrow, done }: { tomorrow: string; done: (mind: strin
   const undo = (id: string) => {
     const entry = results.find((r) => r.id === id);
     if (!entry || entry.undone) return;
-    void transact("user", entry.result.undo, "review:command:undo")
+    // The replan the command caused goes back as the system's, so its blocks
+    // aren't counted as yours (F15); then the command's own undo.
+    const undoReplan = entry.result.undoReplan;
+    void (undoReplan ? replanUndoOps(query, undoReplan) : Promise.resolve([]))
+      .then((ops) => (ops.length > 0 ? transact("system", ops, "day-plan") : undefined))
+      .then(() => transact("user", entry.result.undo, "review:command:undo"))
       .then(() => setResults((old) => old.map((r) => (r.id === id ? { ...r, undone: true } : r))))
       .catch((error: unknown) =>
         setFailed(`Couldn't undo: ${error instanceof Error ? error.message : String(error)}`),

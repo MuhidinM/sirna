@@ -167,11 +167,14 @@ describe("the advisor's findings (T-064)", () => {
     });
     const list = findings({ ...base, caps, summary: s });
     expect(kinds(list)).toEqual([
-      ["cap_over", "Phone is over its cap: 600 ETB of 500 ETB, with 15 days to go."],
+      // Today counts, as in Safe to spend: day 15 of 30 leaves 16 (F108).
+      ["cap_over", "Phone is over its cap: 600 ETB of 500 ETB, with 16 days to go."],
       ["pace", "Food: 75% of its cap with 50% of the month gone."],
       ["pace", "Transport: 900 ETB so far, 90% of a usual month with 50% of it gone."],
     ]);
     expect(list[0]?.actions[0]).toMatchObject({ label: "Raise cap to 600 ETB" });
+    const last = findings({ ...base, caps, summary: { ...s, day: s.days } });
+    expect(last[0]?.text).toBe("Phone is over its cap: 600 ETB of 500 ETB, with 1 day to go.");
     expect(list[2]?.actions[0]).toMatchObject({ label: "Cap Transport at 1,000 ETB" });
   });
 

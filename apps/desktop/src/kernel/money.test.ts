@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatAmount, formatNumber, parseAmount } from "./money";
+import { formatAmount, formatNumber, formatWhole, parseAmount } from "./money";
 
 describe("parseAmount", () => {
   it.each([
@@ -69,5 +69,16 @@ describe("formatAmount in other currencies", () => {
   it("gives the number alone", () => {
     expect(formatNumber(1_200_050)).toBe("12,000.50");
     expect(formatNumber(-35_000)).toBe("-350");
+  });
+});
+
+describe("formatWhole (F108)", () => {
+  it("shows an estimate in whole units", () => {
+    expect(formatWhole(596_250)).toBe("5,963 ETB");
+    expect(formatWhole(16_750)).toBe("168 ETB");
+    expect(formatWhole(2_504_750)).toBe("25,048 ETB");
+    expect(formatWhole(-2_049)).toBe("-20 ETB");
+    expect(formatWhole(-49)).toBe("0 ETB");
+    expect(formatWhole(3_050, "USD")).toBe("$31");
   });
 });

@@ -28,6 +28,13 @@ body {
   border-radius: var(--radius-canvas);
 }
 
+/* In Forest the sheet is a white canvas: light form controls and a dark
+   keyboard ring, as .on-canvas gives the main window. */
+[data-theme="forest"] .setup {
+  color-scheme: light;
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--canvas-ink);
+}
+
 .setup-head {
   display: flex;
   justify-content: space-between;

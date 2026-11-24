@@ -13,6 +13,7 @@ import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 
 import { type Conn, sqlJsConn } from "./conn";
+import { catchUp } from "./migrate";
 import { emptyMachine, type Machine, restore } from "./focus";
 import { type Toast } from "./runtime";
 
@@ -181,6 +182,13 @@ export class Store {
     this.db.exec("PRAGMA foreign_keys = ON");
     this.conn = sqlJsConn(this.db);
     this.version = version;
+    // A base file or snapshot from before a newer migration (F65-new).
+    try {
+      const applied = catchUp(this.conn);
+      if (applied.length > 0) console.info("preview database migrated:", applied.join(", "));
+    } catch (error) {
+      console.error("could not migrate the preview database:", error);
+    }
   }
 
   /** Catches up with the newest snapshot another page stored. */

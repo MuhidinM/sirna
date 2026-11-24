@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
 import {
+  lightDayTop,
   type BlockRow,
   blockProgress,
+  doneToggle,
   firstStep,
+  skipToggle,
   focusOffer,
+  formatEstimate,
   formatMinutes,
   nowAndNext,
   TODAY_BLOCKS_SQL,
@@ -37,6 +41,22 @@ const day = [
   block("email", "10:00", "10:10", "routine"),
   block("gym", "17:30", "18:15", "routine"),
 ];
+
+describe("a light day's Top 3 (F53)", () => {
+  it("keeps one task on a light day and all three on another", () => {
+    const plain = { kind: "area" as const, start_at: 0, end_at: 60 * 60_000 };
+    expect(lightDayTop(["a", "b", "c"], [{ ...plain, light_day: 1 }])).toEqual({
+      light: "drained",
+      top: ["a"],
+    });
+    const rest = { kind: "rest" as const, start_at: 0, end_at: 8 * 60 * 60_000, light_day: 1 };
+    expect(lightDayTop(["a", "b"], [rest]).light).toBe("rest");
+    expect(lightDayTop(["a", "b", "c"], [{ ...plain, light_day: 0 }])).toEqual({
+      light: false,
+      top: ["a", "b", "c"],
+    });
+  });
+});
 
 describe("nowAndNext", () => {
   it("finds the current block and the next one", () => {
@@ -106,6 +126,39 @@ describe("when a block counts as done (focus)", () => {
     expect(blockProgress({ ...hour, focused_min: 48 }).done).toBe(true);
     expect(blockProgress({ ...hour, status: "done", focused_min: null }).done).toBe(true);
   });
+
+  it("is not done once skipped, whatever the focus says (Not done on a focused block)", () => {
+    expect(blockProgress({ ...hour, status: "skipped", focused_min: 55 }).done).toBe(false);
+  });
+});
+
+describe("ticking a block (review, block editor)", () => {
+  const hour = { start_at: 0, end_at: 60 * 60_000, status: "planned", focused_min: 0 };
+  it("marks an open block done, and a marked one back to planned", () => {
+    expect(doneToggle(hour)).toBe("done");
+    expect(doneToggle({ ...hour, status: "done" })).toBe("planned");
+  });
+
+  it("un-ticks a block done by focus as skipped, so the 80% rule can't tick it again", () => {
+    const focused = { ...hour, focused_min: 55 };
+    expect(doneToggle(focused)).toBe("skipped");
+    expect(blockProgress({ ...focused, status: doneToggle(focused) }).done).toBe(false);
+    expect(doneToggle({ ...focused, status: "skipped" })).toBe("done");
+  });
+
+  it("skips and unskips", () => {
+    expect(skipToggle(hour)).toBe("skipped");
+    expect(skipToggle({ ...hour, status: "skipped" })).toBe("planned");
+  });
+});
+
+describe("a block finished or skipped is not Now", () => {
+  it("moves on from a block marked done or skipped", () => {
+    const review = { ...block("review", "21:00", "21:15", "routine"), status: "done" };
+    expect(nowAndNext([review], at("21:05")).now).toBeUndefined();
+    const gym = { ...block("gym", "17:30", "18:15", "routine"), status: "skipped" };
+    expect(nowAndNext([gym], at("17:00")).next).toBeUndefined();
+  });
 });
 
 describe("the focus time on a block (TODAY_BLOCKS_SQL)", () => {
@@ -117,5 +170,23 @@ describe("the focus time on a block (TODAY_BLOCKS_SQL)", () => {
       VALUES ('f1', 'b', 'focus', 0, 25, 300000, 1800000), ('f2', 'b', 'focus', 0, 25, 0, NULL)`);
     const [row] = db.prepare(TODAY_BLOCKS_SQL).all("2026-11-24") as { focused_min: number }[];
     expect(row?.focused_min).toBe(25);
+  });
+});
+
+describe("an estimate (formatEstimate, F96)", () => {
+  it("uses minutes and hours, never decimal hours", () => {
+    expect(formatEstimate(30)).toBe("~30 min");
+    expect(formatEstimate(45)).toBe("~45 min");
+    expect(formatEstimate(90)).toBe("~1 h 30 min");
+    expect(formatEstimate(120)).toBe("~2 h");
+  });
+
+  it("repeats minutes under an hour as typed and rounds to 5 from an hour on", () => {
+    expect(formatEstimate(7)).toBe("~7 min");
+    expect(formatEstimate(1)).toBe("~1 min");
+    expect(formatEstimate(2)).toBe("~2 min");
+    expect(formatEstimate(59)).toBe("~59 min");
+    expect(formatEstimate(62)).toBe("~1 h");
+    expect(formatEstimate(143)).toBe("~2 h 25 min");
   });
 });

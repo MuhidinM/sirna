@@ -7,10 +7,12 @@ import { ACCOUNTS_SQL, type AccountRow } from "./accounts";
 import {
   balances,
   checkLoan,
+  checkRepayment,
   followUpLines,
   type LoanEvent,
   loanEchoText,
   loanOps,
+  loanPeople,
   LOANS_SQL,
 } from "./loans";
 import { monthSummary, type TxnRow, TXNS_SQL } from "./money";
@@ -78,6 +80,24 @@ describe("who owes what (T-061)", () => {
       "Abel paid back · 400 ETB · 200 ETB still open",
     );
     expect(loanEchoText("i_paid", "Sara", 50_000, 0)).toBe("Paid back Sara · 500 ETB · settled");
+    // A name typed in lower case still reads as a name (F108).
+    expect(loanEchoText("paid_me", "abel", 50_000, null)).toBe("Abel paid back · 500 ETB");
+  });
+
+  it("won't take a repayment past what is owed (F24)", () => {
+    const [abel] = balances([event({})]);
+    if (!abel) throw new Error("no balance");
+    expect(checkRepayment(abel, 100_000)).toBeNull();
+    expect(checkRepayment(abel, 500_000)).toBe(
+      "Abel owes you 1,000 ETB, not 5,000 ETB. Pay back up to that, and add the rest as a new loan.",
+    );
+    const [sara] = balances([
+      event({ person: "Sara", kind: "borrowed", amount_minor: 5_000, currency: "USD" }),
+    ]);
+    if (!sara) throw new Error("no balance");
+    expect(checkRepayment(sara, 8_000)).toBe(
+      "You owe Sara $50, not $80. Pay back up to that, and add the rest as a new loan.",
+    );
   });
 });
 
@@ -185,12 +205,83 @@ describe("loans in the capture box (T-061)", () => {
 
   it("writes the event and the money, and echoes it", () => {
     const parsed = read("lent 1000 abel @cbe");
-    expect(echo(parsed, options.nowMs)).toBe("Lent to abel · 1,000 ETB · CBE");
+    expect(echo(parsed, options.nowMs)).toBe("Lent to Abel · 1,000 ETB · CBE");
     let k = 0;
     const ops = toOps(parsed, { nowMs: options.nowMs, newId: () => `o${++k}` });
     expect(ops.map((op) => op.table)).toEqual(["money_loans", "money_txns"]);
     expect(ops[1]).toMatchObject({
       values: { account: "cbe", amount_minor: -100_000, transfer_id: "loan:o1" },
     });
+  });
+
+  it("keeps a typed name as a name everywhere (reg0-3, F108)", () => {
+    const ops = toOps(read("lent 2000 to kebede"), { nowMs: options.nowMs, newId: () => "k" });
+    expect(ops[0]).toMatchObject({ table: "money_loans", values: { person: "Kebede" } });
+    // Rows saved lower case before still read as a name.
+    expect(balances([event({ person: "sara", kind: "borrowed" })])[0]?.person).toBe("Sara");
+    const usd = { ...options, rates: { USD: { rate: "130", set_on: "2026-11-14" } } };
+    const dollars = parseCapture("borrowed $50 from sara @wise", usd);
+    expect(echo(dollars, options.nowMs)).toBe("Borrowed $50 from Sara · Wise");
+  });
+});
+
+describe("paying back in the loan's currency, up to what is owed (F24, F27)", () => {
+  const db = openTestDb();
+  const options: ParseOptions = {
+    nowMs: Date.parse("2026-11-24T09:30:00+03:00"),
+    accounts: db.prepare(ACCOUNTS_SQL).all() as unknown as AccountRow[],
+    loanPeople: loanPeople(
+      balances([
+        event({ person: "Kebede", amount_minor: 3_000, account: "wise", currency: "USD" }),
+        event({ person: "Abel", amount_minor: 100_000 }),
+        event({ person: "Selam", kind: "borrowed", amount_minor: 80_000 }),
+        event({ person: "Hana", amount_minor: 50_000 }),
+        event({ person: "Hana", amount_minor: 2_000, account: "wise", currency: "USD" }),
+      ]),
+    ),
+  };
+  const read = (text: string) => parseCapture(text, options);
+
+  it("lands a repayment in the only currency the loan is in", () => {
+    expect(read("kebede paid back 10")).toMatchObject({
+      kind: "loan",
+      loanKind: "paid_me",
+      amount: 1_000,
+      account: "wise",
+      currency: "USD",
+    });
+    expect(read("abel paid back 400")).toMatchObject({ account: "cash", amount: 40_000 });
+  });
+
+  it("asks which currency when loans are open in two", () => {
+    expect(read("hana paid back 10")).toMatchObject({
+      kind: "inbox",
+      why: expect.stringMatching(/ETB and USD/) as unknown,
+    });
+    expect(read("hana paid back $10")).toMatchObject({
+      kind: "loan",
+      account: "wise",
+      currency: "USD",
+    });
+    expect(read("hana paid back 100 @cash")).toMatchObject({ kind: "loan", account: "cash" });
+  });
+
+  it("won't pay back in a currency with no loan open", () => {
+    expect(read("abel paid back $10")).toMatchObject({
+      kind: "inbox",
+      why: expect.stringMatching(/USD/) as unknown,
+    });
+  });
+
+  it("won't take more than is owed", () => {
+    expect(read("abel paid back 5000")).toMatchObject({
+      kind: "inbox",
+      why: expect.stringMatching(/Abel owes you 1,000 ETB/) as unknown,
+    });
+    expect(read("paid back selam 2000")).toMatchObject({
+      kind: "inbox",
+      why: expect.stringMatching(/You owe Selam 800 ETB/) as unknown,
+    });
+    expect(read("abel paid back 1000")).toMatchObject({ kind: "loan", amount: 100_000 });
   });
 });

@@ -90,7 +90,9 @@
   --sky: #8ec5ff;
   --leaf: #8fd6a8;
   --on-loud: #141414;
-  /* White titles on orange and pink, and the white pills on loud cards. */
+  /* Secondary text on --pink-soft. */
+  --pink-soft-ink: #55554f;
+  /* The white pills and checks on loud cards. */
   --white: #ffffff;
   --danger-loud: #e5484d;
   /* Hover shades of the loud buttons, and soft ink on the yellow Now card. */

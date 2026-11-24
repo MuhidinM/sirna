@@ -1,4 +1,5 @@
 /** The "What was sent" viewer (plan §7.4; R-AI-02): every AI request, 30 days. */
+import { showDate } from "../../kernel/dates";
 
 export const AI_LOG_SQL = `SELECT id, task, model, prompt_version, started_at, latency_ms,
   tokens_in, tokens_out, status, http_status, error, request_redacted, response_text
@@ -40,7 +41,8 @@ export function callSummary(call: AiCall, nowMs: number): string {
     Math.floor((call.started_at + 3 * 3_600_000) / 86_400_000) ===
     Math.floor((nowMs + 3 * 3_600_000) / 86_400_000);
   const time = `${String(at.getUTCHours()).padStart(2, "0")}:${String(at.getUTCMinutes()).padStart(2, "0")}`;
-  const day = sameDay ? time : `${at.toISOString().slice(5, 10)} ${time}`;
+  // "9 Nov 09:41", dated like every other screen.
+  const day = sameDay ? time : `${showDate(at.toISOString().slice(0, 10))} ${time}`;
   const tokens =
     call.tokens_in != null || call.tokens_out != null
       ? ` · ${call.tokens_in ?? "?"} → ${call.tokens_out ?? "?"} tokens`

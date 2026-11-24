@@ -8,11 +8,13 @@ import {
   COUNTS_SQL,
   filterTasks,
   LATER_STEPS_SQL,
+  SPLIT_STEPS_SQL,
   statusOps,
   taskDraftOf,
   taskEditOps,
   type TaskListRow,
   TASKS_SQL,
+  undoSplitOps,
   viewParams,
 } from "./list";
 
@@ -76,7 +78,7 @@ describe("listing tasks", () => {
 });
 
 describe("editing a task", () => {
-  it("saves a new date, estimate and area, and drops the old reminder time", () => {
+  it("saves a new date, estimate and area; the time and reminder move to the new date", () => {
     const db = seeded();
     const [row] = list(db, "open");
     if (!row) throw new Error("no task");
@@ -99,8 +101,8 @@ describe("editing a task", () => {
     >;
     expect(saved).toMatchObject({
       due_date: "2026-11-20",
-      due_at: null,
-      remind_at: null,
+      due_at: 1794641400000 + 6 * 86_400_000,
+      remind_at: 1794641400000 + 6 * 86_400_000,
       estimate_min: 240,
       area_id: "coding",
     });
@@ -282,5 +284,59 @@ describe("splitting from the Tasks page (review fixes)", () => {
     ]);
     // The split step leaves the count: 4 steps, not 5.
     expect(list(db, "open").find((t) => t.id === "n1")?.step_total).toBe(4);
+  });
+
+  it("F61: a split task in Dropped says so, and undoing the split takes its steps back", async () => {
+    const { manualSplitOps } = await import("./split");
+    const db = seeded();
+    const row = list(db, "open").find((t) => t.id === "a");
+    if (!row) throw new Error("expected task a");
+    let n = 0;
+    const steps = [
+      { title: "Outline", minutes: 60 },
+      { title: "Write", minutes: 120 },
+    ];
+    write(
+      db,
+      manualSplitOps(row, steps, () => `s${++n}`),
+    );
+    const dropped = list(db, "dropped").find((t) => t.id === "a");
+    expect(dropped).toMatchObject({ split_steps: 2, split_settled: 0 });
+
+    const ids = (db.prepare(SPLIT_STEPS_SQL).all("a") as { id: string }[]).map((r) => r.id);
+    expect(ids.sort()).toEqual(["s1", "s2"]);
+    for (const op of undoSplitOps({ id: "a" }, ids, NOW)) {
+      if (op.op === "delete")
+        db.prepare("UPDATE task_items SET deleted_at = ? WHERE id = ?").run(NOW, op.id);
+      else apply(db, [op]);
+    }
+    const open = list(db, "open").map((t) => t.id);
+    expect(open).toContain("a");
+    expect(open).not.toContain("s1");
+    expect(open).not.toContain("s2");
+  });
+
+  it("F61: a split with a step done can't be undone from Dropped", async () => {
+    const { manualSplitOps } = await import("./split");
+    const db = seeded();
+    const row = list(db, "open").find((t) => t.id === "a");
+    if (!row) throw new Error("expected task a");
+    let n = 0;
+    const steps = [
+      { title: "Outline", minutes: 60 },
+      { title: "Write", minutes: 120 },
+    ];
+    write(
+      db,
+      manualSplitOps(row, steps, () => `s${++n}`),
+    );
+    apply(db, statusOps({ id: "s1" }, "done", NOW));
+    expect(list(db, "dropped").find((t) => t.id === "a")).toMatchObject({
+      split_steps: 2,
+      split_settled: 1,
+    });
+    // A task that was only dropped has no steps.
+    apply(db, statusOps({ id: "b" }, "dropped", NOW));
+    expect(list(db, "dropped").find((t) => t.id === "b")).toMatchObject({ split_steps: 0 });
   });
 });

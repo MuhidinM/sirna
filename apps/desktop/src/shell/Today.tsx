@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 import { systemClock } from "../kernel/clock";
-import { localDate, showDate } from "../kernel/dates";
+import { showDate } from "../kernel/dates";
 import { commitCapture, query, transact } from "../kernel/db";
 import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
@@ -11,9 +11,8 @@ import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT, SPLIT_MAX_MIN, type SplitReply } from "../features/ai/touchpoints";
 import { ulid } from "../kernel/ulid";
 import { LATER_STEPS_SQL, stepLabel } from "../features/tasks/list";
-import { todayTask } from "../features/plan/edit";
+import { TODAY_PARSER_ID, todayTask } from "../capture/today";
 import { toOps } from "../capture/ops";
-import { PARSER_ID } from "../capture/parse";
 import { ensureRepeats } from "../features/tasks/repeat";
 import { AWAY_SQL, awayUntil, returnLabel } from "../features/plan/away";
 import { ensureDayPlan, weekStart } from "../features/plan/dayplan";
@@ -22,11 +21,13 @@ import {
   DUE_SQL,
   INBOX_SQL,
   SPENT_TODAY_SQL,
+  taskMeta,
   todayParams,
   todayTopSql,
   WAITING_SQL,
 } from "../features/tasks/today";
-import { type BlockRow, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { type BlockRow, lightDayTop, TODAY_BLOCKS_SQL } from "../features/plan/now";
+import { INBOX_COUNT_SQL, inboxBadge } from "../features/review/review";
 import { Brief } from "./Brief";
 import { Missed } from "./Missed";
 import { TodayMoney } from "./Money";
@@ -161,12 +162,6 @@ const longWeekday = new Intl.DateTimeFormat("en-GB", {
   weekday: "long",
   timeZone: "Africa/Addis_Ababa",
 });
-const time = new Intl.DateTimeFormat("en-GB", {
-  hour: "2-digit",
-  minute: "2-digit",
-  timeZone: "Africa/Addis_Ababa",
-});
-
 function toggle(task: TaskRow) {
   const done = task.status !== "done";
   void transact("user", [
@@ -180,7 +175,6 @@ function toggle(task: TaskRow) {
 }
 
 function TaskLine({ task, today }: { task: TaskRow; today: string }) {
-  const overdue = task.due_date !== null && task.due_date < today;
   const [splitting, setSplitting] = useState(false);
   const big =
     task.status === "todo" &&
@@ -198,12 +192,7 @@ function TaskLine({ task, today }: { task: TaskRow; today: string }) {
         </span>
       </label>
       <span className="meta">
-        {task.estimate_min ? `~${Math.round((task.estimate_min / 60) * 10) / 10} h · ` : ""}
-        {overdue
-          ? `since ${showDate(task.due_date ?? "", today)}${task.due_at !== null ? ` ${time.format(task.due_at)}` : ""}`
-          : task.due_at !== null
-            ? time.format(task.due_at)
-            : ""}
+        {taskMeta(task, today)}
         {big && !splitting && (
           <Button className="split-button" onClick={() => setSplitting(true)}>
             Split
@@ -280,7 +269,8 @@ export function Today({
     follow_up_date: string | null;
   }>(WAITING_SQL);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_SQL);
-  const spent = useLiveQuery<{ spent: number }>(SPENT_TODAY_SQL, [today]);
+  const inboxTotal = useLiveQuery<{ n: number }>(INBOX_COUNT_SQL).rows[0]?.n ?? 0;
+  const spent = useLiveQuery<{ currency: string; spent: number }>(SPENT_TODAY_SQL, [today]);
   const blocks = useLiveQuery<BlockRow & Record<string, string | number | null>>(TODAY_BLOCKS_SQL, [
     today,
   ]);
@@ -291,26 +281,37 @@ export function Today({
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
 
-  const topIds = new Set(top.rows.map((task) => task.id));
+  // A light day keeps one task in Top 3 (F53); the rest stay under Also due.
+  const light = lightDayTop(top.rows, blocks.rows);
+  const topIds = new Set(light.top.map((task) => task.id));
   const moreDue = due.rows.filter((task) => !topIds.has(task.id));
   const error =
     top.error ?? due.error ?? waiting.error ?? inbox.error ?? spent.error ?? blocks.error;
 
-  const weekday = longWeekday.format(nowMs);
-  // The calendar day, like the weekday beside it; never a year for "today".
-  const dayMonth = showDate(localDate(nowMs));
+  // The logical day (D22: it starts at 03:00), as the board and the brief
+  // count it: at 00:30 it is still the evening before. Never a year for "today".
+  const weekday = longWeekday.format(Date.parse(`${today}T12:00:00+03:00`));
+  const dayMonth = showDate(today);
+  const nowCards = (
+    <>
+      <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
+      {focus && focus.kind !== null && <FocusPanel status={focus} />}
+    </>
+  );
 
   return (
     <main className="page today">
       <div className="layout-split">
         <aside className="side" aria-label="Today at a glance">
           <MonthPanel today={today} onOpen={onOpenPlan} />
-          <NowCards blocks={blocks.rows} nowMs={minuteNow} focus={focus} />
-          {focus && focus.kind !== null && <FocusPanel status={focus} />}
-          <LooseEnds inbox={inbox.rows} waiting={waiting.rows} today={today} />
+          <div className="today-now in-side">{nowCards}</div>
+          <LooseEnds inbox={inbox.rows} total={inboxTotal} waiting={waiting.rows} today={today} />
         </aside>
 
         <div className="main">
+          {/* Below 1200px the side column drops under the board; the Now card
+              (Start focus) shows here instead, at the top. CSS shows one of the two. */}
+          <div className="today-now in-main">{nowCards}</div>
           <section className="canvas" aria-labelledby="today-title">
             <header className="canvas-head">
               <h1 id="today-title" className="page-title">
@@ -337,8 +338,9 @@ export function Today({
               </p>
             )}
 
-            {!top.loading && !blocks.loading && (
-              <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={top.rows} />
+            {/* Away mode pauses the brief (plan §3.11), as the banner says. */}
+            {!backOn && !top.loading && !blocks.loading && (
+              <Brief nowMs={minuteNow} today={today} blocks={blocks.rows} top={light.top} />
             )}
 
             <div className="today-cols">
@@ -346,14 +348,21 @@ export function Today({
                 <WeekOutcomes monday={weekStart(today)} />
 
                 <section aria-labelledby="top3">
-                  <h2 id="top3">Top 3</h2>
+                  <h2 id="top3">{light.light ? "Top task" : "Top 3"}</h2>
+                  {light.light && (
+                    <p className="meta">
+                      {light.light === "rest"
+                        ? "Rest day: one task at most."
+                        : "Light day: two drained nights, so one task is enough."}
+                    </p>
+                  )}
                   {top.rows.length === 0 && !top.loading ? (
                     <p className="empty">
                       Tasks due or planned for today show up here; capture one with a date.
                     </p>
                   ) : (
                     <ul className="task-rows">
-                      {top.rows.map((task) => (
+                      {light.top.map((task) => (
                         <TaskLine key={task.id} task={task} today={today} />
                       ))}
                     </ul>
@@ -390,14 +399,10 @@ export function Today({
           </section>
 
           <div className="panel-row">
-            <FocusWeek today={today} />
+            <FocusWeek today={today} nowMs={minuteNow} />
             <section className="panel" aria-labelledby="money">
               <PanelHead id="money" title="Money today" sub="Safe to spend and what is due" />
-              <TodayMoney
-                today={today}
-                spentToday={spent.rows[0]?.spent ?? 0}
-                onOpen={onOpenMoney}
-              />
+              <TodayMoney today={today} spentToday={spent.rows} onOpen={onOpenMoney} />
             </section>
           </div>
         </div>
@@ -406,17 +411,26 @@ export function Today({
   );
 }
 
+const ADD_AREAS_SQL = "SELECT id, name FROM area_items WHERE active = 1 AND deleted_at IS NULL";
+const ADD_CLOCK_SQL = "SELECT value_json FROM core_settings WHERE key = 'capture.clock_style'";
+
 /** "Add for today" (§5): a capture dated today, saved as typed first. */
 function AddForToday({ today }: { today: string }) {
+  // The capture bar's areas and clock, so a line reads the same here (F83).
+  const areas = useLiveQuery<{ id: string; name: string }>(ADD_AREAS_SQL);
+  const clock = useLiveQuery<{ value_json: string }>(ADD_CLOCK_SQL);
   const [text, setText] = useState("");
   const [said, setSaid] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const add = () => {
     const nowMs = systemClock.now();
-    const parsed = todayTask(text, today, nowMs);
+    const parsed = todayTask(text, today, nowMs, {
+      areas: areas.rows,
+      clockStyle: clock.rows[0]?.value_json === '"ethiopian"' ? "ethiopian" : "western",
+    });
     if (!parsed || parsed.kind !== "task" || saving) return;
     setSaving(true);
-    void commitCapture(text.trim(), toOps(parsed, { nowMs, newId: () => ulid() }), PARSER_ID)
+    void commitCapture(text.trim(), toOps(parsed, { nowMs, newId: () => ulid() }), TODAY_PARSER_ID)
       .then(() => {
         setText("");
         const day = parsed.dueDate ?? today;
@@ -464,11 +478,14 @@ function AddForToday({ today }: { today: string }) {
 /** Loose ends from captures and who you are waiting on, in the side column. */
 function LooseEnds({
   inbox,
+  total,
   waiting,
   today,
 }: {
   today: string;
   inbox: { id: string; body: string }[];
+  /** Every loose end, while the list shows the newest 10. */
+  total: number;
   waiting: {
     id: string;
     title: string;
@@ -482,7 +499,11 @@ function LooseEnds({
         id="loose"
         title="Loose ends"
         sub="Sorted in tonight's review"
-        action={inbox.length > 0 ? <span className="badge">{inbox.length}</span> : undefined}
+        action={
+          inbox.length > 0 ? (
+            <span className="badge">{inboxBadge(inbox.length, total)}</span>
+          ) : undefined
+        }
       />
       {inbox.length === 0 && waiting.length === 0 ? (
         <p className="empty">Captures without a date and tasks you wait on show up here.</p>
@@ -498,7 +519,15 @@ function LooseEnds({
             <li key={item.id}>
               <span className="dot-cream" aria-hidden="true" />
               <span className="grow">
-                Waiting on {item.waiting_on ?? item.title}
+                {/* A card dragged to Waiting has no name yet: show its title, not "Waiting on <title>". */}
+                {item.waiting_on ? (
+                  `Waiting on ${item.waiting_on}`
+                ) : (
+                  <>
+                    {item.title}
+                    <span className="meta"> · waiting</span>
+                  </>
+                )}
                 {item.follow_up_date && (
                   <span className="meta"> · follow up {showDate(item.follow_up_date, today)}</span>
                 )}

@@ -7,6 +7,8 @@ import {
   checkWithDate,
   type DateCheck,
   findSlot,
+  type NoRoom,
+  noRoom,
   type PlannedProject,
   type Slot,
   type WeekModel,
@@ -14,7 +16,14 @@ import {
 import { hoursToMin, MAX_WEEKLY_HOURS, type ProjectDraft, realDate } from "./projects";
 
 export type Timing =
-  { kind: "date"; check: DateCheck } | { kind: "slot"; slot: Slot | null; estimateMin: number };
+  | { kind: "date"; check: DateCheck }
+  | {
+      kind: "slot";
+      slot: Slot | null;
+      estimateMin: number;
+      /** Why there is no slot (null when there is one). */
+      noRoom: NoRoom | null;
+    };
 
 /** Null until there is an estimate to check. */
 export function timingOf(
@@ -30,10 +39,12 @@ export function timingOf(
   const deadline = draft.deadline.trim();
   if (deadline && realDate(deadline))
     return { kind: "date", check: checkWithDate(estimate, deadline, today, week, others) };
+  const slot = findSlot(estimate, today, week, others, hoursToMin(draft.weeklyHours));
   return {
     kind: "slot",
-    slot: findSlot(estimate, today, week, others, hoursToMin(draft.weeklyHours)),
+    slot,
     estimateMin: estimate,
+    noRoom: slot ? null : noRoom(today, week, others),
   };
 }
 

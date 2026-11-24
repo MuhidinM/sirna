@@ -4,7 +4,14 @@ import { showDate } from "../kernel/dates";
 import { type Op, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import { isoWeekday } from "../features/plan/dayplan";
-import { INBOX_TWO_SQL, sortInboxOps } from "../features/review/review";
+import {
+  INBOX_COUNT_SQL,
+  INBOX_TWO_SQL,
+  inboxBadge,
+  sortInbox,
+  type SortChoice,
+  SORTED,
+} from "../features/review/review";
 import {
   MAX_OUTCOMES,
   outcomeOps,
@@ -14,6 +21,7 @@ import {
   skipStepOps,
   WEEK_PLAN_SQL,
 } from "../features/week/outcomes";
+import { cancelOnEscape, refocusSoon, returnsFocus } from "./keys";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -31,6 +39,8 @@ export function WeekAhead({ today }: { today: string }) {
   const monday = planningWeek(today);
   const saved = useLiveQuery<{ value_json: string | null }>(WEEK_PLAN_SQL, [planKey(monday)]);
   const inbox = useLiveQuery<{ id: string; body: string }>(INBOX_TWO_SQL);
+  const inboxTotal = useLiveQuery<{ n: number }>(INBOX_COUNT_SQL).rows[0]?.n ?? 0;
+  const [lastSort, setLastSort] = useState<{ body: string; choice: SortChoice; undo: Op[] }>();
   const [editing, setEditing] = useState(false);
   const [drafts, setDrafts] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +64,14 @@ export function WeekAhead({ today }: { today: string }) {
             return false;
           },
         );
-  const showTriage = inbox.rows.length > 0 && !plan.skipped.includes("triage");
+  const sort = (note: { id: string; body: string }, choice: SortChoice) => {
+    const sorted = sortInbox(note, choice, () => ulid());
+    void write(sorted.ops).then((saved) => {
+      if (saved) setLastSort({ body: note.body, choice, undo: sorted.undo });
+    });
+  };
+  const showTriage =
+    (inbox.rows.length > 0 || lastSort !== undefined) && !plan.skipped.includes("triage");
   const outcomesDone = plan.outcomes.length > 0 || plan.skipped.includes("outcomes");
   const showForm = editing || !outcomesDone;
   const lines = drafts ?? [...plan.outcomes, "", "", ""].slice(0, MAX_OUTCOMES);
@@ -83,8 +100,27 @@ export function WeekAhead({ today }: { today: string }) {
               <span className="pw-step-no" aria-hidden="true">
                 1
               </span>
-              Loose ends <span className="badge">{inbox.rows.length}</span>
+              Loose ends{" "}
+              {inbox.rows.length > 0 && (
+                <span className="badge">{inboxBadge(inbox.rows.length, inboxTotal)}</span>
+              )}
             </h3>
+            {lastSort && (
+              <p className="meta" role="status">
+                {SORTED[lastSort.choice]}: {lastSort.body}{" "}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() =>
+                    void write(lastSort.undo).then((saved) => {
+                      if (saved) setLastSort(undefined);
+                    })
+                  }
+                >
+                  Undo
+                </button>
+              </p>
+            )}
             <ul className="pw-loose">
               {inbox.rows.map((note) => (
                 <li key={note.id}>
@@ -94,7 +130,7 @@ export function WeekAhead({ today }: { today: string }) {
                       <Button
                         key={choice}
                         className={choice === "drop" ? "btn-ghost btn-danger" : undefined}
-                        onClick={() => void write(sortInboxOps(note, choice, () => ulid()))}
+                        onClick={() => sort(note, choice)}
                       >
                         {choice === "task" ? "Task" : choice === "note" ? "Note" : "Drop"}
                       </Button>
@@ -120,8 +156,19 @@ export function WeekAhead({ today }: { today: string }) {
             Up to {MAX_OUTCOMES} outcomes
           </h3>
           {showForm ? (
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
             <form
               className="pw-outcome-form"
+              onKeyDown={
+                // Escape cancels an edit, as Cancel does; the first fill has no Cancel.
+                editing
+                  ? cancelOnEscape(() => {
+                      setEditing(false);
+                      setDrafts(null);
+                      refocusSoon("week-outcomes");
+                    })
+                  : undefined
+              }
               onSubmit={(event) => {
                 event.preventDefault();
                 void write(outcomeOps(json, monday, lines)).then((saved) => {
@@ -180,7 +227,7 @@ export function WeekAhead({ today }: { today: string }) {
                 <p className="meta">Skipped for this week.</p>
               )}
               <div className="pw-actions">
-                <Button onClick={() => setEditing(true)}>
+                <Button {...returnsFocus("week-outcomes")} onClick={() => setEditing(true)}>
                   {plan.outcomes.length > 0 ? "Change" : "Add outcomes"}
                 </Button>
               </div>

@@ -135,6 +135,27 @@ export function exchangeAt(
   return out === null ? { missing: to } : { minor: out };
 }
 
+/**
+ * An entry moved to an account in another currency (F71): the same value in
+ * the new currency, and a line saying so. Without a rate the number stays
+ * and the line asks you to check it.
+ */
+export function switchCurrency(
+  minor: Santim | null,
+  from: string,
+  to: string,
+  rates: Rates,
+): { minor: Santim | null; note: string | null } {
+  if (minor === null || from === to) return { minor, note: null };
+  const out = exchangeAt(minor, from, to, rates);
+  if ("missing" in out) return { minor, note: `No ${out.missing} rate set: check the amount.` };
+  const foreign = from === HOME ? to : from;
+  return {
+    minor: out.minor,
+    note: `Converted ${formatAmount(minor, from)} to ${formatAmount(out.minor, to)} ${rateText(foreign, rates)}.`,
+  };
+}
+
 /** "at 132.50" for a currency with a rate, else "". */
 export const rateText = (currency: string, rates: Rates) =>
   rates[currency] ? `at ${rates[currency].rate}` : "";
@@ -162,6 +183,20 @@ export function convert(
     conversion.missing.set(currency, (conversion.missing.get(currency) ?? 0) + minor);
   else conversion.used.add(currency);
   return etb;
+}
+
+/**
+ * Adds amounts kept in several currencies into one ETB total at the saved
+ * rates; money with no rate is left out and noted in `conversion`.
+ */
+export function sumInEtb(
+  items: { minor: Santim; currency?: string | null | undefined }[],
+  rates: Rates,
+  conversion: Conversion = newConversion(),
+): { total: Santim; conversion: Conversion } {
+  let total = 0;
+  for (const item of items) total += convert(conversion, rates, item.minor, item.currency) ?? 0;
+  return { total, conversion };
 }
 
 /** Joins what several totals converted. */

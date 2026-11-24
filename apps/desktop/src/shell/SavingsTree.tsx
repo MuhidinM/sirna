@@ -46,7 +46,8 @@ function Stars({ seed }: { seed: number }) {
   const rand = seeded(seed);
   const sparkles = Array.from({ length: 16 }, () => ({
     x: 20 + rand() * (WIDE - 40),
-    y: 14 + rand() * 120,
+    // Below the title and the "Goal:" label row (y 15-45), so no star sits on text (F111).
+    y: 50 + rand() * 90,
     r: 2.6 + rand() * 2.6,
   }));
   const dots = Array.from({ length: 70 }, () => ({

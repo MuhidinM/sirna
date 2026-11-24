@@ -9,7 +9,7 @@ import { type Op } from "../kernel/db";
 import { ACCOUNTS_SQL } from "../features/money/accounts";
 import { SAVINGS_TRANSFERS_SQL } from "../features/savings/savings";
 import { openTestDb } from "../test/sqlite";
-import { echo, toOps } from "./ops";
+import { echo, type SavingGoal, toOps } from "./ops";
 import { type ParseOptions, parseCapture } from "./parse";
 
 const nowMs = Date.parse("2026-11-23T12:00:00+03:00");
@@ -41,7 +41,7 @@ function setup(extra: Partial<ParseOptions> = {}) {
     ...extra,
   };
   let n = 0;
-  const save = (text: string, goal: { id: string; title: string } | null = null) => {
+  const save = (text: string, goal: SavingGoal | null = null) => {
     const parsed = parseCapture(text, options);
     const ops = toOps(parsed, {
       nowMs,
@@ -55,8 +55,42 @@ function setup(extra: Partial<ParseOptions> = {}) {
   return { db, options, save };
 }
 
+/** A goal holding 100,000 ETB, all of it in CBO savings: a take-out may move it. */
+const rich: SavingGoal = {
+  id: "g1",
+  title: "Laptop",
+  saved_minor: 10_000_000,
+  held_minor: 10_000_000,
+  room: { "cbo-savings": 10_000_000 },
+};
+
 const all = (db: Db, sql: string, ...params: (string | number)[]) =>
   db.prepare(sql).all(...params) as Record<string, string | number | null>[];
+
+describe("a bare account word at the end (F118)", () => {
+  it("names the account and leaves the description", () => {
+    const { save } = setup();
+    const rent = save("paid rent 8000 cash");
+    expect(rent.parsed).toMatchObject({ kind: "expense", description: "rent", account: "cash" });
+    const lunch = save("lunch 300 telebirr");
+    expect(lunch.parsed).toMatchObject({
+      kind: "expense",
+      description: "lunch",
+      account: "telebirr",
+    });
+    expect(lunch.echo).toBe("300 ETB · Food · telebirr");
+  });
+
+  it("names the account on a loan too, and leaves a lone word alone", () => {
+    const { save } = setup();
+    expect(save("lent abel 500 telebirr").parsed).toMatchObject({
+      kind: "loan",
+      person: "abel",
+      account: "telebirr",
+    });
+    expect(save("lunch 300").parsed).toMatchObject({ description: "lunch", account: "cash" });
+  });
+});
 
 describe("an entry's currency is its account's", () => {
   it("puts a dollar amount with no @account in the first dollar account", () => {
@@ -111,7 +145,7 @@ describe("an entry's currency is its account's", () => {
       "hosting €50",
       "lunch $5 @cash",
     ])
-      save(text, { id: "g1", title: "Laptop" });
+      save(text, rich);
     expect(
       all(
         db,
@@ -229,7 +263,7 @@ describe("saving from the capture box is Put aside", () => {
 
   it("reverses for took … from", () => {
     const { db, save } = setup();
-    expect(save("took 2000 from laptop", { id: "g1", title: "Laptop" }).echo).toBe(
+    expect(save("took 2000 from laptop", rich).echo).toBe(
       "Took out 2,000 ETB · Laptop · CBO savings → CBO",
     );
     expect(all(db, "SELECT account, amount_minor FROM money_txns ORDER BY amount_minor")).toEqual([

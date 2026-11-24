@@ -15,6 +15,8 @@ use tauri::Manager;
 const REMINDED_KEY: &str = "bills.reminded";
 /// Money that goes up to this many days early still counts for the date.
 const EARLY_DAYS: i64 = 7;
+/// As LATE_KEEP_DAYS in regulars.ts: how far back an unpaid date is still worked out.
+const LATE_KEEP_DAYS: i64 = 366;
 
 // --- Dates ------------------------------------------------------------------------
 
@@ -79,6 +81,21 @@ pub fn read_rule(json: &str) -> Option<Rule> {
     }
 }
 
+/// Dates you skipped, kept in rule_json next to the rule (readSkips in regulars.ts).
+pub fn read_skips(json: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(json)
+        .ok()
+        .and_then(|value| {
+            value.get("skip").and_then(Value::as_array).map(|dates| {
+                dates
+                    .iter()
+                    .filter_map(|date| date.as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
 /// Every date the rule falls on, from `from` to `to` (inclusive).
 pub fn occurrences(rule: &Rule, from: &str, to: &str) -> Vec<String> {
     let (Some(start), Some(end)) = (day_number(from), day_number(to)) else {
@@ -130,6 +147,8 @@ pub struct Bill {
     pub category_id: Option<String>,
     /// The logical date you added it: earlier occurrences aren't asked about.
     pub since: String,
+    /// Its currency (its account's); only entries in it settle it.
+    pub currency: String,
 }
 
 #[derive(Debug, Clone)]
@@ -140,11 +159,13 @@ pub struct Txn {
     pub local_date: String,
     pub description: Option<String>,
     pub category_id: Option<String>,
+    pub currency: String,
 }
 
-/// An expense you typed that is this bill: its name in the words, or its category and amount.
+/// An expense you typed that is this bill: its name in the words, or its
+/// category and amount. Only in the bill's own currency: 15 birr is not $15.
 fn pays_bill(bill: &Bill, txn: &Txn) -> bool {
-    if txn.amount >= 0 {
+    if txn.amount >= 0 || txn.currency != bill.currency {
         return false;
     }
     let name = bill.name.trim().to_lowercase();
@@ -169,6 +190,9 @@ pub fn window(tomorrow: &str) -> (String, String, String) {
     let today = shift(tomorrow, -1);
     let month_start = format!("{}-01", &today[..7.min(today.len())]);
     let last_month = format!("{}-01", &shift(&month_start, -1)[..7]);
+    // Or further back, while an unpaid date is still kept (LATE_KEEP_DAYS).
+    let keep = shift(&today, -LATE_KEEP_DAYS);
+    let last_month = if keep < last_month { keep } else { last_month };
     let entries_from = shift(&last_month, -EARLY_DAYS);
     let month_end = shift(&format!("{}-01", &shift(&month_start, 31)[..7]), -1);
     let to = if tomorrow > month_end.as_str() {
@@ -212,7 +236,11 @@ pub fn due_tomorrow(bills: &[Bill], txns: &[Txn], tomorrow: &str) -> Vec<(String
         } else {
             from.clone()
         };
-        let dates = occurrences(&rule, &start, &until);
+        let skipped = read_skips(&bill.rule_json);
+        let dates: Vec<String> = occurrences(&rule, &start, &until)
+            .into_iter()
+            .filter(|date| !skipped.contains(date))
+            .collect();
         for (index, date) in dates.iter().enumerate() {
             let done = txns
                 .iter()
@@ -332,17 +360,36 @@ pub fn toast_text(due: &[(String, i64)]) -> String {
 
 // --- Reading -----------------------------------------------------------------------
 
-const BILLS_SQL: &str = "SELECT id, name, amount_minor, rule_json, category_id, created_at
-     FROM money_regulars WHERE deleted_at IS NULL AND active = 1 AND kind = 'bill'";
+/// A row's currency, as rowCurrencySql in currency.ts: its own when not birr, else its account's.
+macro_rules! row_currency {
+    ($row:literal) => {
+        concat!(
+            "CASE WHEN ",
+            $row,
+            ".currency <> 'ETB' THEN ",
+            $row,
+            ".currency ELSE COALESCE(acc.currency, 'ETB') END"
+        )
+    };
+}
+
+const BILLS_SQL: &str = concat!(
+    "SELECT r.id, r.name, r.amount_minor, r.rule_json, r.category_id, r.created_at, ",
+    row_currency!("r"),
+    " FROM money_regulars r LEFT JOIN money_accounts acc ON acc.id = r.account
+     WHERE r.deleted_at IS NULL AND r.active = 1 AND r.kind = 'bill'"
+);
 
 /// The same rows as REGULAR_TXNS_SQL in regulars.ts.
-const TXNS_SQL: &str =
-    "SELECT regular_id, due_date, amount_minor, local_date, description, category_id
-     FROM money_txns
-     WHERE deleted_at IS NULL AND transfer_id IS NULL
-       AND ((regular_id IS NOT NULL AND due_date >= ?1 AND due_date <= ?2)
-         OR (regular_id IS NULL AND local_date >= ?1 AND local_date <= ?2))
-     ORDER BY local_date, rowid";
+const TXNS_SQL: &str = concat!(
+    "SELECT t.regular_id, t.due_date, t.amount_minor, t.local_date, t.description, t.category_id, ",
+    row_currency!("t"),
+    " FROM money_txns t LEFT JOIN money_accounts acc ON acc.id = t.account
+     WHERE t.deleted_at IS NULL AND t.transfer_id IS NULL
+       AND ((t.regular_id IS NOT NULL AND t.due_date >= ?1 AND t.due_date <= ?2)
+         OR (t.regular_id IS NULL AND t.local_date >= ?1 AND t.local_date <= ?2))
+     ORDER BY t.local_date, t.rowid"
+);
 
 pub fn load(conn: &Connection, tomorrow: &str) -> rusqlite::Result<Vec<(String, i64)>> {
     let bills = conn
@@ -355,6 +402,7 @@ pub fn load(conn: &Connection, tomorrow: &str) -> rusqlite::Result<Vec<(String, 
                 rule_json: row.get(3)?,
                 category_id: row.get(4)?,
                 since: tasks::logical_day(row.get::<_, i64>(5)?).0,
+                currency: row.get(6)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -372,6 +420,7 @@ pub fn load(conn: &Connection, tomorrow: &str) -> rusqlite::Result<Vec<(String, 
                 local_date: row.get(3)?,
                 description: row.get(4)?,
                 category_id: row.get(5)?,
+                currency: row.get(6)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -443,6 +492,7 @@ mod tests {
             rule_json: rule.into(),
             category_id: Some("cat_housing".into()),
             since: "2026-01-01".into(),
+            currency: "ETB".into(),
         }
     }
 
@@ -454,6 +504,7 @@ mod tests {
             local_date: date.into(),
             description: Some(what.into()),
             category_id: Some("cat_food".into()),
+            currency: "ETB".into(),
         }
     }
 
@@ -671,8 +722,8 @@ mod tests {
         assert_eq!(
             window("2026-12-01"),
             (
-                "2026-10-01".into(),
-                "2026-09-24".into(),
+                "2025-11-29".into(),
+                "2025-11-22".into(),
                 "2026-12-01".into()
             )
         );
@@ -715,5 +766,49 @@ mod tests {
         )
         .expect("insert");
         assert_eq!(load(&conn, "2026-12-01").expect("load"), []);
+    }
+
+    #[test]
+    fn a_skipped_date_is_not_asked_about() {
+        let iddir = bill(
+            "iddir",
+            "Iddir",
+            20_000,
+            r#"{"every":"month","day":24,"skip":["2026-11-24"]}"#,
+        );
+        assert_eq!(read_skips(&iddir.rule_json), ["2026-11-24"]);
+        assert_eq!(
+            due_tomorrow(std::slice::from_ref(&iddir), &[], "2026-11-24"),
+            []
+        );
+        assert_eq!(
+            due_tomorrow(&[iddir], &[], "2026-12-24"),
+            [("Iddir".to_string(), 20_000)]
+        );
+    }
+
+    #[test]
+    fn birr_does_not_settle_a_dollar_bill() {
+        let mut conn = Connection::open_in_memory().expect("open");
+        db::configure(&conn).expect("pragmas");
+        migrate::run(&mut conn, migrate::MIGRATIONS, 0).expect("migrate");
+        conn.execute_batch(
+            "INSERT INTO money_regulars (id, kind, name, amount_minor, rule_json, account, created_at, updated_at)
+               VALUES ('figma', 'bill', 'Figma', 1500, '{\"every\":\"month\",\"day\":26}', 'wise', 0, 0);
+             INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, created_at, updated_at)
+               VALUES ('t', 'cash', 0, '2026-11-24', -1500, 'figma', 0, 0);",
+        )
+        .expect("insert");
+        assert_eq!(
+            load(&conn, "2026-11-26").expect("load"),
+            [("Figma".to_string(), 1500)]
+        );
+        conn.execute(
+            "INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, created_at, updated_at)
+             VALUES ('u', 'wise', 0, '2026-11-24', -1500, 'figma', 0, 0)",
+            [],
+        )
+        .expect("insert");
+        assert_eq!(load(&conn, "2026-11-26").expect("load"), []);
     }
 }

@@ -195,7 +195,7 @@ describe("several money items on one line", () => {
       ],
     });
     expect(echo(parsed, sunday)).toBe(
-      "4 entries · +25,000 salary, saved 500 laptop, lent Abel 1,500, moved 2,000 CBO → Cash",
+      "4 entries · +25,000 salary (CBO), saved 500 laptop, lent Abel 1,500, moved 2,000 CBO → Cash",
     );
   });
 

@@ -1,12 +1,24 @@
 /** Turns a parsed capture into database ops and a one-line echo (plan §3.5). */
 import { type Op } from "../kernel/db";
-import { logicalDate } from "../kernel/dates";
+import { localDate, logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber } from "../kernel/money";
+import { formatEstimate } from "../features/plan/now";
 import { placeIdea, type Placement } from "../features/projects/idea";
+import { PROJECT_STATUSES } from "../features/projects/projects";
 import { transferOps } from "../features/money/accounts";
+import { fromEtb, type Rates } from "../features/money/currency";
 import { ruleText } from "../features/money/regulars";
-import { loanEchoText, loanOps } from "../features/money/loans";
-import { moveOps, transferSavingOps } from "../features/savings/savings";
+import { loanEchoText, loanOps, named } from "../features/money/loans";
+import {
+  checkTakeOut,
+  checkTakeOutFrom,
+  giveOps,
+  moveOps,
+  takeOutOps,
+  type TransferPart,
+  transferPartsOps,
+  type WaitingEntry,
+} from "../features/savings/savings";
 import {
   type LoanItem,
   type MoneyItem,
@@ -17,15 +29,82 @@ import {
 } from "./parse";
 import { weekdayName } from "./when";
 
+/**
+ * A goal as the capture box knows it. A take-out needs what the goal holds
+ * (`saved_minor`, `held_minor`) and what each savings account can give it
+ * (`room`, by account id): without them it is refused, as on the goal card.
+ */
+export interface SavingGoal {
+  id: string;
+  title: string;
+  saved_minor?: number;
+  held_minor?: number;
+  room?: Record<string, number>;
+}
+
 export interface OpsContext {
   nowMs: number;
   newId: () => string;
   /** Where an idea lands (features/projects/idea.ts); without it, an unplaced idea. */
   idea?: Placement;
   /** The goal a saving goes to (matched in the capture box); null waits for one. */
-  savingGoal?: { id: string; title: string } | null;
-  /** The goal each saving on a several-item line goes to, by its words. */
-  goalOf?: (words: string | undefined) => { id: string; title: string } | null;
+  savingGoal?: SavingGoal | null;
+  /**
+   * The goal each saving on a several-item line goes to, by its words; with
+   * no words, by the sign of the saving (`minor`: money out of savings comes
+   * from a finished goal that holds it).
+   */
+  goalOf?: (words: string | undefined, minor?: number) => SavingGoal | null;
+  /** ETB worth in each savings account that no goal holds yet (by account id). */
+  unclaimed?: Record<string, number>;
+  /** Savings accounts with no balance set yet (by id). */
+  unset?: string[];
+  /** Savings waiting for a goal: a saving of money already there takes them first. */
+  waiting?: WaitingEntry[];
+  /**
+   * Where a transfer into or out of a savings account goes: the goal (or
+   * goals) charged, and any part no goal had. See transferGoal.
+   */
+  transferGoal?: (saving: { account: string; minor: number }) => TransferPart[];
+}
+
+/**
+ * How a take-out through a savings account splits, as takeOutOps does it:
+ * `moved` leaves the account, `plain` only lowers the goal's number (it was
+ * put aside inside a spending account). ETB worth; null when nothing moves
+ * through an account.
+ */
+export function takeOutSplit(
+  parsed: Pick<SavingItem, "amount" | "worth" | "spend" | "savings">,
+  goal: SavingGoal | null | undefined,
+): { moved: number; plain: number } | null {
+  if (parsed.amount >= 0 || !goal || !parsed.spend || !parsed.savings) return null;
+  const worth = -(parsed.worth ?? parsed.amount);
+  const room = goal.room?.[parsed.savings.id] ?? 0;
+  const moved = Math.max(0, Math.min(worth, goal.held_minor ?? 0, room));
+  return { moved, plain: worth - moved };
+}
+
+/**
+ * An open project with the same title, case and spaces aside (F91). Done and
+ * dropped ones don't count: starting one again is a new project.
+ */
+export const SAME_PROJECT_SQL = `SELECT id, status FROM project_items
+  WHERE deleted_at IS NULL AND status NOT IN ('done', 'dropped')
+    AND lower(trim(title)) = lower(trim(?))
+  ORDER BY created_at`;
+
+/** The placement for an idea you already have: nothing is saved, the echo says where it is. */
+export function sameProject(placement: Placement, row: { id: string; status: string }): Placement {
+  const label = PROJECT_STATUSES.find((entry) => entry.status === row.status)?.label ?? row.status;
+  return {
+    ...placement,
+    existing: row.id,
+    echo:
+      row.status === "idea"
+        ? "Already an idea · see Projects"
+        : `Already a project (${label}) · see Projects`,
+  };
 }
 
 /** Sets `currency` on the money rows of some ops, when it isn't birr. */
@@ -133,15 +212,23 @@ function transferPieceOps(parsed: TransferItem, context: OpsContext): Op[] {
     origin: "capture",
   }).map((op) => withoutBirr(op));
   if (!parsed.saving) return ops;
+  // Out of savings, only a goal holding it there is charged (F32, F33).
+  const parts = context.transferGoal?.(parsed.saving) ?? [
+    {
+      goalId: context.goalOf?.(undefined, parsed.saving.minor)?.id ?? null,
+      minor: parsed.saving.minor,
+      unheld: false,
+    },
+  ];
   return [
     ...ops,
-    ...transferSavingOps({
+    ...transferPartsOps({
       saving: parsed.saving,
-      goalId: context.goalOf?.(undefined)?.id ?? null,
+      parts,
       transferId,
       nowMs,
       date: parsed.date,
-      id: newId(),
+      newId,
       origin: "capture",
     }),
   ];
@@ -161,12 +248,53 @@ function withoutBirr(op: Op): Op {
  */
 function savingOps(
   parsed: SavingItem,
-  nowMs: number,
-  newId: () => string,
-  goal: { id: string; title: string } | null | undefined,
+  context: OpsContext,
+  goal: SavingGoal | null | undefined,
 ): Op[] {
+  const { nowMs, newId } = context;
   const date = logicalDate(nowMs);
   const worth = parsed.worth ?? parsed.amount;
+  // Take out keeps the goal card's rules (F8): a goal named, no more than it
+  // holds, and only what the savings account holds for it moves out.
+  if (parsed.amount < 0) {
+    if (!goal) throw "Name the goal to take it from: took 2000 from laptop";
+    const taken = -worth;
+    const saved = { saved_minor: goal.saved_minor ?? 0, held_minor: goal.held_minor ?? 0 };
+    if (parsed.spend && parsed.savings) {
+      const available = goal.room?.[parsed.savings.id] ?? 0;
+      const problem = checkTakeOutFrom(saved, taken, available, parsed.savings.name);
+      if (problem) throw problem;
+      const currency = parsed.currency ?? "ETB";
+      return takeOutOps({
+        goal: { id: goal.id, held_minor: saved.held_minor },
+        amount: -parsed.amount,
+        spend: { ...parsed.spend, currency },
+        savings: { ...parsed.savings, currency },
+        nowMs,
+        date,
+        ids: { entry: newId(), halves: [newId(), newId()], transfer: newId(), plain: newId() },
+        entryMinor: taken,
+        available,
+        origin: "capture",
+        note: parsed.goal ?? null,
+      }).ops.map((op) => withoutBirr(op));
+    }
+    const problem = checkTakeOut(saved, taken);
+    if (problem) throw problem;
+  }
+  // Dollars already in a dollar savings account, with no dollar account to
+  // move them from: the goal is given what the account holds (F36).
+  if (parsed.amount > 0 && parsed.savings && !parsed.spend) {
+    // No balance set: what it holds is unknown, not nothing (F36).
+    if (context.unset?.includes(parsed.savings.id))
+      throw `${parsed.savings.name} has no balance yet: set it in Money → Accounts first`;
+    const free = context.unclaimed?.[parsed.savings.id] ?? 0;
+    if (worth > free)
+      throw `${parsed.savings.name} holds ${formatAmount(free)} no goal has yet: save that much or less`;
+    if (!goal) throw "Name the goal: saved $50 laptop";
+    // Savings waiting there for a goal go first, so none is counted twice (reg0-2).
+    return giveOps(goal.id, parsed.savings.id, worth, context.waiting ?? [], nowMs, date, newId);
+  }
   if (parsed.spend && parsed.savings) {
     const currency = parsed.currency ?? "ETB";
     return moveOps({
@@ -211,7 +339,7 @@ function pieceOps(piece: MoneyPiece, context: OpsContext): Op[] {
     case "transfer":
       return transferPieceOps(piece, context);
     case "saving":
-      return savingOps(piece, nowMs, newId, goalOf ? goalOf(piece.goal) : null);
+      return savingOps(piece, context, goalOf ? goalOf(piece.goal, piece.amount) : null);
   }
 }
 
@@ -227,10 +355,13 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
           values: {
             title: parsed.title,
             // An undated task with an estimate is meant to be done soon: the day
-            // planner fits it into free slots. Without either, it waits as someday.
+            // planner fits it into free slots. One tagged with one of your areas
+            // goes on that area's list inside its blocks (time first, rule 6); a
+            // `#tag` that names no area doesn't. Without any of these, it waits
+            // as someday.
             status: parsed.waitingOn
               ? "waiting"
-              : parsed.dueDate || parsed.estimateMin
+              : parsed.dueDate || parsed.estimateMin || parsed.areaKnown
                 ? "todo"
                 : "someday",
             due_date: parsed.dueDate ?? null,
@@ -262,6 +393,8 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
     case "transfer":
       return transferPieceOps(parsed, context);
     case "idea":
+      // Already a project with this title: the line is kept, no second project (F91).
+      if (idea?.existing) return [];
       return [
         {
           op: "insert",
@@ -289,11 +422,22 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
         },
       ];
     case "saving":
-      return savingOps(parsed, nowMs, newId, savingGoal);
+      return savingOps(parsed, context, savingGoal);
     case "search":
     case "away":
+    case "back":
     case "focus":
       return [];
+    case "block":
+      // Only the status changes, logged under the capture so Ctrl+Z puts it back.
+      return [
+        {
+          op: "update",
+          table: "day_blocks",
+          id: parsed.blockId,
+          values: { status: parsed.status },
+        },
+      ];
   }
 }
 
@@ -302,6 +446,7 @@ function dayLabel(date: string, nowMs: number): string {
   if (date === today) return "Today";
   const tomorrow = logicalDate(nowMs + 24 * 60 * 60 * 1000);
   if (date === tomorrow) return "Tomorrow";
+  if (date === logicalDate(nowMs - 24 * 60 * 60 * 1000)) return "Yesterday";
   const [, month = "", day = ""] = date.split("-");
   const months = [
     "Jan",
@@ -317,8 +462,14 @@ function dayLabel(date: string, nowMs: number): string {
     "Nov",
     "Dec",
   ];
-  return `${weekdayName(date)} ${Number(day)} ${months[Number(month) - 1] ?? ""}`;
+  // Another year says which (F42): "Sat 25 Dec 2027".
+  const year = date.slice(0, 4) === today.slice(0, 4) ? "" : ` ${date.slice(0, 4)}`;
+  return `${weekdayName(date)} ${Number(day)} ${months[Number(month) - 1] ?? ""}${year}`;
 }
+
+/** "tomorrow" mid-line; a dated day ("Fri 27 Nov") keeps its capitals. */
+const midLine = (label: string) =>
+  label === "Today" || label === "Tomorrow" || label === "Yesterday" ? label.toLowerCase() : label;
 
 function timeLabel(epochMs: number): string {
   // Local Addis time, 24-hour (plan §3.5: the chip always shows a 24-hour time).
@@ -342,13 +493,32 @@ const arrived = (piece: TransferItem) =>
 const savingNote = (piece: TransferItem) =>
   piece.saving ? (piece.saving.minor > 0 ? " · counts as saving" : " · taken from savings") : "";
 
-/** One record of a several-item line, short: `lunch 120`, `lent Abel 1,500`. */
-export function pieceText(piece: MoneyPiece): string {
+/** " (telebirr)" after a piece when it isn't the usual account, as accountOf (F109). */
+const pieceAccount = (item: MoneyItem) =>
+  item.accountName && !(item.kind === "expense" && item.account === "cash")
+    ? ` (${item.accountName})`
+    : "";
+
+/** " · Yesterday" when money is booked on another day than today (F79). */
+const bookedOn = (item: MoneyItem, nowMs: number) =>
+  item.date && item.date !== logicalDate(nowMs) ? ` · ${dayLabel(item.date, nowMs)}` : "";
+
+/** " yesterday", " Mon 23 Nov": a piece booked on another day than today (reg2-9). */
+const pieceDay = (item: MoneyItem, nowMs: number | undefined) =>
+  nowMs !== undefined && item.date && item.date !== logicalDate(nowMs)
+    ? ` ${midLine(dayLabel(item.date, nowMs))}`
+    : "";
+
+/**
+ * One record of a several-item line, short: `lunch 120`, `lent Abel 1,500`.
+ * With `nowMs`, a piece on another day says which (`taxi 40 yesterday`).
+ */
+export function pieceText(piece: MoneyPiece, nowMs?: number): string {
   switch (piece.kind) {
     case "expense":
-      return `${piece.description} ${listAmount(piece.amount, piece.currency)}`;
+      return `${piece.description} ${listAmount(piece.amount, piece.currency)}${pieceDay(piece, nowMs)}${pieceAccount(piece)}`;
     case "income":
-      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}`;
+      return `+${listAmount(piece.amount, piece.currency)} ${piece.description}${pieceDay(piece, nowMs)}${pieceAccount(piece)}`;
     case "saving":
       return `${piece.amount > 0 ? "saved" : "took out"} ${listAmount(Math.abs(piece.amount), piece.currency)}${piece.goal ? ` ${piece.goal}` : ""}${piece.unbacked ? ` (${piece.unbacked}, money stays put)` : ""}`;
     case "transfer":
@@ -357,13 +527,13 @@ export function pieceText(piece: MoneyPiece): string {
       const amount = listAmount(piece.amount, piece.currency);
       switch (piece.loanKind) {
         case "lent":
-          return `lent ${piece.person} ${amount}`;
+          return `lent ${named(piece.person)} ${amount}`;
         case "borrowed":
-          return `borrowed ${amount} from ${piece.person}`;
+          return `borrowed ${amount} from ${named(piece.person)}`;
         case "paid_me":
-          return `${piece.person} paid back ${amount}`;
+          return `${named(piece.person)} paid back ${amount}`;
         case "i_paid":
-          return `paid back ${piece.person} ${amount}`;
+          return `paid back ${named(piece.person)} ${amount}`;
       }
     }
   }
@@ -379,14 +549,42 @@ export function affordState(answer: string): AffordState | undefined {
   return undefined;
 }
 
+/**
+ * `groceries 1200 @wise` with $300 in Wise: the number went in as dollars,
+ * more than the account holds, so the chip says so and what 1,200 birr would
+ * be. Only a hint: the line still saves as typed.
+ */
+export function balanceNote(
+  parsed: Parsed,
+  balances: Record<string, number | null>,
+  rates: Rates,
+): string {
+  if (parsed.kind !== "expense" || !parsed.bare || !parsed.account || !parsed.currency) return "";
+  const balance = balances[parsed.account];
+  if (balance === null || balance === undefined || parsed.amount <= balance) return "";
+  const held = ` · only ${formatAmount(balance, parsed.currency)} there`;
+  const birr = fromEtb(parsed.amount, parsed.currency, rates);
+  return birr === null
+    ? held
+    : `${held}; ${formatNumber(parsed.amount)} birr would be ≈ ${formatAmount(birr, parsed.currency)}`;
+}
+
 /** The short confirmation shown in the capture box. */
 export function echo(
   parsed: Parsed,
   nowMs: number,
   idea?: Placement,
-  savingGoal?: { id: string; title: string } | null,
+  savingGoal?: SavingGoal | null,
+  known: {
+    /** Whether you have an active savings goal: "no goal yet" or "no goal named" (F76). */
+    hasGoals?: boolean;
+    /** Your areas, so the echo names one ("Job A") rather than its id (F78). */
+    areas?: { id: string; name: string }[];
+  } = {},
 ): string {
-  const area = "area" in parsed && parsed.area ? ` · #${parsed.area}` : "";
+  const areaId = "area" in parsed ? parsed.area : undefined;
+  const areaName = areaId ? known.areas?.find((row) => row.id === areaId)?.name : undefined;
+  const area = areaName ? ` · ${areaName}` : areaId ? ` · #${areaId}` : "";
   switch (parsed.kind) {
     case "task": {
       if (parsed.waitingOn) {
@@ -402,14 +600,25 @@ export function echo(
             : parsed.plannedWindow
               ? ` ${parsed.plannedWindow}`
               : "";
-      const when = parsed.dueDate
-        ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
-        : parsed.estimateMin
-          ? " · planned into free time"
-          : " · Someday";
+      // "tonight" typed after midnight is the calendar evening: say Tonight, not Tomorrow.
+      // With a time ("tonight 9pm") too, as typed (F86).
+      const tonight =
+        (parsed.tonight === true ||
+          (parsed.plannedWindow === "evening" && parsed.dueAt === undefined)) &&
+        parsed.dueDate === localDate(nowMs) &&
+        parsed.dueDate !== logicalDate(nowMs);
+      const when = tonight
+        ? ` · Tonight${parsed.dueAt !== undefined ? span : ""}`
+        : parsed.dueDate
+          ? ` · ${dayLabel(parsed.dueDate, nowMs)}${span}`
+          : parsed.estimateMin
+            ? " · planned into free time"
+            : parsed.areaKnown
+              ? " · in its area's blocks"
+              : " · Someday";
       const size =
         parsed.estimateMin && parsed.dueAt === undefined
-          ? ` · ~${Math.round((parsed.estimateMin / 60) * 10) / 10} h`
+          ? ` · ${formatEstimate(parsed.estimateMin)}`
           : "";
       const repeat = parsed.repeat ? ` · ${ruleText(parsed.repeat)}` : "";
       return `Task${when}${repeat}${size}${area}`;
@@ -424,17 +633,18 @@ export function echo(
         : loanEchoText(parsed.loanKind, parsed.person, parsed.amount, null);
       return `${text}${parsed.accountName && parsed.account !== "cash" ? ` · ${parsed.accountName}` : ""}`;
     }
+    // No `#area` here: a money line doesn't save one, so the echo doesn't claim it (F78).
     case "expense":
-      return `${formatAmount(parsed.amount, parsed.currency)} · ${categoryOf(parsed)}${accountOf(parsed)}${area}`;
+      return `${formatAmount(parsed.amount, parsed.currency)} · ${categoryOf(parsed)}${bookedOn(parsed, nowMs)}${accountOf(parsed)}`;
     case "income":
-      return `Income · ${formatAmount(parsed.amount, parsed.currency)} · ${parsed.jobName ?? categoryOf(parsed)}${accountOf(parsed)}${area}`;
+      return `Income · ${formatAmount(parsed.amount, parsed.currency)} · ${parsed.jobName ?? categoryOf(parsed)}${bookedOn(parsed, nowMs)}${accountOf(parsed)}`;
     case "money": {
       // Birr spending adds up; other currencies are listed with their sign.
       const out = parsed.items.filter(
         (item): item is MoneyItem => item.kind === "expense" && (item.currency ?? "ETB") === "ETB",
       );
       const total = out.reduce((sum, item) => sum + item.amount, 0);
-      const parts = parsed.items.map(pieceText);
+      const parts = parsed.items.map((item) => pieceText(item, nowMs));
       return `${parsed.items.length} entries · ${parts.join(", ")}${out.length ? ` · ${formatAmount(total)} out` : ""}`;
     }
     case "note":
@@ -446,28 +656,50 @@ export function echo(
     case "feedback":
       return "Feedback noted";
     case "inbox":
-      return parsed.why ?? "Saved · will ask tonight";
+      // "Inbox", not "Saved": after `saved 300 car` that read as money saved (F76).
+      return parsed.why ?? "Inbox · will ask tonight";
     case "search":
       return `Search: ${parsed.query}`;
     case "away":
-      return parsed.until ? `Away until ${dayLabel(parsed.until, nowMs)}` : "Away";
+      // With no day, set_away keeps you away until tomorrow (F41).
+      return `Away until ${midLine(parsed.until ? dayLabel(parsed.until, nowMs) : "Tomorrow")}`;
+    case "back":
+      return "Back · away is off";
     case "focus":
       return "Focus";
+    case "block":
+      return parsed.status === "done" ? `${parsed.title} ✓` : `${parsed.title} skipped`;
     case "saving": {
       const what = parsed.amount > 0 ? "Saved" : "Took out";
       const where = savingGoal
         ? ` · ${savingGoal.title}`
         : savingGoal === null
-          ? " · no goal yet: add one on the Dashboard"
+          ? known.hasGoals
+            ? " · no goal named: give it one on the Dashboard"
+            : " · no goal yet: add one on the Dashboard"
           : "";
+      // A take-out that is only partly in the savings account says which
+      // part moved, like the goal card (F75).
+      const split = takeOutSplit(parsed, savingGoal);
+      const route =
+        parsed.spend && parsed.savings ? `${parsed.savings.name} → ${parsed.spend.name}` : "";
       const moved =
-        parsed.spend && parsed.savings
-          ? parsed.amount > 0
-            ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
-            : ` · ${parsed.savings.name} → ${parsed.spend.name}`
-          : parsed.unbacked
-            ? ` · ${parsed.unbacked}, so the money stays where it is`
-            : "";
+        split && split.plain > 0
+          ? split.moved > 0
+            ? ` · ${formatAmount(split.moved)} ${route}; ${formatAmount(split.plain)} was already in your spending accounts`
+            : " · it was already in your spending accounts, so only the goal went down"
+          : parsed.spend && parsed.savings
+            ? parsed.amount > 0
+              ? ` · ${parsed.spend.name} → ${parsed.savings.name}`
+              : // Before Enter the goal's holdings aren't known: no route is promised (F8).
+                savingGoal === undefined
+                ? ""
+                : ` · ${parsed.savings.name} → ${parsed.spend.name}`
+            : parsed.savings
+              ? ` · from what ${parsed.savings.name} already holds`
+              : parsed.unbacked
+                ? ` · ${parsed.unbacked}, so the money stays where it is`
+                : "";
       return `${what} ${formatAmount(Math.abs(parsed.amount), parsed.currency)}${where}${moved}`;
     }
   }

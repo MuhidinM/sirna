@@ -35,7 +35,17 @@ export interface AreaInput {
   priorityRank: number;
   active: boolean;
   kind: "work" | "growth" | "health" | "faith" | "admin";
+  /**
+   * A running project's weekly hours (plan §3.8, F50): its own entry, with
+   * id `project:<id>`, the project's title as its name and `areaId` its area.
+   * Its blocks hold the project's tasks.
+   */
+  projectId?: string;
+  areaId?: string;
 }
+
+/** The planner key of a project entry. */
+export const projectKey = (projectId: string) => `project:${projectId}`;
 
 export interface TemplateBlock {
   startMin: number;
@@ -59,6 +69,8 @@ export interface TaskInput {
   atMin?: number | null;
   /** The part of this day it asked for. */
   window?: DayWindow | null;
+  /** The project it belongs to: a running project's blocks hold it. */
+  projectId?: string | null;
   /**
    * A step of a split task: planned after the steps before it; `waits` while
    * one of them is still to do (then it is never in Top 3).
@@ -97,6 +109,8 @@ export interface KeptBlock {
   kind?: TemplateBlock["kind"];
   /** Its area: a timed task of that area inside it is listed there (rule 1). */
   areaId?: string | null;
+  /** Its project: a kept project block is the project's time, not its area's. */
+  projectId?: string | null;
 }
 
 export interface PlanInput {
@@ -147,6 +161,8 @@ export interface PlannedBlock {
   title: string;
   /** A task's own block (timed, window or neutral), titled with the task. */
   fromTask?: boolean;
+  /** A running project's block (its area is `areaId`). */
+  projectId?: string | null;
 }
 
 export interface DayPlan {
@@ -193,6 +209,17 @@ function overlaps(
 }
 
 const QUARTER = 15;
+
+/**
+ * What the buffer leaves of a slot (`minutes`) ends on the quarter hour, so a
+ * plan reads 17:15-18:00, not 17:15-18:12; the minutes cut off join the
+ * buffer. A slot the buffer doesn't reach is used whole.
+ */
+function onGrid(startMin: number, minutes: number, slotMin: number): number {
+  if (minutes >= slotMin) return slotMin;
+  const end = Math.floor((startMin + minutes) / QUARTER) * QUARTER;
+  return Math.max(0, end - startMin);
+}
 
 /**
  * The first start in [from, until) where `length` minutes fit between the busy
@@ -313,12 +340,25 @@ export function generateDay(input: PlanInput): DayPlan {
     blocks.push({ ...event, kind: "fixed", areaId: null, taskId: null });
 
   const activeAreas = input.areas.filter((area) => area.active);
+  const running = new Set(activeAreas.flatMap((area) => (area.projectId ? [area.projectId] : [])));
+  /** Whose time a task takes: its running project's, else its area's. */
+  const keyOf = (task: TaskInput): string | null =>
+    task.projectId && running.has(task.projectId) ? projectKey(task.projectId) : task.areaId;
   const keptTasks = new Set([
     ...input.kept.flatMap((kept) => (kept.taskId ? [kept.taskId] : [])),
     ...(input.removedTaskIds ?? []),
   ]);
   const tasksLeft = input.tasks.filter((task) => !keptTasks.has(task.id));
   const planned: Record<string, number> = {};
+  // A focus block kept from earlier today (over, edited or focused in) is
+  // today's time for its area: a replan doesn't give that area a second slot
+  // ahead of an area with a task due (F12).
+  for (const block of input.kept) {
+    if (block.kind !== "area") continue;
+    const key =
+      block.projectId && running.has(block.projectId) ? projectKey(block.projectId) : block.areaId;
+    if (key) planned[key] = (planned[key] ?? 0) + block.durationMin;
+  }
   /** Time tasks took for themselves: it comes out of the focus slots. */
   const taken: { startMin: number; durationMin: number }[] = [];
   const addTaskBlock = (task: TaskInput, startMin: number, durationMin: number) => {
@@ -334,7 +374,8 @@ export function generateDay(input: PlanInput): DayPlan {
       fromTask: true,
     });
     taken.push({ startMin, durationMin });
-    if (task.areaId) planned[task.areaId] = (planned[task.areaId] ?? 0) + durationMin;
+    const key = keyOf(task);
+    if (key) planned[key] = (planned[key] ?? 0) + durationMin;
   };
   const drop = (task: TaskInput) => {
     const index = tasksLeft.indexOf(task);
@@ -386,7 +427,7 @@ export function generateDay(input: PlanInput): DayPlan {
   };
   /** Rule 4: an area's slot holds only that area's tasks. */
   const takeTask = (areaId: string, minutes: number): TaskInput | undefined => {
-    const task = tasksLeft.filter((t) => t.areaId === areaId).sort(byDeadlineThenAge)[0];
+    const task = tasksLeft.filter((t) => keyOf(t) === areaId).sort(byDeadlineThenAge)[0];
     if (task) charge(task, minutes);
     return task;
   };
@@ -397,11 +438,18 @@ export function generateDay(input: PlanInput): DayPlan {
     const off = input.template.filter((block) => block.kind === "rest");
     const areaSlots = input.template
       .filter((block) => block.kind === "area")
-      .filter(free)
       .filter((slot) => !off.some((rest) => overlaps(rest, slot)))
-      // An event or a task's own block takes its time out of a slot; the rest still gets filled.
+      // An event, a routine block (Gym moved into the evening, F17), a block
+      // you kept or a task's own block takes its time out of a slot; the rest
+      // still gets filled.
       .flatMap((slot) =>
-        cut(slot, [...events, ...taken, ...removedAreaTime]).map((piece) => ({
+        cut(slot, [
+          ...events,
+          ...blocks.filter((block) => !block.fromTask && block.kind !== "area"),
+          ...input.kept,
+          ...taken,
+          ...removedAreaTime,
+        ]).map((piece) => ({
           ...slot,
           ...piece,
         })),
@@ -417,12 +465,12 @@ export function generateDay(input: PlanInput): DayPlan {
     const leftover: { startMin: number; durationMin: number }[] = [];
 
     // 3. Fill each slot with the area furthest behind.
-    const urgentAreas = [
-      ...new Set(urgent(input.tasks, input.date).map((task) => task.areaId)),
-    ].filter((id): id is string => id !== null);
+    const urgentAreas = [...new Set(urgent(input.tasks, input.date).map(keyOf))].filter(
+      (id): id is string => id !== null,
+    );
     let used = 0;
     for (const slot of areaSlots) {
-      const duration = Math.min(slot.durationMin, budget - used);
+      const duration = onGrid(slot.startMin, budget - used, slot.durationMin);
       if (duration < MIN_BLOCK_MIN) {
         leftover.push(slot);
         continue;
@@ -467,9 +515,10 @@ export function generateDay(input: PlanInput): DayPlan {
         startMin: slot.startMin,
         durationMin: minutes,
         kind: "area",
-        areaId: pick.id,
+        areaId: pick.areaId ?? pick.id,
         taskId: task?.id ?? null,
         title: task ? `${pick.name}: ${task.title}` : pick.name,
+        ...(pick.projectId ? { projectId: pick.projectId } : {}),
       });
       if (slot.durationMin - minutes >= MIN_BLOCK_MIN)
         leftover.push({
@@ -501,7 +550,10 @@ export function generateDay(input: PlanInput): DayPlan {
         const after = task.step ? (stepEnds.get(task.step.parentId) ?? 0) : 0;
         if (piece.startMin < after) continue;
         const need = left.get(task.id) ?? task.remainingMin ?? task.estimateMin ?? 0;
-        const minutes = Math.min(need, piece.durationMin, budget - used);
+        const minutes =
+          budget - used < Math.min(need, piece.durationMin)
+            ? onGrid(piece.startMin, budget - used, piece.durationMin)
+            : Math.min(need, piece.durationMin);
         // A short task (a 15-minute step) gets a block of its own length.
         if (minutes < Math.min(MIN_BLOCK_MIN, need)) continue;
         addTaskBlock(task, piece.startMin, minutes);

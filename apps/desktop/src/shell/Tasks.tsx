@@ -14,6 +14,7 @@ import { ask } from "../features/ai/ask";
 import { aiUnavailable } from "../features/ai/codes";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { label, SPLIT } from "../features/ai/touchpoints";
+import { formatEstimate } from "../features/plan/now";
 import { AI_CHANGED_EVENT, type AiUsage } from "../features/settings/status";
 import {
   canSplit,
@@ -30,7 +31,9 @@ import {
   filterTasks,
   LATER_STEPS_SQL,
   repeatText,
+  SPLIT_STEPS_SQL,
   statusOps,
+  undoSplitOps,
   stepLabel,
   type TaskDraft,
   taskDraftOf,
@@ -42,12 +45,12 @@ import {
   VIEWS,
 } from "../features/tasks/list";
 import { IconPlus, IconSearch } from "./icons";
+import { returnsFocus, useEscapeToCancel } from "./keys";
 import { PanelHead } from "./kit";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-const hours = (minutes: number) => `~${Math.round((minutes / 60) * 10) / 10} h`;
 
 const AREAS_SQL =
   "SELECT id, name, active, color FROM area_items WHERE deleted_at IS NULL ORDER BY active DESC, priority_rank, name";
@@ -90,7 +93,13 @@ const areaStyle = (color: string | null | undefined) =>
   ({ "--dot": `var(--area-${color ?? "admin"})` }) as CSSProperties;
 
 /** Adds a task the way the capture box does: the line is kept as typed, then parsed. */
-function QuickAdd({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }) {
+function QuickAdd({
+  inputRef,
+  areas,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  areas: Named[];
+}) {
   const clock = useLiveQuery<{ value_json: string }>(CLOCK_SQL);
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
@@ -103,15 +112,18 @@ function QuickAdd({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }
         const line = text.trim();
         if (!line) return;
         const nowMs = systemClock.now();
+        // "update cv for Job A" reads and echoes the area by name (F78).
+        const names = areas.map(({ id, name }) => ({ id, name }));
         // Here every line is a task (or a wait:); ideas and notes go through the capture box.
         const parsed = parseCapture(/^(t|wait)\s*:/i.test(line) ? line : `t: ${line}`, {
           nowMs,
           clockStyle: style,
+          areas: names,
         });
         commitCapture(line, toOps(parsed, { nowMs, newId: () => ulid() }), PARSER_ID)
           .then(() => {
             setText("");
-            setNote(`Added · ${echo(parsed, nowMs)}`);
+            setNote(`Added · ${echo(parsed, nowMs, undefined, undefined, { areas: names })}`);
           })
           .catch((failure: unknown) => setNote(`Couldn't add it: ${message(failure)}`));
       }}
@@ -158,10 +170,13 @@ function TaskForm({
     setError(null);
     setDraft({ ...draft, ...change });
   };
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="task-form task-edit"
       aria-label={`Edit ${row.title}`}
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkTask(draft);
@@ -220,6 +235,10 @@ function TaskForm({
         <label className="field">
           <span>Due</span>
           <input type="date" value={draft.due} onChange={(e) => set({ due: e.target.value })} />
+        </label>
+        <label className="field">
+          <span>Time</span>
+          <input type="time" value={draft.time} onChange={(e) => set({ time: e.target.value })} />
         </label>
         <label className="field">
           <span>Repeat</span>
@@ -309,6 +328,8 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
   const steps = parseSteps(text, task.estimate_min);
   const problem = checkSteps(steps);
   const total = stepsMinutes(steps);
+  // Escape gives focus back to this row's Split button (reg3-4).
+  const onEscape = useEscapeToCancel(onClose);
   const suggest = () => {
     if (strict === null || !task.estimate_min) return;
     setBusy("asking");
@@ -367,10 +388,7 @@ function SplitForm({ task, onClose }: { task: TaskListRow; onClose: () => void }
             setText(event.target.value);
           }}
           onKeyDown={(event) => {
-            if (event.key === "Escape" && busy === null) {
-              event.preventDefault();
-              onClose();
-            }
+            if (busy === null) onEscape(event);
           }}
         />
       </label>
@@ -439,7 +457,23 @@ function TaskItem({
     void transact("user", statusOps(row, to, systemClock.now()), `task:${row.id}`).catch(
       (failure: unknown) => setError(`Couldn't change it: ${message(failure)}`),
     );
+  const undoSplit = () =>
+    void query<{ id: string }>(SPLIT_STEPS_SQL, [row.id])
+      .then((steps) =>
+        transact(
+          "user",
+          undoSplitOps(
+            row,
+            steps.map((step) => step.id),
+            systemClock.now(),
+          ),
+          `task:${row.id}`,
+        ),
+      )
+      .catch((failure: unknown) => setError(`Couldn't undo the split: ${message(failure)}`));
   const splittable = canSplit(row);
+  // A split task sits in Dropped; its steps carry the work (F61).
+  const split = view === "dropped" && row.split_steps > 0;
   if (editing)
     return (
       <li className="task-edit-row">
@@ -450,8 +484,13 @@ function TaskItem({
   const step = stepLabel(row.step_no, row.step_total);
   const late = !done && row.due_date !== null && row.due_date <= today;
   const facts = [
+    split && (
+      <span key="split">
+        split into {row.split_steps} step{row.split_steps === 1 ? "" : "s"}
+      </span>
+    ),
     row.project_title && <span key="project">{row.project_title}</span>,
-    row.estimate_min && <span key="estimate">{hours(row.estimate_min)}</span>,
+    row.estimate_min && <span key="estimate">{formatEstimate(row.estimate_min)}</span>,
     row.planned_date && row.planned_date !== row.due_date && (
       <span key="planned">on {showDate(row.planned_date, today)}</span>
     ),
@@ -502,17 +541,31 @@ function TaskItem({
           </span>
         )}
         <span className="task-actions">
-          {view === "dropped" ? (
+          {split ? (
+            row.split_settled === 0 && (
+              <Button className="btn-ghost" onClick={undoSplit}>
+                Undo split
+              </Button>
+            )
+          ) : view === "dropped" ? (
             <Button className="btn-ghost" onClick={() => move("todo")}>
               Restore
             </Button>
           ) : (
             <>
-              <Button className="btn-ghost" onClick={() => setEditing(true)}>
+              <Button
+                className="btn-ghost"
+                {...returnsFocus(`task-edit:${row.id}`)}
+                onClick={() => setEditing(true)}
+              >
                 Edit
               </Button>
               {splittable && !splitting && (
-                <Button className="btn-ghost" onClick={() => setSplitting(true)}>
+                <Button
+                  className="btn-ghost"
+                  {...returnsFocus(`task-split:${row.id}`)}
+                  onClick={() => setSplitting(true)}
+                >
                   Split
                 </Button>
               )}
@@ -580,7 +633,7 @@ function AreaPanel({
       <PanelHead
         id="task-areas"
         title="Areas"
-        sub={`${rows.length} ${rows.length === 1 ? "task" : "tasks"}${minutes ? ` · ${hours(minutes)}` : ""}`}
+        sub={`${rows.length} ${rows.length === 1 ? "task" : "tasks"}${minutes ? ` · ${formatEstimate(minutes)}` : ""}`}
       />
       <ul className="list-rows">
         {options.map((option) => (
@@ -686,7 +739,7 @@ export function Tasks() {
                 ))}
               </select>
             </div>
-            <QuickAdd inputRef={addRef} />
+            <QuickAdd inputRef={addRef} areas={areas.rows} />
             {tasks.error && (
               <p role="alert" className="error">
                 Couldn&apos;t load tasks: {tasks.error}

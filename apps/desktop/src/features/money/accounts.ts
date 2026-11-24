@@ -44,16 +44,37 @@ export function balanceOf(account: AccountRow): Santim | null {
   return account.opening_date === null ? null : account.opening_minor + account.moved_minor;
 }
 
-/** What you have in the accounts whose balance is known, and how many are unknown. */
+/**
+ * What you have in the accounts whose balance is known, and how many are
+ * unknown. A birr savings account with no balance yet still counts what
+ * moved into it: money put aside must not drop out of the total (F55).
+ */
 export function totalBalance(accounts: AccountRow[]): { total: Santim; unknown: number } {
   let total = 0;
   let unknown = 0;
   for (const account of accounts) {
     const balance = balanceOf(account);
-    if (balance === null) unknown++;
-    else total += balance;
+    if (balance !== null) total += balance;
+    else {
+      unknown++;
+      if (isSavings(account) && currencyOf(account) === "ETB") total += account.moved_minor;
+    }
   }
   return { total, unknown };
+}
+
+/**
+ * What an account's row shows (F55): its balance; for a birr savings
+ * account with no balance yet, the money moved into it, which the total
+ * counts, marked as not the whole balance; otherwise null ("not set").
+ * More moved out than in says nothing about what it holds: "not set".
+ */
+export function shownBalance(account: AccountRow): { minor: Santim; partial: boolean } | null {
+  const balance = balanceOf(account);
+  if (balance !== null) return { minor: balance, partial: false };
+  if (isSavings(account) && currencyOf(account) === "ETB" && account.moved_minor > 0)
+    return { minor: account.moved_minor, partial: true };
+  return null;
 }
 
 /** The account's currency (ETB unless set). */
@@ -108,12 +129,21 @@ export function reconcileOps(
         op: "update",
         table: "money_accounts",
         id: account.id,
-        values: { opening_minor: typed - todayMoved, opening_date: today },
+        values: { opening_minor: typed - todayMoved, opening_date: today, checked_at: nowMs },
       },
     ];
+  // Every check is noted, a matching one too: undoing a capture from before
+  // it would move the balance off the number you typed (F65).
+  const checked: Op = {
+    op: "update",
+    table: "money_accounts",
+    id: account.id,
+    values: { checked_at: nowMs },
+  };
   const gap = typed - balance;
-  if (gap === 0) return [];
+  if (gap === 0) return [checked];
   return [
+    checked,
     {
       op: "insert",
       table: "money_txns",

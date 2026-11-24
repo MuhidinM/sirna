@@ -6,6 +6,7 @@
 import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim, SANTIM_PER_BIRR } from "../../kernel/money";
 import { shiftDate } from "../plan/dayplan";
+import { SAVING_FLOW } from "../savings/savings";
 import {
   type Conversion,
   convert,
@@ -72,9 +73,13 @@ export const TXNS_SQL = `
   WHERE m.deleted_at IS NULL AND m.local_date >= ?1 AND m.local_date <= ?2
   ORDER BY m.local_date DESC, m.occurred_at DESC`;
 
-/** Money put aside (+) or taken out (−) of goals between ?1 and ?2. */
+/**
+ * Money put aside (+) or taken out (−) of goals between ?1 and ?2. Giving a
+ * goal money already in a savings account moves nothing, so it isn't
+ * saving; nor is a Check correction (SAVING_FLOW, F31).
+ */
 export const SAVED_SQL = `SELECT COALESCE(sum(amount_minor), 0) AS minor FROM savings_entries
-  WHERE deleted_at IS NULL AND local_date >= ?1 AND local_date <= ?2`;
+  WHERE deleted_at IS NULL AND local_date >= ?1 AND local_date <= ?2 AND ${SAVING_FLOW}`;
 
 /**
  * Spending per category per month for the 3 months before this one, and
@@ -213,8 +218,10 @@ export function monthSummary(input: {
   for (const txn of input.txns) {
     // Moving money between your own accounts is neither in nor out.
     if (txn.transfer_id) continue;
-    const amount = convert(conversion, rates, txn.amount_minor, txn.currency);
-    if (amount === null) continue;
+    // Converted as a size, then signed: what is left out reads "$20", not "-$20" (F108).
+    const size = convert(conversion, rates, Math.abs(txn.amount_minor), txn.currency);
+    if (size === null) continue;
+    const amount = txn.amount_minor < 0 ? -size : size;
     if (amount > 0) {
       income += amount;
       // By job when the capture named one (`got 18k job a`), else by category.
@@ -402,15 +409,22 @@ export function toCsv(rows: TxnRow[]): string {
   )) {
     const abs = Math.abs(row.amount_minor);
     const birr = `${Math.floor(abs / SANTIM_PER_BIRR)}.${String(abs % SANTIM_PER_BIRR).padStart(2, "0")}`;
+    // A move between your accounts or a loan is not spending or income (F66).
+    const way = row.amount_minor > 0 ? "in" : "out";
+    const kind = row.transfer_id?.startsWith("loan:")
+      ? `loan ${way}`
+      : row.transfer_id
+        ? `transfer ${way}`
+        : way;
     lines.push(
       [
         row.local_date,
-        row.amount_minor > 0 ? "in" : "out",
+        kind,
         birr,
         row.currency ?? "ETB",
         csvCell(row.category ?? ""),
         csvCell(row.description),
-        csvCell(row.account),
+        csvCell(row.account_name ?? row.account),
       ].join(","),
     );
   }

@@ -89,6 +89,11 @@
 }
 
 .goal-top h3 {
+  /* Clear of the "Goal:" label centred above the plant (F110); full name in its title. */
+  max-width: calc(50% - 64px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 0;
   font-size: 1.2rem;
   font-weight: 700;
@@ -97,14 +102,15 @@
 }
 
 /* The shared .icon-btn, made see-through so it sits on the night scene. */
+/* The scene is always night: the pencil is light like the name, not a theme colour (F110). */
 .icon-btn.goal-edit {
-  border: 1px solid rgb(255 255 255 / 12%);
-  background: rgb(255 255 255 / 8%);
-  color: var(--cream);
+  border: 1px solid rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 14%);
+  color: #f3f5f6;
 }
 
 .icon-btn.goal-edit:hover {
-  background: rgb(255 255 255 / 16%);
+  background: rgb(255 255 255 / 24%);
 }
 
 .goal-amount {
@@ -166,12 +172,34 @@
   margin-top: var(--space-4);
 }
 
+.savings .garden-wrap h4 {
+  margin: var(--space-4) 0 0;
+  font-weight: 600;
+}
+
+/* A planted goal: click to bring it back to growing (F35). */
 .savings .garden-tree {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
-  width: 72px;
+  width: 88px;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-tile);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.savings .garden-tree:hover,
+.savings .garden-tree:focus-visible {
+  background: var(--chip);
+}
+
+.goal-split {
+  margin: 0;
 }
 
 .savings .garden-tree .tree-svg {

@@ -16,7 +16,7 @@ import {
   addOps,
   type BlockDraft,
   BOARD_TASKS_SQL,
-  blockBefore,
+  beforeOf,
   type BoardTask,
   changeOps,
   clockOf,
@@ -25,6 +25,7 @@ import {
   editorKey,
   focusAfterDelete,
   minuteOf,
+  markDoneOps,
   moveOps,
   moveSpan,
   newDraft,
@@ -43,14 +44,17 @@ import { systemClock } from "../kernel/clock";
 import {
   type BlockRow,
   blockProgress,
+  doneToggle,
   FOCUS_DONE_SHARE,
   firstStep,
   focusOffer,
   formatMinutes,
   nowAndNext,
+  skipToggle,
 } from "../features/plan/now";
 import { type FocusStatus, startFocus } from "./Focus";
 import { IconPlus } from "./icons";
+import { cardLabel, laneBox, NOW_LABEL_GAP_PX, taskLine } from "./board";
 import { EventCard, NowCard, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -66,6 +70,8 @@ const dot = (ms: number) => time.format(ms).replace(":", ".");
 const range = (block: BlockRow) => `${dot(block.start_at)} – ${dot(block.end_at)}`;
 /** "12:00–13:00": times in prose (the Now card), as in the brief. */
 const span = (block: BlockRow) => `${time.format(block.start_at)}–${time.format(block.end_at)}`;
+/** "in 1 h" never breaks between "1" and "h" on the narrow card. */
+const unbroken = (text: string) => text.replace(/ /g, " ");
 
 /** The yellow Now card: the current block, or the next one, with the time left. */
 export function NowCards({
@@ -90,7 +96,7 @@ export function NowCards({
     return (
       <NowCard
         when={span(now)}
-        left={`${formatMinutes(left)} left`}
+        left={unbroken(`${formatMinutes(left)} left`)}
         title={now.title}
         sub={
           <>
@@ -101,7 +107,7 @@ export function NowCards({
               </>
             )}
             {next && minutesToNext !== undefined
-              ? `Next: ${next.title} at ${time.format(next.start_at)} · in ${formatMinutes(minutesToNext)}`
+              ? `Next: ${next.title} at ${time.format(next.start_at)} · ${unbroken(`in ${formatMinutes(minutesToNext)}`)}`
               : "Nothing after this today."}
           </>
         }
@@ -233,9 +239,14 @@ export function Timeline({
       : null;
     (card ?? lanes)?.focus();
   };
+  /** The Add a block button, while the open popover came from it (reg3-6). */
+  const addOpener = useRef<HTMLElement | null>(null);
   /** The popover closes and focus goes back where you were (a11y). */
   const closeEditor = (blockId: string | null) => {
-    focusBlock(blockId);
+    const opener = addOpener.current;
+    addOpener.current = null;
+    if (blockId === null && opener?.isConnected) opener.focus();
+    else focusBlock(blockId);
     setEditing(null);
   };
 
@@ -334,7 +345,7 @@ export function Timeline({
       state.mode === "move"
         ? `Moved ${block.title} to ${clockOf(next.startMin)}.`
         : `${block.title} now ends at ${clockOf(next.endMin)}.`,
-      { [block.id]: blockBefore(block) },
+      beforeOf(block),
     );
   };
 
@@ -351,19 +362,19 @@ export function Timeline({
       write(
         resizeOps(day, block, span.endMin + step),
         `${block.title} now ends at ${clockOf(next.endMin)}.`,
-        {
-          [block.id]: blockBefore(block),
-        },
+        beforeOf(block),
       );
     } else if (step !== 0) {
       event.preventDefault();
       const next = moveSpan(span, step);
-      write(moveOps(day, block, step), `Moved ${block.title} to ${clockOf(next.startMin)}.`, {
-        [block.id]: blockBefore(block),
-      });
+      write(
+        moveOps(day, block, step),
+        `Moved ${block.title} to ${clockOf(next.startMin)}.`,
+        beforeOf(block),
+      );
     } else if (event.key === "Delete") {
       event.preventDefault();
-      write(deleteOps(block), `Deleted ${block.title}.`, { [block.id]: blockBefore(block) });
+      write(deleteOps(block), `Deleted ${block.title}.`, beforeOf(block));
       focusBlock(focusAfterDelete(blocks, block.id));
     }
   };
@@ -395,6 +406,7 @@ export function Timeline({
     if (target.closest(".event, .day-editor, .day-edit-bar")) return;
     const top = event.currentTarget.getBoundingClientRect().top;
     const minute = minuteOf(day, first) + (event.clientY - top) / perMin;
+    addOpener.current = null;
     setEditing({ mode: "add", draft: newDraft(minute), opened: ++opened.current });
   };
 
@@ -426,7 +438,8 @@ export function Timeline({
           )}
           <Button
             className="day-add"
-            onClick={() => {
+            onClick={(event) => {
+              addOpener.current = event.currentTarget;
               const nowMin = minuteOf(day, nowMs);
               const at = day === today && nowMin > OPEN_FROM_MIN ? nowMin + SNAP_MIN : 9 * 60;
               setEditing({ mode: "add", draft: newDraft(at), opened: ++opened.current });
@@ -451,11 +464,14 @@ export function Timeline({
         onClick={addAt}
       >
         <div className="day-hours" aria-hidden="true">
-          {hours.map((t) => (
-            <span key={t} className="day-hour" style={{ top: y(t) }}>
-              {dot(t)}
-            </span>
-          ))}
+          {hours.map((t) =>
+            // An hour label right by the now label would print under it.
+            showNow && Math.abs(y(t) - y(nowMs)) < NOW_LABEL_GAP_PX ? null : (
+              <span key={t} className="day-hour" style={{ top: y(t) }}>
+                {dot(t)}
+              </span>
+            ),
+          )}
           {showNow && (
             <span className="day-hour now" style={{ top: y(nowMs) }}>
               {dot(nowMs)}
@@ -517,21 +533,16 @@ export function Timeline({
               height: expanded ? "auto" : height,
               minHeight: expanded ? height : undefined,
               zIndex: expanded || dragging ? 6 : undefined,
-              left: `calc(${(lane.lane / lane.of) * 100}% + ${lane.lane ? 4 : 0}px)`,
-              width: `calc(${100 / lane.of}% - ${lane.of > 1 ? 4 : 0}px)`,
+              ...laneBox(lane),
             };
             const color = block.color ?? "admin";
-            const tail = `${block.kind === "fixed" ? " · fixed" : ""}${skipped ? " · skipped" : ""}${progress.done && !skipped ? " · done" : ""}${short && focusText && !progress.done ? ` · ${progress.focusedMin}/${progress.lengthMin} min` : ""}`;
+            const taskName = taskLine(block);
             const source = original.get(block.id) ?? block;
             return (
               <div role="listitem" key={block.id}>
                 <EventCard
                   tone={toneOf(color)}
-                  label={
-                    short
-                      ? `${range(block)}${block.task_title && block.kind === "area" && block.task_title !== block.title ? ` · ${block.task_title}` : ""}${tail}`
-                      : `${range(block)}${tail}`
-                  }
+                  label={cardLabel(block, range(block), short)}
                   title={block.title}
                   art={!short && block.kind === "fixed" && minutes >= 90}
                   faded={(day === today && block.end_at <= nowMs) || progress.done || skipped}
@@ -560,12 +571,7 @@ export function Timeline({
                       }
                     : {})}
                 >
-                  {!short &&
-                    block.task_title &&
-                    block.kind === "area" &&
-                    block.task_title !== block.title && (
-                      <span className="event-label">{block.task_title}</span>
-                    )}
+                  {!short && taskName && <span className="event-label">{taskName}</span>}
                   {shownTasks.length > 0 && (
                     <ul className="event-check" aria-label={`${block.title} tasks`}>
                       {shownTasks.map((task) => (
@@ -576,22 +582,25 @@ export function Timeline({
                               checked={false}
                               onChange={() => onDone?.(task)}
                             />
-                            {task.due_at !== null && task.due_at !== undefined && (
-                              <span className="event-at">{dot(task.due_at)} </span>
-                            )}
-                            {task.title}
-                            {task.due_date && !(task.due_at && task.due_date === day) && (
-                              <span className="event-due">
-                                {" "}
-                                · due {showDate(task.due_date, today)}
-                              </span>
-                            )}
+                            {/* One span, so the time and due date wrap with the title, not as columns. */}
+                            <span>
+                              {task.due_at !== null && task.due_at !== undefined && (
+                                <span className="event-at">{dot(task.due_at)} </span>
+                              )}
+                              {task.title}
+                              {task.due_date && !(task.due_at && task.due_date === day) && (
+                                <span className="event-due">
+                                  {" "}
+                                  · due {showDate(task.due_date, today)}
+                                </span>
+                              )}
+                            </span>
                           </label>
                         </li>
                       ))}
                     </ul>
                   )}
-                  {!short && focusText && (
+                  {focusText && (
                     <div
                       className="event-progress"
                       role="progressbar"
@@ -661,6 +670,7 @@ export function Timeline({
               write(ops, said, before);
               const id = editing.mode === "edit" ? editing.block.id : null;
               const deleted = id !== null && ops.some((op) => op.op === "delete" && op.id === id);
+              addOpener.current = null;
               closeEditor(deleted ? focusAfterDelete(blocks, id) : id);
             }}
             areaName={areaName}
@@ -715,7 +725,7 @@ function BlockEditor({
     }
     if (block) {
       const ops = changeOps(date, block, draft, names());
-      onSave(ops, `Changed ${block.title}.`, { [block.id]: blockBefore(block) });
+      onSave(ops, `Changed ${block.title}.`, beforeOf(block));
     } else {
       const ops = addOps(date, draft, ulid(), names());
       const title = ops[0]?.op === "insert" ? String(ops[0].values.title) : "the block";
@@ -822,32 +832,36 @@ function BlockEditor({
         {block && (
           <Button
             onClick={() => {
-              const done = block.status === "done";
+              // Done counts focus too (80%), so "Not done" on a focused block skips it.
+              const done = blockProgress(block).done;
               onSave(
-                [
-                  {
-                    op: "update",
-                    table: "day_blocks",
-                    id: block.id,
-                    values: { status: done ? "planned" : "done" },
-                  },
-                ],
+                markDoneOps(block, systemClock.now(), doneToggle(block)),
                 done ? `${block.title}: not done.` : `${block.title}: done.`,
-                { [block.id]: blockBefore(block) },
+                beforeOf(block),
               );
             }}
           >
-            {block.status === "done" ? "Not done" : "Mark done"}
+            {blockProgress(block).done ? "Not done" : "Mark done"}
+          </Button>
+        )}
+        {block && !blockProgress(block).done && (
+          <Button
+            onClick={() => {
+              const status = skipToggle(block);
+              onSave(
+                [{ op: "update", table: "day_blocks", id: block.id, values: { status } }],
+                status === "skipped" ? `${block.title}: skipped.` : `${block.title}: back on.`,
+                beforeOf(block),
+              );
+            }}
+          >
+            {block.status === "skipped" ? "Unskip" : "Skip"}
           </Button>
         )}
         {block && (
           <Button
             className="day-delete btn-danger"
-            onClick={() =>
-              onSave(deleteOps(block), `Deleted ${block.title}.`, {
-                [block.id]: blockBefore(block),
-              })
-            }
+            onClick={() => onSave(deleteOps(block), `Deleted ${block.title}.`, beforeOf(block))}
           >
             Delete
           </Button>

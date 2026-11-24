@@ -132,6 +132,7 @@ export const TABLES: readonly TableSpec[] = [
     "sort_order",
     "currency",
     "is_savings",
+    "checked_at",
   ]),
   spec_("money_regulars", [
     "kind",

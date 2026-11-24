@@ -7,19 +7,41 @@ import { invoke } from "@tauri-apps/api/core";
 import { systemClock } from "../kernel/clock";
 import { commitCapture, query, replaceCapture, undoCapture } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
-import { type Card, CHEAT_SQL, type CheatRow, groupCards, search } from "../features/notes/cheat";
+import { find, FIND_SQL, type Found, type FoundRow } from "../features/notes/cheat";
 import { readings } from "./alternatives";
-import { CAPTURE_MADE_SQL, fixBlocked, fixReading, madeKind, type MadeRow } from "./fix";
+import {
+  actionable,
+  type BlockRow,
+  CAPTURE_MADE_SQL,
+  fixReading,
+  LAST_CAPTURE_SQL,
+  type LastCapture,
+  madeKind,
+  type MadeRow,
+  UNDO_BLOCKED_SQL,
+  undoBlocked,
+} from "./fix";
 import { loadWeek, type Query } from "../features/projects/capacity";
 import { placeIdea, type Placement, REPLACED_PROJECTS_SQL } from "../features/projects/idea";
-import { matchGoal } from "../features/savings/savings";
+import { goalFinder, loadSavingsContext, type SavingsContext } from "../features/savings/savings";
 import { logicalDate } from "../kernel/dates";
-import { affordState, echo as echoLine, ideaInput, toOps } from "./ops";
+import {
+  affordState,
+  balanceNote,
+  echo as echoLine,
+  ideaInput,
+  SAME_PROJECT_SQL,
+  sameProject,
+  type SavingGoal,
+  toOps,
+} from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
 import { RATES_SQL, readRates } from "../features/money/currency";
+import { type AccountRow, ACCOUNTS_SQL, balanceOf } from "../features/money/accounts";
 import { affordAnswer } from "../features/money/affordLoad";
 import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
+import { TODAY_PARSER, TODAY_PARSER_ID, todayTask } from "./today";
 import { type ClockStyle } from "./when";
 
 import { applyTheme, cachedTheme } from "../theme/theme";
@@ -37,9 +59,6 @@ applyTheme(cachedTheme());
 
 const ECHO_MS = 1500;
 const ANSWER_MS = 6000;
-// Same rule as the tray: lines that made no records (search, away) can't be undone.
-const LAST_CAPTURE_SQL =
-  "SELECT id, body FROM core_raw_items WHERE source = 'capture' AND parse_status NOT IN ('ignored', 'new') ORDER BY id DESC LIMIT 1";
 
 function element<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -59,11 +78,25 @@ let moneyContext: Pick<
   ParseOptions,
   "categories" | "learned" | "jobs" | "accounts" | "loanPeople" | "areas" | "rates"
 > = {};
+/** Each account's balance (null until typed), so `1200 @wise` past Wise's dollars is flagged. */
+let accountBalances: Record<string, number | null> = {};
+/** Today's blocks, so `gym done` and `skipped gym` record one (plan §3.5). */
+let todayBlocks: NonNullable<ParseOptions["blocks"]> = [];
+const TODAY_BLOCKS_SQL = `SELECT id, title FROM day_blocks
+  WHERE logical_date = ? AND deleted_at IS NULL AND kind != 'rest' ORDER BY start_at`;
 /** The other readings of the current text, and which one Tab has picked. */
 let options: Parsed[] = [];
 let picked = 0;
-/** Set while fixing the last capture with Up arrow: saving replaces it. */
-let editing: { id: number; body: string } | undefined;
+/**
+ * Set while fixing the last capture with Up arrow: saving replaces it. A line
+ * from Add for today (`today`, the day it was for) stays a task for that day (reg2-5).
+ */
+let editing: { id: number; body: string; today?: string } | undefined;
+/**
+ * Goals and what savings accounts hold, so the chip shows the take-out the
+ * save will make, not a transfer it won't (F26-new). Empty until read.
+ */
+let savingsContext: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null, unset: [] };
 /** What the capture being fixed made: the box keeps to that reading. */
 let fixKind: Parsed["kind"] | undefined;
 /** True while a save, fix or undo is in flight. */
@@ -103,6 +136,12 @@ function loadContext() {
     })
     .catch(() => undefined);
 
+  void query<{ id: string; title: string }>(TODAY_BLOCKS_SQL, [logicalDate(systemClock.now())])
+    .then((rows) => {
+      todayBlocks = rows;
+    })
+    .catch(() => undefined);
+
   void query<{ title: string }>(
     "SELECT title FROM savings_goals WHERE deleted_at IS NULL AND status = 'active'",
   )
@@ -117,16 +156,7 @@ function loadContext() {
     query<{ id: string; name: string }>(
       "SELECT id, name FROM area_items WHERE kind = 'work' AND active = 1 AND deleted_at IS NULL",
     ),
-    query<{
-      id: string;
-      name: string;
-      kind: string;
-      pays_in: number;
-      currency: string;
-      is_savings: number;
-    }>(
-      "SELECT id, name, kind, pays_in, currency, is_savings FROM money_accounts WHERE deleted_at IS NULL ORDER BY sort_order",
-    ),
+    query<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL),
     query<LoanEvent & Record<string, string | number | null>>(LOANS_SQL),
     // Areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3).
     query<{ id: string; name: string }>(
@@ -143,18 +173,17 @@ function loadContext() {
       { id: string; name: string; kind: "expense" | "income" }[],
       { id: string; category_id: string }[],
       { id: string; name: string }[],
-      {
-        id: string;
-        name: string;
-        kind: string;
-        pays_in: number;
-        currency: string;
-        is_savings: number;
-      }[],
+      AccountRow[],
       (LoanEvent & Record<string, string | number | null>)[],
       { id: string; name: string }[],
       { value_json: string }[],
     ];
+    accountBalances = Object.fromEntries(accounts.map((row) => [row.id, balanceOf(row)]));
+    void loadSavingsContext(query as Query, readRates(rates[0]?.value_json))
+      .then((context) => {
+        savingsContext = context;
+      })
+      .catch(() => undefined);
     moneyContext = {
       areas,
       categories,
@@ -170,36 +199,46 @@ function loadContext() {
 
 loadContext();
 
+/** The line read as the capture bar reads it, or as Add for today did when fixing one of those. */
+function readLine(text: string, nowMs: number): Parsed {
+  if (editing?.today) {
+    const task = todayTask(text, editing.today, nowMs, {
+      ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
+      clockStyle,
+    });
+    if (task) return task;
+  }
+  return parseCapture(text, {
+    nowMs,
+    clockStyle,
+    goals: goalNames,
+    blocks: todayBlocks,
+    ...moneyContext,
+  });
+}
+
 function refresh() {
   const text = input.value.trim();
   const nowMs = systemClock.now();
-  options = text
-    ? readings(
-        parseCapture(text, { nowMs, clockStyle, goals: goalNames, ...moneyContext }),
-        text,
-        nowMs,
-      )
-    : [];
+  options = text ? readings(readLine(text, nowMs), text, nowMs) : [];
   // While fixing, keep to the kind the capture made as you change the text.
   picked = editing ? fixReading(options, fixKind) : 0;
   showChip();
 }
 
-/** Cheat lines, loaded once per capture box, for `? query` (plan §3.15). */
-let cheatCards: Promise<Card[]> | undefined;
+/** Cheat lines, notes and open tasks, loaded once per capture box, for `? query` (plan §3.5). */
+let searchable: Promise<FoundRow[]> | undefined;
 
 function showSearch(text: string) {
-  cheatCards ??= query<CheatRow & Record<string, string | null>>(CHEAT_SQL)
-    .then(groupCards)
-    .catch(() => []);
-  void cheatCards.then((cards) => {
+  searchable ??= query<FoundRow & Record<string, string | null>>(FIND_SQL).catch(() => []);
+  void searchable.then((rows) => {
     // Typed on meanwhile: a newer refresh owns the chip.
     if (input.value.trim().slice(1).trim() !== text) return;
-    const hits = search(cards, text);
+    const hits: Found[] = find(rows, text);
     const first = hits[0];
     output.textContent = first
-      ? `${first.line.body} · ${first.card.title}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
-      : "No cheat line matches  ·  Enter: open Notes";
+      ? `${first.body} · ${first.label}${hits.length > 1 ? ` (+${hits.length - 1})` : ""}  ·  Enter: open Notes`
+      : "Nothing matches  ·  Enter: open Notes";
   });
 }
 
@@ -216,7 +255,17 @@ function showChip() {
     return;
   }
   const hint = options.length > 1 ? "  ·  Tab: change" : "";
-  output.textContent = `${editing ? "Fix · " : ""}${echoLine(current, systemClock.now())}${hint}`;
+  const note = balanceNote(current, accountBalances, moneyContext.rates ?? {});
+  // A saving names its goal and, for a take-out, what really moves (F26-new).
+  const goal =
+    current.kind === "saving"
+      ? goalFinder(savingsContext)(current.goal, current.amount)
+      : undefined;
+  const line = echoLine(current, systemClock.now(), undefined, goal, {
+    hasGoals: savingsContext.goals.some((row) => row.status === "active"),
+    ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
+  });
+  output.textContent = `${editing ? "Fix · " : ""}${line}${note}${hint}`;
 }
 
 function finish(message: string, ms = ECHO_MS) {
@@ -234,10 +283,14 @@ form.addEventListener("submit", (event) => {
     return;
   }
   const nowMs = systemClock.now();
-  const parsed =
-    options[picked] ??
-    parseCapture(rawText, { nowMs, clockStyle, goals: goalNames, ...moneyContext });
-  const parser = picked === 0 ? PARSER_ID : `${PARSER_ID}+tab`;
+  const parsed = options[picked] ?? readLine(rawText, nowMs);
+  // "idea:" or "#jobhunt" alone: nothing to save, so say what's missing and keep the box open.
+  if (parsed.kind === "inbox" && parsed.body === "" && parsed.why) {
+    output.textContent = parsed.why;
+    return;
+  }
+  const base = editing?.today ? TODAY_PARSER_ID : PARSER_ID;
+  const parser = picked === 0 ? base : `${base}+tab`;
   input.disabled = true;
   busy = true;
   // An idea is placed in the week before it is saved, so the project and its
@@ -246,58 +299,80 @@ form.addEventListener("submit", (event) => {
   const placed: Promise<Placement | undefined> =
     parsed.kind === "idea"
       ? Promise.all([
-          loadWeek(query as Query),
+          loadWeek(query as Query, logicalDate(nowMs)),
           query<{ id: string }>("SELECT id FROM area_items WHERE deleted_at IS NULL"),
           // A fix replaces the old capture: its project mustn't count against the new one.
           fixing
             ? query<{ entity_id: string }>(REPLACED_PROJECTS_SQL, [`capture:${fixing.id}`])
             : Promise.resolve([]),
         ])
-          .then(([week, areas, replaced]) => {
+          .then(async ([week, areas, replaced]) => {
             const gone = new Set(replaced.map((row) => row.entity_id));
-            return placeIdea(ideaInput(parsed), {
+            const placement = placeIdea(ideaInput(parsed), {
               week: week.week,
               projects: week.projects.filter((project) => !gone.has(project.id)),
               today: logicalDate(nowMs),
               areaIds: areas.map((area) => area.id),
             });
+            // The same idea twice makes no second project (F91). A failed read saves it anyway.
+            const rows = await query<{ id: string; status: string }>(SAME_PROJECT_SQL, [
+              placement.values.title ?? "",
+            ]).catch(() => []);
+            const same = rows.find((row) => !gone.has(row.id));
+            return same ? sameProject(placement, same) : placement;
           })
           .catch(() => placeIdea(ideaInput(parsed), null))
       : Promise.resolve(undefined);
   let idea: Placement | undefined;
   // A saving goes to the goal it names, or the only one (plan §3.13).
-  let savingGoal: { id: string; title: string } | null | undefined;
-  type Goal = { id: string; title: string; status: "active" | "done" | "paused" };
+  let savingGoal: SavingGoal | null | undefined;
+  /** With goals but none named, the echo says so rather than "no goal yet" (F76). */
+  let hasGoals = false;
   // A transfer into or out of a savings account is saving too (time-first §4).
   const savesSomething = (item: Parsed) =>
     item.kind === "saving" || (item.kind === "transfer" && item.saving !== undefined);
   const hasSaving =
     savesSomething(parsed) || (parsed.kind === "money" && parsed.items.some(savesSomething));
-  const goalRows: Promise<Goal[]> = hasSaving
-    ? query<Goal>("SELECT id, title, status FROM savings_goals WHERE deleted_at IS NULL").catch(
-        () => [],
-      )
-    : Promise.resolve([]);
-  const goalOf = (goals: Goal[]) => (words: string | undefined) => {
-    const id = matchGoal(goals, words);
-    const goal = goals.find((row) => row.id === id);
-    return goal ? { id: goal.id, title: goal.title } : null;
-  };
-  const goalFor: Promise<{ id: string; title: string } | null | undefined> =
+  // What the goals and savings accounts hold, so a take-out keeps the goal
+  // card's limits (F8) and a saving knows what an account holds unclaimed.
+  const empty: SavingsContext = { goals: [], unclaimed: {}, ripe: () => null, unset: [] };
+  const goalRows: Promise<SavingsContext> = hasSaving
+    ? loadSavingsContext(query as Query, moneyContext.rates ?? {}).catch(() => empty)
+    : Promise.resolve(empty);
+  const goalFor: Promise<SavingGoal | null | undefined> =
     parsed.kind === "saving"
-      ? goalRows.then((goals) => goalOf(goals)(parsed.goal))
+      ? goalRows.then((context) => goalFinder(context)(parsed.goal, parsed.amount))
       : Promise.resolve(undefined);
   // A fix undoes the old capture and saves the new one in one transaction.
-  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, goals]) => {
+  const saved = Promise.all([placed, goalFor, goalRows]).then(([placement, goal, context]) => {
     idea = placement;
     savingGoal = goal;
-    const ops = toOps(parsed, {
-      nowMs,
-      newId: () => ulid(),
-      goalOf: goalOf(goals),
-      ...(placement ? { idea: placement } : {}),
-      ...(goal !== undefined ? { savingGoal: goal } : {}),
-    });
+    hasGoals = context.goals.some((row) => row.status === "active");
+    let ops: ReturnType<typeof toOps>;
+    try {
+      ops = toOps(parsed, {
+        nowMs,
+        newId: () => ulid(),
+        goalOf: goalFinder(context),
+        unclaimed: context.unclaimed,
+        unset: context.unset,
+        ...(context.transferGoal ? { transferGoal: context.transferGoal } : {}),
+        ...(context.waiting ? { waiting: context.waiting } : {}),
+        ...(placement ? { idea: placement } : {}),
+        ...(goal !== undefined ? { savingGoal: goal } : {}),
+      });
+    } catch (refusal) {
+      // A refused take-out or saving (F8): the line is still kept as typed
+      // (store first, parse second) with nothing made from it, and the box
+      // stays open on it so Enter after a correction fixes that capture.
+      // A fix that is refused leaves the capture it was fixing alone.
+      if (typeof refusal !== "string" || fixing) throw refusal;
+      return commitCapture(rawText, [], parser).then((rawId) => {
+        editing = { id: rawId, body: rawText };
+        fixKind = undefined;
+        throw refusal;
+      });
+    }
     return fixing
       ? replaceCapture(fixing.id, rawText, ops, parser)
       : commitCapture(rawText, ops, parser);
@@ -325,13 +400,26 @@ form.addEventListener("submit", (event) => {
       }
       // `away till mon` (plan §3.11): Rust stores the return day, logged under
       // this capture, so undoing or fixing the capture undoes away too.
+      // `back`: away ends now, logged under this capture too (F41).
+      if (parsed.kind === "back") {
+        void invoke("clear_away", { rawId })
+          .then(() => finish(fixed + echoLine(parsed, nowMs)))
+          .catch(() => finish("Couldn't end away. Use I'm back on Today."));
+        return;
+      }
       if (parsed.kind === "away") {
         void invoke<string>("set_away", { until: parsed.until ?? null, rawId })
           .then((date) => finish(fixed + echoLine({ kind: "away", until: date }, nowMs)))
           .catch(() => finish("Couldn't set away. Try again."));
         return;
       }
-      finish(fixed + echoLine(parsed, nowMs, idea, savingGoal));
+      finish(
+        fixed +
+          echoLine(parsed, nowMs, idea, savingGoal, {
+            hasGoals,
+            ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
+          }),
+      );
     })
     .catch((error: unknown) => {
       busy = false;
@@ -364,31 +452,41 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowUp") {
     event.preventDefault();
     busy = true;
-    void query<{ id: number; body: string }>(LAST_CAPTURE_SQL).then(([last]) => {
+    void query<LastCapture>(LAST_CAPTURE_SQL).then(([newest]) => {
       busy = false;
       // Typed something while we were looking it up: keep what was typed.
       if (input.value !== "") return;
+      const last = actionable(newest);
       if (!last) {
-        output.textContent = "Nothing to fix yet";
+        output.textContent = newest ? "Nothing to fix" : "Nothing to fix yet";
         return;
       }
       // Start on what the capture made (an idea stays an idea), and leave a
-      // project you have changed since alone (r2-7).
-      void query<MadeRow>(CAPTURE_MADE_SQL, [`capture:${last.id}`])
-        .catch(() => [] as MadeRow[])
-        .then((made) => {
-          if (input.value !== "") return;
-          const blocked = fixBlocked(made);
-          if (blocked) {
-            output.textContent = blocked;
-            return;
-          }
-          editing = last;
-          fixKind = madeKind(made);
-          input.value = last.body;
-          refresh();
-          input.setSelectionRange(input.value.length, input.value.length);
-        });
+      // record you have changed since alone (r2-7, F2).
+      void Promise.all([
+        query<MadeRow>(CAPTURE_MADE_SQL, [`capture:${last.id}`]).catch(() => [] as MadeRow[]),
+        query<BlockRow>(UNDO_BLOCKED_SQL, [`capture:${last.id}`]).catch(() => [] as BlockRow[]),
+      ]).then(([made, rows]) => {
+        if (input.value !== "") return;
+        const blocked = undoBlocked(rows, "fix");
+        if (blocked) {
+          output.textContent = blocked;
+          return;
+        }
+        // A line from Add for today stays a task for its day (reg2-5).
+        editing =
+          last.parser_id === TODAY_PARSER
+            ? {
+                id: last.id,
+                body: last.body,
+                today: logicalDate(last.received_at ?? systemClock.now()),
+              }
+            : { id: last.id, body: last.body };
+        fixKind = madeKind(made);
+        input.value = last.body;
+        refresh();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
     });
     return;
   }
@@ -401,18 +499,32 @@ document.addEventListener("keydown", (event) => {
       input.disabled = false;
       input.focus();
     };
-    void query<{ id: number; body: string }>(LAST_CAPTURE_SQL)
-      .then(([last]) => {
+    void query<LastCapture>(LAST_CAPTURE_SQL)
+      .then(async ([newest]) => {
+        const last = actionable(newest);
+        // A newer line that made nothing (afford, search) stops here (F38).
         if (!last) {
           output.textContent = "Nothing to undo";
           release();
           return;
         }
+        // Undoing would throw away a later change (F2, F65): say so instead.
+        // capture_undo refuses the same way, should this read be stale.
+        const blocked = undoBlocked(
+          await query<BlockRow>(UNDO_BLOCKED_SQL, [`capture:${last.id}`]),
+          "undo",
+        );
+        if (blocked) {
+          output.textContent = blocked;
+          release();
+          return;
+        }
         // Stays busy after a successful undo, until the box closes.
-        return undoCapture(last.id).then(() => finish(`Undone: ${last.body}`));
+        await undoCapture(last.id);
+        finish(`Undone: ${last.body}`);
       })
-      .catch(() => {
-        output.textContent = "Couldn't undo. Try again.";
+      .catch((error: unknown) => {
+        output.textContent = typeof error === "string" ? error : "Couldn't undo. Try again.";
         release();
       });
   }

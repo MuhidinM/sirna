@@ -17,6 +17,7 @@ import {
   reconcileOps,
   reconcileText,
   setPayAccountOps,
+  shownBalance,
   spendAccount,
   totalBalance,
   TRANSFER_HALVES_SQL,
@@ -78,6 +79,23 @@ describe("your accounts (T-058)", () => {
     expect(totalBalance(accounts(db))).toEqual({ total: 0, unknown: 7 });
   });
 
+  it("shows what moved into a savings account with no balance, as the total counts it (F55)", () => {
+    const base = { ...account(openTestDb(), "cbo-savings"), opening_date: null };
+    expect(shownBalance({ ...base, moved_minor: 400_000 })).toEqual({
+      minor: 400_000,
+      partial: true,
+    });
+    expect(shownBalance({ ...base, moved_minor: 0 })).toBeNull();
+    expect(shownBalance({ ...base, moved_minor: -50_000 })).toBeNull();
+    expect(
+      shownBalance({ ...base, opening_date: TODAY, opening_minor: 0, moved_minor: 5 }),
+    ).toEqual({
+      minor: 5,
+      partial: false,
+    });
+    expect(shownBalance({ ...base, is_savings: 0, moved_minor: 400_000 })).toBeNull();
+  });
+
   it("sets a first balance at the start of today, counting today's entries", () => {
     const db = openTestDb();
     spend(db, "cbe", "2026-11-01", -50_000); // before: not part of the balance
@@ -107,7 +125,10 @@ describe("your accounts (T-058)", () => {
     expect(monthSummary({ txns: gap ? [gap] : [], saved: 0, history: [], today: TODAY }).out).toBe(
       60_000,
     );
-    expect(reconcileOps(account(db, "cbo"), 940_000, TODAY, 0, nowMs, "none")).toEqual([]);
+    // A match books nothing but notes the check.
+    expect(reconcileOps(account(db, "cbo"), 940_000, TODAY, 0, nowMs, "none")).toEqual([
+      { op: "update", table: "money_accounts", id: "cbo", values: { checked_at: nowMs } },
+    ]);
     expect(reconcileText(account(db, "cbo"), 1_000_000)).toMatch(/more in CBO/);
   });
 

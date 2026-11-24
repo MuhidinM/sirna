@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
-import { logicalDayStart, todayParams, todayTopSql } from "./today";
+import { logicalDayStart, SPENT_TODAY_SQL, taskMeta, todayParams, todayTopSql } from "./today";
 
 const now = Date.parse("2026-11-11T12:00:00+03:00");
 
@@ -88,5 +88,53 @@ describe("today's top 3", () => {
     task(db, "gone", { due_date: "2026-11-01", deleted_at: 1 });
     expect(top(db)).toHaveLength(3);
     expect(top(db)).not.toContain("gone");
+  });
+});
+
+describe("SPENT_TODAY_SQL", () => {
+  it("keeps dollars apart from birr (F4)", () => {
+    const db = openTestDb();
+    const add = db.prepare(
+      `INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, created_at, updated_at)
+       VALUES (?, ?, 1, '2026-11-11', ?, 'x', 0, 0)`,
+    );
+    add.run("a", "cash", -18000);
+    add.run("b", "wise", -400);
+    add.run("c", "cash", -1500);
+    db.prepare("UPDATE money_txns SET currency = 'USD' WHERE id = 'c'").run();
+    const rows = db.prepare(SPENT_TODAY_SQL).all("2026-11-11") as {
+      currency: string;
+      spent: number;
+    }[];
+    expect(rows.sort((x, y) => x.currency.localeCompare(y.currency))).toEqual([
+      { currency: "ETB", spent: 18000 },
+      { currency: "USD", spent: 1900 },
+    ]);
+  });
+});
+
+describe("the line under a task (taskMeta)", () => {
+  const plain = { estimate_min: null, due_date: null, due_at: null };
+  it("has no dangling dot when there is only an estimate", () => {
+    expect(taskMeta({ ...plain, estimate_min: 45, due_date: "2026-11-24" }, "2026-11-24")).toBe(
+      "~45 min · due today",
+    );
+    expect(taskMeta({ ...plain, estimate_min: 45, due_date: "2026-11-30" }, "2026-11-24")).toBe(
+      "~45 min",
+    );
+    expect(taskMeta(plain, "2026-11-24")).toBe("");
+  });
+
+  it("dates a late time after midnight by the moment, not the logical day", () => {
+    // 'fix bike at 1am' at 00:30 on 25 Nov: logical due date 24 Nov, due 25 Nov 01:00.
+    const task = {
+      ...plain,
+      due_date: "2026-11-24",
+      due_at: Date.parse("2026-11-25T01:00:00+03:00"),
+    };
+    expect(taskMeta(task, "2026-11-25")).toBe("since 25 Nov 01:00");
+    expect(taskMeta({ ...plain, estimate_min: 30, due_date: "2026-11-23" }, "2026-11-25")).toBe(
+      "~30 min · since 23 Nov",
+    );
   });
 });

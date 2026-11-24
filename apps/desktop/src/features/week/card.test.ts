@@ -6,6 +6,8 @@ import {
   type AreaWeek,
   dismissOps,
   FOCUS_WEEK_SQL,
+  FOCUSED_BY_DAY_SQL,
+  TIME_SESSIONS_SQL,
   type FocusWeek,
   historyWeeks,
   isHandled,
@@ -76,6 +78,52 @@ describe("where time went", () => {
     // f1, f2, f4, f5 this week; distractions 1 + 2; overruns on 12 and 13 Nov.
     expect(focus).toEqual({ sessions: 4, distractions: 3, overrun_days: 2 });
   });
+
+  it("counts the sessions behind the minutes, a running one included (reg1-5)", () => {
+    const db = seeded();
+    db.exec(`
+      INSERT INTO focus_sessions (id, area_id, kind, started_at, planned_min, ended_at, paused_ms, outcome) VALUES
+        ('w1', 'joba', 'focus', ${at("2026-11-15T10:00:00")}, 25, ${at("2026-11-15T10:25:00")}, 0, 'completed'),
+        ('r1', 'coding', 'focus', ${at("2026-11-15T16:45:00")}, 50, NULL, 0, NULL);`);
+    // f1, f2, f4, f5 and the running r1 (15 min so far); not the job's w1.
+    expect(db.prepare(TIME_SESSIONS_SQL).get(WEEK_START, NOW)).toEqual({ sessions: 5 });
+    const rows = db.prepare(AREA_WEEK_SQL).all(WEEK_START, NOW) as unknown as AreaWeek[];
+    expect(rows.find((r) => r.id === "coding")?.done_min).toBe(80 + 15);
+    // Today's chart counts the running session the same way (and the job's too).
+    const days = db.prepare(FOCUSED_BY_DAY_SQL).all(MONDAY, "2026-11-15", NOW) as {
+      day: string;
+      minutes: number;
+    }[];
+    expect(days.find((d) => d.day === "2026-11-15")?.minutes).toBe(25 + 15);
+  });
+
+  it("counts the distractions of a stopped session, not the session", () => {
+    const db = seeded();
+    db.exec(`INSERT INTO focus_sessions (id, area_id, kind, started_at, planned_min, ended_at, paused_ms, outcome, distractions, overrun)
+      VALUES ('s1', 'coding', 'focus', ${at("2026-11-14T06:30:00")}, 50, ${at("2026-11-14T06:50:00")}, 0, 'stopped', 3, 0)`);
+    const focus = db.prepare(FOCUS_WEEK_SQL).get(WEEK_START, NOW) as unknown as FocusWeek;
+    expect(focus).toEqual({ sessions: 4, distractions: 6, overrun_days: 2 });
+  });
+
+  it("counts a habit block focused and marked done once (its length, or the focus if longer)", () => {
+    const db = seeded();
+    db.exec(`
+      INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, source, status, created_at, updated_at) VALUES
+        ('q1', '2026-11-10', ${at("2026-11-10T03:00:00")}, ${at("2026-11-10T03:20:00")}, 'routine', 'quran', 'Quran', 'template', 'done', 0, 0),
+        ('q2', '2026-11-11', ${at("2026-11-11T03:00:00")}, ${at("2026-11-11T03:20:00")}, 'routine', 'quran', 'Quran', 'template', 'done', 0, 0);
+      INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, ended_at, paused_ms, outcome) VALUES
+        ('fq1', 'q1', 'focus', ${at("2026-11-10T03:00:00")}, 20, ${at("2026-11-10T03:20:00")}, 0, 'completed'),
+        ('fq2', 'q2', 'focus', ${at("2026-11-11T03:00:00")}, 25, ${at("2026-11-11T03:25:00")}, 0, 'completed');`);
+    const rows = db.prepare(AREA_WEEK_SQL).all(WEEK_START, NOW) as unknown as AreaWeek[];
+    // 20 (focus covers the block) + 25 (focus past it): 45, not 85.
+    expect(rows.find((r) => r.id === "quran")?.done_min).toBe(45);
+  });
+
+  it("says whether an area is capped", () => {
+    const rows = seeded().prepare(AREA_WEEK_SQL).all(WEEK_START, NOW) as unknown as AreaWeek[];
+    expect(rows.find((r) => r.id === "experiments")?.capped).toBe(1);
+    expect(rows.find((r) => r.id === "coding")?.capped).toBe(0);
+  });
 });
 
 describe("projects", () => {
@@ -109,6 +157,22 @@ describe("money", () => {
     ]);
     expect(money.week).toBe(42000);
     expect(money.average).toBe(40000);
+  });
+
+  it("converts dollars at the saved rate instead of adding them as birr (F4)", () => {
+    const db = seeded();
+    db.exec(`INSERT INTO money_txns (id, account, occurred_at, local_date, amount_minor, description, category_id, created_at, updated_at)
+      VALUES ('usd1', 'wise', 1, '2026-11-10', -1500, 'netflix', 'cat_food', 0, 0)`);
+    const rows = db.prepare(SPEND_SQL).all(...spendParams(MONDAY)) as unknown as SpendRow[];
+    const rates = { USD: { rate: "132.50", set_on: "2026-11-01" } };
+    const money = spendLines(rows, 3, rates);
+    // 420 ETB + $15 × 132.50 = 1,987.50 ETB.
+    expect(money.lines[0]).toEqual({ category: "Food", week: 42000 + 198750, average: 26667 });
+    expect([...money.conversion.used]).toEqual(["USD"]);
+    // No rate: the dollars are left out and named, not counted as 15 birr.
+    const bare = spendLines(rows, 3);
+    expect(bare.lines[0]?.week).toBe(42000);
+    expect(bare.conversion.missing.get("USD")).toBe(1500);
   });
 });
 
@@ -170,10 +234,21 @@ describe("one change", () => {
     const change = oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: true });
     // 80 min done × 1.25 = 100 → rounded up to 120 (2 h), under the 4 h target.
     expect(change?.text).toBe(
-      "Coding skills got 1 h 20 of 4 h this week. Set its target to 2 h so it's one you can meet?",
+      "Coding skills got 1 h 20 min of 4 h this week. Set its target to 2 h so it's one you can meet?",
     );
     expect(
       oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: false }),
+    ).toBeNull();
+  });
+
+  it("doesn't cut a target over days you were away", () => {
+    // Away 5 of 7 days: nothing to judge the area on.
+    expect(
+      oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: true, awayDays: 5 }),
+    ).toBeNull();
+    // Away 3 days: Coding's 4 h target is 2 h 17 for the 4 days here; 80 min is over half of it.
+    expect(
+      oneChange({ next: light, focus: calm, areas, projects, weekMostlyDone: true, awayDays: 3 }),
     ).toBeNull();
   });
 

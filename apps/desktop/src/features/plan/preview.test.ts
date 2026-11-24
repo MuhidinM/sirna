@@ -44,12 +44,12 @@ describe("the week ahead (T-069)", () => {
   it("spreads a big task over the days it needs, and flags it when the deadline comes first", () => {
     const big = task({ remainingMin: 300, dueDate: shiftDate(MON, 2) });
     const preview = previewWeek([0, 1, 2, 3, 4, 5, 6].map((i) => day(i, [big])));
-    // 96 + 96 + 96 = 288 by Wednesday; 12 minutes still missing then.
+    // 90 + 90 + 90 = 270 by Wednesday; 30 minutes still missing then.
     expect(
       preview.days.slice(0, 4).map((d) => d.blocks.map((b) => [b.taskId, b.durationMin])),
-    ).toEqual([[["t", 96]], [["t", 96]], [["t", 96]], [["t", 96]]]);
+    ).toEqual([[["t", 90]], [["t", 90]], [["t", 90]], [["t", 90]]]);
     expect(preview.late).toEqual([
-      { id: "t", title: "Portfolio", dueDate: "2026-11-18", shortMin: 12, finishes: "2026-11-19" },
+      { id: "t", title: "Portfolio", dueDate: "2026-11-18", shortMin: 30, finishes: "2026-11-19" },
     ]);
   });
 
@@ -69,6 +69,26 @@ describe("the week ahead (T-069)", () => {
     const preview = previewWeek([{ ...busy, tasks: [due] }]);
     expect(preview.late).toEqual([
       { id: "d", title: "Report", dueDate: MON, shortMin: 60, finishes: null },
+    ]);
+  });
+
+  it("leaves away days empty and gives them no time for tasks (F48)", () => {
+    const big = task({ remainingMin: 150, dueDate: shiftDate(MON, 2) });
+    const away = new Set([MON, shiftDate(MON, 1), shiftDate(MON, 2)]);
+    const preview = previewWeek(
+      [0, 1, 2, 3, 4].map((i) => day(i, [big])),
+      away,
+    );
+    expect(preview.days.map((d) => [d.away ?? false, d.blocks.length])).toEqual([
+      [true, 0],
+      [true, 0],
+      [true, 0],
+      [false, 1],
+      [false, 1],
+    ]);
+    // Due while away: late, and done on the days you are back.
+    expect(preview.late).toEqual([
+      { id: "t", title: "Portfolio", dueDate: "2026-11-18", shortMin: 150, finishes: "2026-11-20" },
     ]);
   });
 

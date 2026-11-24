@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Error, Manager, Wry};
 
 use crate::db::Db;
 use crate::hotkey::ActiveHotkey;
-use crate::{clock, db, focus, notify, review, tasks, tx, windows};
+use crate::{clock, focus, notify, review, tasks, windows};
 
 const TRAY_ID: &str = "sirna";
 const OPEN_ID: &str = "open";
@@ -79,9 +79,18 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         let conn = db.write.lock();
         let now = clock::now_ms();
         let top = tasks::today_top(&conn, now).unwrap_or_default();
+        // A capture you have changed since can't be undone here (F2): the
+        // line stays, greyed, so the menu doesn't offer an Undo that refuses.
+        let last = tasks::last_capture(&conn).map(|(raw_id, body)| {
+            let blocked = matches!(
+                crate::commands::undo_blocked(&conn, raw_id, "undo"),
+                Ok(Some(_))
+            );
+            (raw_id, body, blocked)
+        });
         (
             top,
-            tasks::last_capture(&conn),
+            last,
             review::offered(&conn, now),
             crate::guard::stopped_now(&conn, now),
         )
@@ -200,12 +209,17 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         true,
         None::<&str>,
     )?));
-    if let Some((raw_id, body)) = last {
+    if let Some((raw_id, body, blocked)) = last {
+        let text = if blocked {
+            format!("Last: {} · changed since", short(&body))
+        } else {
+            format!("Last: {} · Undo", short(&body))
+        };
         items.push(Box::new(MenuItem::with_id(
             app,
             format!("{UNDO_PREFIX}{raw_id}"),
-            format!("Last: {} · Undo", short(&body)),
-            true,
+            text,
+            !blocked,
             None::<&str>,
         )?));
     }
@@ -273,9 +287,8 @@ fn undo_capture(app: &AppHandle, raw_id: i64) -> Result<usize, String> {
     let db = app.state::<Db>();
     let mut conn = db.write.lock();
     let txn = conn.transaction().map_err(|error| error.to_string())?;
-    let undone = tx::undo_context(&txn, "user", &format!("capture:{raw_id}"), clock::now_ms())
-        .map_err(|error| error.to_string())?;
-    db::mark_ignored(&txn, raw_id).map_err(|error| error.to_string())?;
+    // Refuses, like Ctrl+Z, when you have changed the capture's records since.
+    let undone = crate::commands::undo_capture_in(&txn, raw_id, clock::now_ms())?;
     txn.commit().map_err(|error| error.to_string())?;
     Ok(undone)
 }
@@ -300,10 +313,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         if let Err(error) = undo_capture(app, raw_id) {
             log::warn!("could not undo the capture: {error}");
         }
-        changed(
-            app,
-            &["core_raw_items", "task_items", "note_items", "money_txns"],
-        );
+        changed(app, &crate::commands::CAPTURE_TABLES);
         return;
     }
     match id {
@@ -444,6 +454,7 @@ mod tests {
             paused,
             in_row: 0,
             block_id: None,
+            distractions: 0,
         }
     }
 

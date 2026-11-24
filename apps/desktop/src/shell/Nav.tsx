@@ -5,6 +5,9 @@
  * or two clicks away.
  */
 import { invoke } from "@tauri-apps/api/core";
+import { type KeyboardEvent, useEffect, useRef } from "react";
+
+import { markKeyedTablist, nextTab, takeKeyedTablist } from "./keys";
 import {
   IconDashboard,
   IconMoney,
@@ -144,15 +147,36 @@ export function Segmented<T extends string>({
   value: T;
   onChange: (value: T) => void;
 }) {
+  // One Tab stop (the selected tab); arrow keys, Home and End move and select.
+  const hasValue = options.some((option) => option.value === value);
+  const onKey = (index: number, event: KeyboardEvent<HTMLButtonElement>) => {
+    const to = nextTab(index, options.length, event.key);
+    const next = to === null ? undefined : options[to];
+    if (!next) return;
+    event.preventDefault();
+    if (next.value !== value) markKeyedTablist(label);
+    onChange(next.value);
+    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]');
+    tabs?.[to ?? 0]?.focus();
+  };
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Plan's tabs are pages: the tablist that took the arrow key unmounts and
+    // this new one takes the focus back (F94).
+    if (!takeKeyedTablist(label)) return;
+    list.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [label, value]);
   return (
-    <div className="seg" role="tablist" aria-label={label}>
-      {options.map((option) => (
+    <div ref={list} className="seg" role="tablist" aria-label={label}>
+      {options.map((option, index) => (
         <button
           key={option.value}
           type="button"
           role="tab"
           aria-selected={option.value === value}
+          tabIndex={option.value === value || (!hasValue && index === 0) ? 0 : -1}
           className="seg-item"
+          onKeyDown={(event) => onKey(index, event)}
           onClick={() => onChange(option.value)}
         >
           {option.label}

@@ -5,6 +5,9 @@
 import { parseRule, readRule, ruleText } from "../money/regulars";
 import { type Op } from "../../kernel/db";
 import { realDate } from "../projects/projects";
+import { localToEpoch } from "../../capture/when";
+import { clockOf, minuteOf, readClock } from "../plan/edit";
+import { logicalDate } from "../../kernel/dates";
 
 export type TaskView = "open" | "waiting" | "someday" | "done" | "dropped";
 
@@ -28,6 +31,8 @@ export interface TaskListRow {
   deadline_stale: number;
   /** Its time, if it has one (time first §1 rule 1); kept by Split on the first step. */
   due_at: number | null;
+  /** When it reminds you (moves with its time in the editor). */
+  remind_at?: number | null;
   /** The task it was split from, when it is a step; Split keeps its place. */
   parent_id: string | null;
   step_no: number | null;
@@ -43,6 +48,10 @@ export interface TaskListRow {
   follow_up_date: string | null;
   completed_at: number | null;
   updated_at: number;
+  /** For a dropped task: how many steps it was split into (0 when it wasn't split). */
+  split_steps: number;
+  /** ...and how many of those can't simply be taken back (done, or moved on). */
+  split_settled: number;
 }
 
 /** "2/5" for the second of five steps of a split task; empty otherwise. */
@@ -56,12 +65,17 @@ export function stepLabel(
 /** ?1 status list as JSON; done and dropped show the last 60 days. */
 export const TASKS_SQL = `
 SELECT t.id, t.title, t.status, t.notes, t.due_date, t.planned_date, t.planned_window,
-       t.deadline_stale, t.due_at, t.parent_id,
+       t.deadline_stale, t.due_at, t.remind_at, t.parent_id,
        t.step_no, t.repeat_json, (SELECT count(*) FROM task_items AS step
                    WHERE step.parent_id = t.parent_id AND step.deleted_at IS NULL) AS step_total,
        t.estimate_min, t.area_id,
        a.name AS area_name, a.color AS area_color, t.project_id, p.title AS project_title,
-       t.waiting_on, t.follow_up_date, t.completed_at, t.updated_at
+       t.waiting_on, t.follow_up_date, t.completed_at, t.updated_at,
+       CASE WHEN t.status = 'dropped' THEN (SELECT count(*) FROM task_items AS s
+         WHERE s.origin = 'split:' || t.id AND s.deleted_at IS NULL) ELSE 0 END AS split_steps,
+       CASE WHEN t.status = 'dropped' THEN (SELECT count(*) FROM task_items AS s
+         WHERE s.origin = 'split:' || t.id AND s.deleted_at IS NULL
+           AND (s.status = 'done' OR s.parent_id IS NOT t.id)) ELSE 0 END AS split_settled
 FROM task_items t
 LEFT JOIN area_items a ON a.id = t.area_id
 LEFT JOIN project_items p ON p.id = t.project_id AND p.deleted_at IS NULL
@@ -70,6 +84,22 @@ WHERE t.deleted_at IS NULL
   AND (t.status NOT IN ('done', 'dropped', 'archived') OR t.updated_at >= ?2)
 ORDER BY t.due_date IS NULL, t.due_date, t.follow_up_date, t.created_at DESC
 LIMIT 500`;
+
+/** The steps a task was split into (?1 the task), for undoing the split. */
+export const SPLIT_STEPS_SQL = `
+SELECT id FROM task_items
+WHERE origin = 'split:' || ?1 AND parent_id = ?1 AND deleted_at IS NULL`;
+
+/**
+ * Undoing a split from the Dropped list: the task comes back and its steps go,
+ * so the work isn't counted twice. Only offered while no step is done.
+ */
+export function undoSplitOps(row: Pick<TaskListRow, "id">, stepIds: string[], nowMs: number): Op[] {
+  return [
+    ...stepIds.map((id): Op => ({ op: "delete", table: "task_items", id })),
+    ...statusOps(row, "todo", nowMs),
+  ];
+}
 
 /** A step's later siblings (?1 parent, ?2 its number), for splitting a step. */
 export const LATER_STEPS_SQL = `
@@ -107,6 +137,8 @@ export interface TaskDraft {
   areaId: string;
   projectId: string;
   due: string;
+  /** "14:00" on the due day; "" for none (time first §1 rule 1). */
+  time: string;
   estimateHours: string;
   /** `every fri`, `monthly 1`…; "" for none (T-068). */
   repeat: string;
@@ -125,6 +157,7 @@ export function taskDraftOf(row: TaskListRow): TaskDraft {
     areaId: row.area_id ?? "",
     projectId: row.project_id ?? "",
     due: row.due_date ?? "",
+    time: row.due_at === null ? "" : clockOf(minuteOf(logicalDate(row.due_at), row.due_at)),
     estimateHours:
       row.estimate_min == null ? "" : String(Math.round((row.estimate_min / 60) * 100) / 100),
     waitingOn: row.waiting_on ?? "",
@@ -143,6 +176,8 @@ export function repeatText(json: string | null | undefined): string {
 export function checkTask(draft: TaskDraft): string | null {
   if (!draft.title.trim()) return "Give the task a name.";
   if (draft.due && !realDate(draft.due)) return "Due: pick a real date.";
+  if (draft.time.trim() && !draft.due) return "Time: give it a due date too.";
+  if (draft.time.trim() && readClock(draft.time) === null) return "Time: like 14:00.";
   if (draft.repeat.trim() && !parseRule(draft.repeat))
     return "Repeat: every fri, every weekday, daily, monthly 1 or monthly last.";
   if (draft.followUp && !realDate(draft.followUp)) return "Follow up: pick a real date.";
@@ -159,10 +194,11 @@ export function checkTask(draft: TaskDraft): string | null {
 const orNull = (text: string) => (text.trim() ? text.trim() : null);
 
 /**
- * The update for an edited task. A changed due date clears an old reminder
- * time (it belonged to the old date) and the planned day, so the task sits on
- * the date you just typed; saving the form confirms the deadline (T-050).
- * Waiting fields only stay while waiting.
+ * The update for an edited task. Its time is the time on the due date: a new
+ * date keeps the time and moves the reminder with it (same lead); clearing
+ * the time clears the reminder. A changed due date clears the planned day, so
+ * the task follows the date you just typed; saving the form confirms the
+ * deadline (T-050). Waiting fields only stay while waiting.
  */
 export function taskEditOps(row: TaskListRow, draft: TaskDraft, nowMs: number): Op[] {
   const hours = draft.estimateHours.trim();
@@ -180,10 +216,19 @@ export function taskEditOps(row: TaskListRow, draft: TaskDraft, nowMs: number): 
     deadline_stale: 0,
     repeat_json: draft.repeat.trim() ? JSON.stringify(parseRule(draft.repeat)) : null,
   };
-  if ((orNull(draft.due) ?? null) !== row.due_date) {
-    values.due_at = null;
-    values.remind_at = null;
-    values.planned_date = null;
+  const due = orNull(draft.due);
+  if (due !== row.due_date) values.planned_date = null;
+  const minutes = due && draft.time.trim() ? readClock(draft.time) : null;
+  const dueAt = due && minutes !== null ? localToEpoch(due, minutes) : null;
+  if (dueAt !== row.due_at) {
+    values.due_at = dueAt;
+    const remind = row.remind_at ?? null;
+    values.remind_at =
+      dueAt === null
+        ? null
+        : row.due_at !== null && remind !== null
+          ? remind + (dueAt - row.due_at)
+          : dueAt;
   }
   if (draft.status !== "todo") values.started_at = null;
   // Finished stays finished on a title fix; a status change sets or clears the time.

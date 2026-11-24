@@ -124,9 +124,51 @@ describe("the loud colours", () => {
     },
   );
 
-  it("white titles on orange and pink are readable as large text", () => {
-    expect(ratio("#ffffff", shared["orange"] ?? "")).toBeGreaterThanOrEqual(3);
-    expect(ratio("#ffffff", shared["pink"] ?? "")).toBeGreaterThanOrEqual(2.9);
+  it("text on the soft pink reads in both themes (F62)", () => {
+    expect(ratio(shared["on-loud"] ?? "", shared["pink-soft"] ?? "")).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(shared["pink-soft-ink"] ?? "", shared["pink-soft"] ?? "")).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    // The canvas ink is near-white in Night, so it must not be used on the pink.
+    const week = readFileSync(
+      fileURLToPath(new URL("./pages/plan-week.css", import.meta.url)),
+      "utf8",
+    );
+    for (const rule of week.split("}").filter((r) => r.includes("background: var(--pink-soft)"))) {
+      expect(rule).not.toMatch(/color: var\(--canvas-ink/);
+    }
+  });
+
+  it("orange and pink cards carry the dark ink, and a faded card keeps its text (F116)", () => {
+    const kit = readFileSync(fileURLToPath(new URL("./kit.css", import.meta.url)), "utf8");
+    const rule = (selector: string) => {
+      const start = kit.indexOf(selector);
+      return kit.slice(start, kit.indexOf("}", start));
+    };
+    expect(rule(".tone-orange {")).toContain("--tone-ink: var(--on-loud)");
+    expect(rule(".tone-pink {")).toContain("--tone-ink: var(--on-loud)");
+    expect(rule(".event.faded {")).not.toContain("opacity");
+  });
+
+  it("a faded card's hover leaves the current block's ring alone (F116)", () => {
+    const kit = readFileSync(fileURLToPath(new URL("./kit.css", import.meta.url)), "utf8");
+    expect(kit).not.toMatch(/\.event\.faded:hover/);
+    expect(kit).toContain(".event.faded:not(.current):hover {");
+  });
+
+  it("a short card's time can still shrink, after the title (F22)", () => {
+    const kit = readFileSync(fileURLToPath(new URL("./kit.css", import.meta.url)), "utf8");
+    const rule = (selector: string) => {
+      const start = kit.indexOf(selector);
+      return kit.slice(start, kit.indexOf("}", start));
+    };
+    const shrink = (body: string) => Number(/flex: 0 (\d+) auto/.exec(body)?.[1]);
+    const label = rule(".day-lanes .event.short .event-label {");
+    const title = rule(".day-lanes .event.short .event-title {");
+    expect(label).not.toContain("max-width");
+    expect(label).toContain("text-overflow: ellipsis");
+    expect(shrink(label)).toBeGreaterThan(0);
+    expect(shrink(title)).toBeGreaterThanOrEqual(1000 * shrink(label));
   });
 
   it("the mint ink reads on mint", () => {

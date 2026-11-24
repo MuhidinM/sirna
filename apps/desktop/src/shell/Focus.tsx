@@ -14,6 +14,22 @@ export interface FocusStatus {
   paused: boolean;
   in_row: number;
   block_id: string | null;
+  /** Distracted (+1) taps on this session. */
+  distractions: number;
+}
+
+/**
+ * A loader that applies only the newest answer: an older request that comes
+ * back late (the status read before a session started) can't hide a newer one.
+ */
+export function newestOnly<T>(read: () => Promise<T>, apply: (value: T) => void): () => void {
+  let asked = 0;
+  return () => {
+    const ticket = ++asked;
+    void read().then((value) => {
+      if (ticket === asked) apply(value);
+    });
+  };
 }
 
 /** The timer's state from Rust, counted down locally once a second between updates. */
@@ -23,14 +39,19 @@ export function useFocus(): FocusStatus | undefined {
   useEffect(() => {
     let base: FocusStatus | undefined;
     let shownAt = 0;
-    const load = () =>
-      void invoke<FocusStatus>("focus_status").then((next) => {
+    const load = newestOnly(
+      () => invoke<FocusStatus>("focus_status"),
+      (next) => {
         base = next;
         shownAt = performance.now();
         setStatus(next);
-      });
+      },
+    );
     load();
     const stops = [listen("focus-changed", load), listen("focus-tick", load)];
+    // A session started while the listeners were still being set up sent its
+    // event to nobody (F64-new): read the status again once they are.
+    void Promise.all(stops).then(load, () => undefined);
     const second = setInterval(() => {
       if (!base || base.kind === null || base.paused) return;
       const remaining = Math.max(0, base.remaining_ms - (performance.now() - shownAt));
@@ -61,6 +82,10 @@ export async function startFocus(blockId: string | null): Promise<void> {
 
 /** What "Distracted (+1)" does (spec §1 rule 7). */
 export const DISTRACTED_TIP = "Count an interruption; it shows on the Dashboard";
+
+/** The Distracted button's label: the tap count once there is one. */
+export const distractedLabel = (count: number) =>
+  count > 0 ? `Distracted · ${count}` : "Distracted (+1)";
 
 const control = (action: "pause" | "resume" | "stop" | "distracted") =>
   void invoke("focus_control", { action });
@@ -117,7 +142,7 @@ export function FocusPanel({ status }: { status: FocusStatus }) {
           ))}
         {!onBreak && (
           <Button onClick={() => control("distracted")} title={DISTRACTED_TIP}>
-            Distracted (+1)
+            {distractedLabel(status.distractions)}
           </Button>
         )}
         <Button className="btn-ghost" onClick={() => control("stop")}>

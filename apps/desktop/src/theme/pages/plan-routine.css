@@ -475,7 +475,9 @@
 
 .plan-routine .rt-time-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 82px), 1fr));
+  /* Wide enough for a 12-hour clock ("09:00 PM"), which the OS locale may use;
+     at 82px the AM/PM was cut and 21:00 read as "09:00". */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
   gap: var(--space-2);
 }
 

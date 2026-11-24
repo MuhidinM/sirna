@@ -156,7 +156,6 @@ describe("reading the days", () => {
       .get(at("2026-11-09T00:00:00"), at("2026-11-12T00:00:00")) as unknown as Tiles;
     expect(tiles).toEqual({
       focus_min: 70,
-      goal_focus_min: 70,
       break_min: 10,
       distractions: 3,
       sessions: 2,
@@ -201,6 +200,18 @@ describe("review fixes", () => {
       [{ date: "2026-11-10", minutes: 20 }],
     );
     expect(days[0]?.focusMin).toBe(20);
+  });
+
+  it("doesn't count a habit block twice when it was focused and marked done", () => {
+    const db = openTestDb();
+    db.exec(`INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, source, status, created_at, updated_at) VALUES
+      ('q', '2026-11-10', 0, 1200000, 'routine', 'quran', 'Quran', 'template', 'done', 0, 0);
+      INSERT INTO focus_sessions (id, block_id, kind, started_at, planned_min, paused_ms, ended_at, outcome) VALUES
+      ('f', 'q', 'focus', ${at("2026-11-10T03:00:00")}, 20, 0, ${at("2026-11-10T03:15:00")}, 'completed')`);
+    // 15 min of focus (in FOCUS_DAYS_SQL) + the 5 the block adds on top = its 20.
+    expect(db.prepare(HABIT_DAYS_SQL).all("2026-11-01", "quran")).toEqual([
+      { date: "2026-11-10", minutes: 5 },
+    ]);
   });
 
   it("leaves a current pause out of the Focus tile", () => {

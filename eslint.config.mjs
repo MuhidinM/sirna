@@ -25,6 +25,8 @@ export default defineConfig([
   globalIgnores([
     "**/dist/**",
     "**/target/**",
+    "**/target-*/**",
+    "**/user-test-out/**",
     "**/src-tauri/gen/**",
     "**/coverage/**",
     // Agent worktrees and local Claude settings.

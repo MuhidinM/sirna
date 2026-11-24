@@ -9,6 +9,9 @@ import {
   firstMonday,
   freeMinutes,
   hoursLabel,
+  liveDeadline,
+  noRoom,
+  noRoomText,
   type PlannedProject,
   type Query,
   type TemplateBlock,
@@ -16,6 +19,7 @@ import {
   weeklyCapacity,
   weekLoad,
 } from "./capacity";
+import { weekStart } from "../plan/dayplan";
 
 /**
  * Hand-checked fixtures (T-034). One week model throughout: 1000 minutes of
@@ -139,9 +143,9 @@ describe("ideas with a date", () => {
 
   it("explains itself with the numbers", () => {
     expect(checkWithDate(1800, "2026-12-20", TODAY, WEEK, twoActive).reasons).toEqual([
-      "Needs 5 h 15 a week for 5.5 weeks.",
+      "Needs 5 h 15 min a week for 5.5 weeks.",
       "Your load would go 70% → 101%.",
-      "2 active projects already; this would be number 3.",
+      "2 active projects already (limit 2); this would be number 3.",
     ]);
   });
 
@@ -319,7 +323,9 @@ describe("helpers", () => {
   });
 
   it("labels hours", () => {
-    expect(hoursLabel(315)).toBe("5 h 15");
+    // The same format as Today and Routine (F96).
+    expect(hoursLabel(315)).toBe("5 h 15 min");
+    expect(hoursLabel(1118.4)).toBe("18 h 38 min");
     expect(hoursLabel(120)).toBe("2 h");
     expect(hoursLabel(45)).toBe("45 min");
   });
@@ -365,7 +371,7 @@ describe("loading the week from the database", () => {
     const query: Query = (sql, params = []) =>
       Promise.resolve(db.prepare(sql).all(...params) as never);
     const { loadWeek } = await import("./capacity");
-    const { week, projects } = await loadWeek(query);
+    const { week, projects } = await loadWeek(query, TODAY);
     expect(week.capacity).toBe(2148);
     expect(projects).toEqual([]);
   });
@@ -396,5 +402,61 @@ describe("review fixes", () => {
       start: "2026-11-16",
       weeks: [250, 0, 250, 250, 250],
     });
+  });
+});
+
+describe("user-test fixes", () => {
+  it("F43: a project with a deadline and no forecast stops counting after the deadline", () => {
+    const dated = project({ id: "d", deadline: "2026-12-03" });
+    expect(weekLoad(WEEK, [dated], "2026-11-30").activeProjects).toBe(1);
+    expect(weekLoad(WEEK, [dated], "2026-12-07").activeProjects).toBe(0);
+    // Two dated projects only block the finder until the earlier one ends.
+    const both = [dated, project({ id: "e", deadline: "2026-12-17" })];
+    expect(findSlot(600, TODAY, WEEK, both)).toMatchObject({ start: "2026-12-07" });
+  });
+
+  it("F43: an overdue project with no forecast still counts", () => {
+    const today = "2026-11-24";
+    const overdue = project({ id: "m", weekly_min: 300, deadline: "2026-11-20" });
+    const live = liveDeadline(overdue, today);
+    expect(live.deadline).toBeNull();
+    expect(weekLoad(WEEK, [live], weekStart(today)).activeProjects).toBe(1);
+    expect(weekLoad(WEEK, [live], "2027-03-01").activeProjects).toBe(1);
+    // A deadline in this week or later is kept as the end.
+    expect(liveDeadline(project({ id: "w", deadline: "2026-11-23" }), today).deadline).toBe(
+      "2026-11-23",
+    );
+    // With it and one more running, a new project can't start.
+    const two = [live, project({ id: "a" })];
+    expect(findSlot(600, today, WEEK, two)).toBeNull();
+    expect(noRoom(today, WEEK, two).kind).toBe("limit");
+  });
+
+  it("F43: names the project limit, not load, when the limit blocks every week", () => {
+    const three = [
+      project({ id: "a", title: "Fix the car" }),
+      project({ id: "b", title: "Move flat" }),
+      project({ id: "c", title: "Portfolio" }),
+    ];
+    expect(findSlot(120, TODAY, WEEK, three)).toBeNull();
+    const reason = noRoom(TODAY, WEEK, three);
+    expect(reason).toEqual({
+      kind: "limit",
+      running: 3,
+      names: ["Fix the car", "Move flat", "Portfolio"],
+    });
+    expect(noRoomText(reason)).toMatch(
+      /^3 projects run every week for the next year \(Fix the car, Move flat, Portfolio\), and the limit is 2/,
+    );
+    const full = { capacity: 1000, areaCommitted: 900 };
+    expect(noRoom(TODAY, full, [])).toEqual({ kind: "load", running: 0, names: [] });
+    expect(noRoomText(noRoom(TODAY, full, []))).toMatch(/85% load/);
+  });
+
+  it("F88: says how many projects are active, not the limit", () => {
+    const three = [project({ id: "a" }), project({ id: "b" }), project({ id: "c" })];
+    expect(checkWithDate(360, "2026-12-05", TODAY, WEEK, three).reasons[2]).toBe(
+      "3 active projects already (limit 2); this would be number 4.",
+    );
   });
 });

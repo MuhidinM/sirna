@@ -5,6 +5,7 @@
  * reports in "data-changed", as Rust emits them.
  */
 import { type Conn, inTransaction, type SqlScalar } from "./conn";
+import { type BlockRow, UNDO_BLOCKED_SQL, undoBlocked } from "../capture/fix";
 import { applyOps, type Op, parseOps, rowText, tablesOf, undoContext } from "./tx";
 
 export interface Done<T> {
@@ -128,20 +129,32 @@ export function dbTx(
 
 // --- Captures (commands.rs, db.rs) ------------------------------------------------
 
-/** capture_ops_allowed: a capture may only insert tasks, notes, money and ideas. */
+/**
+ * capture_ops_allowed: a capture may only insert tasks, notes, money and
+ * ideas, and set a block's status to done or skipped (`gym done`).
+ */
 export function captureOpsAllowed(ops: readonly Op[]): boolean {
-  return ops.every(
-    (op) =>
-      op.op === "insert" &&
-      [
+  return ops.every((op) => {
+    if (op.op === "insert")
+      return [
         "task_items",
         "note_items",
         "money_txns",
         "money_loans",
         "project_items",
         "savings_entries",
-      ].includes(op.table),
-  );
+      ].includes(op.table);
+    if (op.op === "update" && op.table === "day_blocks") {
+      const entries = Object.entries(op.values);
+      return (
+        entries.length > 0 &&
+        entries.every(
+          ([key, value]) => key === "status" && (value === "done" || value === "skipped"),
+        )
+      );
+    }
+    return false;
+  });
 }
 
 function checkCapture(rawText: string, ops: readonly Op[]) {
@@ -212,7 +225,7 @@ export function captureCommit(conn: Conn, args: CaptureArgs, now: number): Done<
   return { result: rawId, changed: [...tablesOf(ops), "core_raw_items"] };
 }
 
-const CAPTURE_TABLES = ["core_raw_items", "task_items", "note_items", "money_txns"];
+const CAPTURE_TABLES = ["core_raw_items", "task_items", "note_items", "money_txns", "day_blocks"];
 
 export function captureReplace(
   conn: Conn,
@@ -241,6 +254,7 @@ export function replaceIn(
   now: number,
 ): number {
   const oldContext = `capture:${rawId}`;
+  refuseChanged(conn, rawId, "fix");
   const old = capturedTask(conn, oldContext);
   const links = old === undefined ? undefined : taskLinks(conn, old);
   undoContext(conn, "user", oldContext, now);
@@ -288,6 +302,13 @@ export function keepOnlyCarriedColumns(
       Number(row.id),
     ]);
   }
+}
+
+/** refuse_changed: a capture whose records you changed since is left alone (F2, F65). */
+function refuseChanged(conn: Conn, rawId: number, verb: "undo" | "fix") {
+  const rows = conn.all(UNDO_BLOCKED_SQL, [`capture:${rawId}`]) as unknown as BlockRow[];
+  const blocked = undoBlocked(rows, verb);
+  if (blocked !== null) throw blocked;
 }
 
 /** captured_task: the one task a capture made, when it made exactly one. */
@@ -343,6 +364,7 @@ function carryTaskLinks(links: TaskLinks, ops: readonly Op[]): Op[] {
 export function captureUndo(conn: Conn, args: { rawId?: unknown }, now: number): Done<number> {
   const rawId = Number(args.rawId);
   const undone = command(conn, () => {
+    refuseChanged(conn, rawId, "undo");
     const count = undoContext(conn, "user", `capture:${rawId}`, now);
     markIgnored(conn, rawId);
     return count;
@@ -375,8 +397,14 @@ export function returnDate(until: string | null, today: string, tomorrow: string
   return until !== null && validDate(until) && until > today ? until : tomorrow;
 }
 
-function writeAway(conn: Conn, date: string, context: string, now: number) {
-  command(conn, () =>
+function writeAway(
+  conn: Conn,
+  date: string,
+  context: string,
+  now: number,
+  rawId: number | null = null,
+) {
+  command(conn, () => {
     applyOps(
       conn,
       "user",
@@ -390,8 +418,9 @@ function writeAway(conn: Conn, date: string, context: string, now: number) {
         },
       ],
       now,
-    ),
-  );
+    );
+    if (rawId !== null) markParsed(conn, rawId, "away", now);
+  });
 }
 
 export function setAway(
@@ -402,13 +431,16 @@ export function setAway(
   const [today, dayStart] = logicalDay(now);
   const [tomorrow] = logicalDay(dayStart + 25 * HOUR_MS);
   const date = returnDate(typeof args.until === "string" ? args.until : null, today, tomorrow);
-  const context =
-    args.rawId === null || args.rawId === undefined ? "away" : `capture:${Number(args.rawId)}`;
-  writeAway(conn, date, context, now);
-  return { result: date, changed: ["core_settings"] };
+  const rawId = args.rawId === null || args.rawId === undefined ? null : Number(args.rawId);
+  const context = rawId === null ? "away" : `capture:${rawId}`;
+  // The line made a record (the setting), so Ctrl+Z and Up find it (F38).
+  writeAway(conn, date, context, now, rawId);
+  return { result: date, changed: ["core_settings", "core_raw_items"] };
 }
 
-export function clearAway(conn: Conn, now: number): Done<null> {
-  writeAway(conn, "", "away", now);
-  return { result: null, changed: ["core_settings"] };
+/** commands::clear_away: `back` in the capture bar logs it under that capture (F41). */
+export function clearAway(conn: Conn, args: { rawId?: unknown }, now: number): Done<null> {
+  const rawId = args.rawId === null || args.rawId === undefined ? null : Number(args.rawId);
+  writeAway(conn, "", rawId === null ? "away" : `capture:${rawId}`, now, rawId);
+  return { result: null, changed: ["core_settings", "core_raw_items"] };
 }

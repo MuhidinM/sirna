@@ -6,6 +6,7 @@ import {
   addOps,
   BOARD_TASKS_SQL,
   type BoardTask,
+  beforeOf,
   blockBefore,
   changeOps,
   clockOf,
@@ -14,6 +15,7 @@ import {
   editorKey,
   type EditBlock,
   focusAfterDelete,
+  markDoneOps,
   minuteOf,
   moveOps,
   moveSpan,
@@ -87,8 +89,16 @@ describe("move and resize (15-minute steps)", () => {
   it("stays inside the logical day", () => {
     expect(moveSpan({ startMin: 200, endMin: 260 }, -120)).toEqual({ startMin: 180, endMin: 240 });
     expect(moveSpan({ startMin: 1560, endMin: 1600 }, 120)).toEqual({
-      startMin: 1580,
-      endMin: 1620,
+      startMin: 1575,
+      endMin: 1615,
+    });
+  });
+
+  it("keeps an odd-length block on a 15-minute line at the end of the day", () => {
+    // 18:30-19:27 dragged 12 hours down lands at 02:00, not 02:03.
+    expect(moveSpan({ startMin: 1110, endMin: 1167 }, 720)).toEqual({
+      startMin: 1560,
+      endMin: 1617,
     });
   });
 
@@ -257,6 +267,77 @@ describe("undo", () => {
   });
 });
 
+describe("a task's own block and its task (F60)", () => {
+  const call: EditBlock = {
+    id: "b9",
+    start_at: at(19 * 60),
+    end_at: at(19 * 60 + 30),
+    title: "call bank",
+    kind: "area",
+    area_id: null,
+    task_id: "t9",
+    status: "planned",
+    task_title: "call bank",
+    task_due_at: at(19 * 60),
+    task_remind_at: at(19 * 60) - 10 * 60_000,
+    task_status: "todo",
+    task_completed_at: null,
+  };
+
+  it("moves the task's time with its own block, reminder and all, and undoes both", () => {
+    const ops = moveOps(DATE, call, 45);
+    expect(ops).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { due_at: at(19 * 60 + 45), remind_at: at(19 * 60 + 35) },
+    });
+    expect(undoOps(ops, beforeOf(call))).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { due_at: call.task_due_at, remind_at: call.task_remind_at },
+    });
+    // A longer block keeps the task's time; so does a focus slot that holds a task.
+    expect(resizeOps(DATE, call, 20 * 60).some((op) => op.table === "task_items")).toBe(false);
+    const slot = { ...call, title: "Admin: call bank" };
+    expect(moveOps(DATE, slot, 45).some((op) => op.table === "task_items")).toBe(false);
+    // The popover moves it too.
+    const draft = { ...draftOf(DATE, call), start: "20:00", end: "20:30" };
+    expect(changeOps(DATE, call, draft)).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { due_at: at(20 * 60), remind_at: at(20 * 60) - 10 * 60_000 },
+    });
+  });
+
+  it("ticks the task when its own block is marked done, and back", () => {
+    expect(markDoneOps(call, 5)).toEqual([
+      { op: "update", table: "day_blocks", id: "b9", values: { status: "done" } },
+      { op: "update", table: "task_items", id: "t9", values: { status: "done", completed_at: 5 } },
+    ]);
+    const done = { ...call, status: "done", task_status: "done", task_completed_at: 5 };
+    expect(markDoneOps(done, 6)).toEqual([
+      { op: "update", table: "day_blocks", id: "b9", values: { status: "planned" } },
+      {
+        op: "update",
+        table: "task_items",
+        id: "t9",
+        values: { status: "todo", completed_at: null },
+      },
+    ]);
+    expect(undoOps(markDoneOps(call, 5), beforeOf(call))).toContainEqual({
+      op: "update",
+      table: "task_items",
+      id: "t9",
+      values: { status: "todo", completed_at: null },
+    });
+    // A focus slot's done is the slot's, not its task's.
+    expect(markDoneOps({ ...call, title: "Admin: call bank" }, 5)).toHaveLength(1);
+  });
+});
+
 describe("the database side", () => {
   it("edits overlapping blocks without complaint and keeps them from the planner", () => {
     const db = openTestDb();
@@ -317,6 +398,47 @@ describe("Add for today", () => {
       title: "lunch 120",
       dueDate: DATE,
     });
+  });
+
+  // F83: the same reading as the capture bar.
+  const areas = [
+    { id: "joba", name: "Job A" },
+    { id: "jobb", name: "Job B" },
+  ];
+
+  it("reads `for job a` as the area", () => {
+    expect(todayTask("update cv for job a", DATE, now, { areas })).toMatchObject({
+      kind: "task",
+      title: "update cv",
+      area: "joba",
+      dueDate: DATE,
+    });
+  });
+
+  it("reads a wait: line as a task without its prefix", () => {
+    const task = todayTask("wait: recruiter reply", DATE, now, { areas });
+    expect(task).toMatchObject({ kind: "task", dueDate: DATE });
+    expect(task?.kind === "task" && task.title).not.toMatch(/^wait\s*:/i);
+  });
+
+  it("drops a capture prefix from the title", () => {
+    expect(todayTask("idea: learn go", DATE, now, { areas })).toMatchObject({
+      kind: "task",
+      title: "learn go",
+      dueDate: DATE,
+    });
+    expect(todayTask("n: send CV for job b", DATE, now, { areas })).toMatchObject({
+      kind: "task",
+      title: "send CV",
+      area: "jobb",
+      dueDate: DATE,
+    });
+  });
+
+  it("reads Ethiopian times when that is your clock", () => {
+    // `at 9` in Ethiopian time is 15:00.
+    const task = todayTask("call bank at 9", DATE, now, { clockStyle: "ethiopian" });
+    expect(task).toMatchObject({ kind: "task", dueDate: DATE, dueAt: at(15 * 60) });
   });
 });
 

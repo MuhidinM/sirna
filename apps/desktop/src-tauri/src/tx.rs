@@ -175,6 +175,7 @@ pub const TABLES: &[TableSpec] = &[
             "sort_order",
             "currency",
             "is_savings",
+            "checked_at",
         ],
         has_created_at: true,
         soft_delete: true,

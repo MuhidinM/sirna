@@ -6,18 +6,19 @@ import { useEffect, useRef, useState } from "react";
 import { systemClock } from "../kernel/clock";
 import { logicalDate, showDate } from "../kernel/dates";
 import { query, transact } from "../kernel/db";
-import { formatAmount, parseAmount } from "../kernel/money";
+import { formatAmount, formatWhole, parseAmount } from "../kernel/money";
 import { ask } from "../features/ai/ask";
 import { STRICT_SQL, strictOrNull } from "../features/ai/strict";
 import { WEEK } from "../features/ai/touchpoints";
 import { isoWeekday, weekStart } from "../features/plan/dayplan";
-import { hoursLabel, loadWeek, type Query } from "../features/projects/capacity";
+import { hoursLabel, loadWeek, MAX_ACTIVE, type Query } from "../features/projects/capacity";
 import {
   AREA_WEEK_SQL,
   type AreaWeek,
   DISMISSED_KEY,
   dismissOps,
   FOCUS_WEEK_SQL,
+  TIME_SESSIONS_SQL,
   type FocusWeek,
   applyOps,
   historyWeeks,
@@ -38,9 +39,11 @@ import {
 } from "../features/week/card";
 
 import { ulid } from "../kernel/ulid";
-import { entryOps, type GoalRow, GOALS_SQL, WEEK_SAVED_SQL } from "../features/savings/savings";
+import { type GoalRow, GOALS_SQL, putAsideOps, WEEK_SAVED_SQL } from "../features/savings/savings";
+import { type AccountRow, ACCOUNTS_SQL } from "../features/money/accounts";
 import { shiftDate } from "../features/plan/dayplan";
-import { weekSummary } from "../features/dashboard/insights";
+import { overCap, weekSummary } from "../features/dashboard/insights";
+import { AWAY_HISTORY_SQL, type AwayChange, awayDays } from "../features/dashboard/streak";
 import { InsightList } from "./Insights";
 import { MonthReviewCard } from "./Money";
 import { WeekPreview } from "./WeekPreview";
@@ -50,6 +53,7 @@ import { PanelHead } from "./kit";
 import { MonthPanel } from "./MonthPanel";
 import { isFirstSunday } from "../features/money/review";
 import { previousMonthStart } from "../features/money/money";
+import { approxMark, conversionNotes, RATES_SQL, readRates } from "../features/money/currency";
 import { type AreaColor, Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 
@@ -72,7 +76,7 @@ function useNextWeek(monday: string): NextWeek | null {
   const [next, setNext] = useState<NextWeek | null>(null);
   useEffect(() => {
     const load = () => {
-      loadWeek(query as Query)
+      loadWeek(query as Query, logicalDate(systemClock.now()))
         .then(({ week, projects }) => setNext(nextWeek(week, projects, monday)))
         .catch(() => setNext(null));
     };
@@ -167,6 +171,7 @@ const ASKED_KEY = "week.saving_asked";
 function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   const saved = useLiveQuery<{ minor: number }>(WEEK_SAVED_SQL, [monday, shiftDate(monday, 7)]);
   const goals = useLiveQuery<GoalRow & Record<string, string | number>>(GOALS_SQL);
+  const accounts = useLiveQuery<AccountRow & Record<string, string | number | null>>(ACCOUNTS_SQL);
   const asked = useLiveQuery<{ value_json: string }>(
     `SELECT value_json FROM core_settings WHERE key = '${ASKED_KEY}'`,
   );
@@ -174,7 +179,7 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
   const [amount, setAmount] = useState("");
   const [goalId, setGoalId] = useState("");
   const [note, setNote] = useState("");
-  if (saved.loading || goals.loading || asked.loading) return null;
+  if (saved.loading || goals.loading || asked.loading || accounts.loading) return null;
   const minor = saved.rows[0]?.minor ?? 0;
   if (minor > 0)
     return (
@@ -202,11 +207,17 @@ function SavingQuestion({ monday, nowMs }: { monday: string; nowMs: number }) {
             setNote("Pick the goal it's for.");
             return;
           }
-          transact(
-            "user",
-            entryOps(goal || null, value, nowMs, logicalDate(nowMs), ulid(), "week"),
-            `week:${monday}`,
-          ).catch((failure: unknown) =>
+          // Like Put aside on the goal card: the money moves into savings (F73).
+          const put = putAsideOps({
+            goalId: goal || null,
+            amount: value,
+            accounts: accounts.rows,
+            nowMs,
+            date: logicalDate(nowMs),
+            newId: () => ulid(),
+            origin: "week",
+          });
+          transact("user", put.ops, `week:${monday}`).catch((failure: unknown) =>
             setNote(
               `Couldn't save: ${failure instanceof Error ? failure.message : String(failure)}`,
             ),
@@ -280,6 +291,9 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
     nowMs,
   ]);
   const focus = useLiveQuery<FocusWeek & Record<string, number>>(FOCUS_WEEK_SQL, [startMs, nowMs]);
+  // The sessions behind the minutes below, a running one included (reg1-5).
+  const timeSessions =
+    useLiveQuery<{ sessions: number }>(TIME_SESSIONS_SQL, [startMs, nowMs]).rows[0]?.sessions ?? 0;
   const projects = useLiveQuery<ProjectWeek & Record<string, string | number | null>>(
     PROJECTS_WEEK_SQL,
     [startMs, nowMs],
@@ -293,14 +307,21 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
     spendParams(monday).slice(0, 2),
   );
   const settings = useLiveQuery<{ key: string; value_json: string }>(SETTINGS_SQL);
+  const rateRows = useLiveQuery<{ value_json: string }>(RATES_SQL);
+  const awayHistory = useLiveQuery<AwayChange & Record<string, string | number | null>>(
+    AWAY_HISTORY_SQL,
+  );
   const next = useNextWeek(monday);
   const [error, setError] = useState<string | null>(null);
 
   const weekMostlyDone = isoWeekday(today) >= 5;
+  // Days away this week (planned to the Sunday): they never count against an area.
+  const away = awayDays(awayHistory.rows, monday, shiftDate(monday, 6)).size;
   const setting = (key: string) => settings.rows.find((row) => row.key === key)?.value_json;
   const change =
-    next && focus.rows[0]
+    next && focus.rows[0] && !awayHistory.loading
       ? oneChange({
+          awayDays: away,
           next,
           focus: focus.rows[0],
           areas: areas.rows,
@@ -309,7 +330,11 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
         })
       : null;
   const showChange = change && !isHandled(setting(DISMISSED_KEY), monday);
-  const money = spendLines(spend.rows, historyWeeks(since.rows[0]?.since ?? null, monday));
+  // Dollars count at the saved rate, not as birr (F4).
+  const rates = readRates(rateRows.rows[0]?.value_json);
+  const money = spendLines(spend.rows, historyWeeks(since.rows[0]?.since ?? null, monday), rates);
+  const spendNotes = conversionNotes(money.conversion, rates);
+  const approx = approxMark(spendNotes);
   const activeCount = projects.rows.filter((p) => p.status === "active").length;
   const write = (ops: Parameters<typeof transact>[1], context: string) =>
     transact("user", ops, context).catch((failure: unknown) =>
@@ -419,8 +444,10 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 sub={
                   focus.rows[0] ? (
                     <>
-                      {focus.rows[0].sessions} focus sessions · {focus.rows[0].distractions}{" "}
-                      distractions noted · {focus.rows[0].overrun_days} day
+                      {timeSessions} focus session
+                      {timeSessions === 1 ? "" : "s"} · {focus.rows[0].distractions} distraction
+                      {focus.rows[0].distractions === 1 ? "" : "s"} noted ·{" "}
+                      {focus.rows[0].overrun_days} day
                       {focus.rows[0].overrun_days === 1 ? "" : "s"} past the cap
                     </>
                   ) : undefined
@@ -440,8 +467,9 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                       />
                       {area.name}
                     </span>
-                    <span className="pw-bar-value">
+                    <span className={overCap(area) ? "pw-bar-value warn-text" : "pw-bar-value"}>
                       {hoursLabel(area.done_min)} of {hoursLabel(area.target_min)}
+                      {overCap(area) ? " · over its cap" : ""}
                     </span>
                     <Bar
                       value={share(area)}
@@ -455,7 +483,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 monday={monday}
                 saved={setting(PARAGRAPH_KEY)}
                 areas={areas.rows}
-                focus={focus.rows[0]}
+                focus={focus.rows[0] ? { ...focus.rows[0], sessions: timeSessions } : undefined}
                 next={next}
                 ready={ready && weekMostlyDone}
               />
@@ -468,13 +496,15 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 title="Money"
                 sub={
                   money.average !== null
-                    ? `Usually ${formatAmount(money.average)} a week`
+                    ? `Usually ${approx}${formatWhole(money.average)} a week`
                     : "Spent this week"
                 }
               />
               <p className="pw-big">
+                {approx}
                 {formatAmount(money.week)} <span className="soft">spent this week</span>
               </p>
+              {spendNotes.missing && <p className="warn-text">{spendNotes.missing}</p>}
               <ul className="pw-spend">
                 {money.lines.map((line) => (
                   <li
@@ -486,7 +516,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                     <span className="pw-bar-name">{line.category}</span>
                     <span className="pw-bar-value">
                       {formatAmount(line.week)}
-                      {line.average !== null ? ` · usually ${formatAmount(line.average)}` : ""}
+                      {line.average !== null ? ` · usually ${formatWhole(line.average)}` : ""}
                     </span>
                     <span className="pw-spend-pair">
                       <span
@@ -498,7 +528,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                         <span
                           className="pw-spend-bar usual"
                           style={{ width: `${(line.average / maxSpend) * 100}%` }}
-                          aria-label={`${line.category} usually ${formatAmount(line.average)}`}
+                          aria-label={`${line.category} usually ${formatWhole(line.average)}`}
                         />
                       )}
                     </span>
@@ -517,7 +547,11 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 id="projects"
                 icon={<IconProjects size={18} />}
                 title="Projects"
-                sub={`${activeCount} of 2 active`}
+                sub={
+                  activeCount > MAX_ACTIVE
+                    ? `${activeCount} active (limit ${MAX_ACTIVE})`
+                    : `${activeCount} of ${MAX_ACTIVE} active`
+                }
               />
               {projects.rows.length === 0 && (
                 <p className="empty">No projects running or next up. Add one on Projects.</p>
@@ -540,10 +574,10 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                     <span className="pw-actions">
                       {project.status === "next_up" ? (
                         <Button
-                          disabled={activeCount >= 2}
+                          disabled={activeCount >= MAX_ACTIVE}
                           title={
-                            activeCount >= 2
-                              ? "Two projects are already active: pause or finish one first"
+                            activeCount >= MAX_ACTIVE
+                              ? `${activeCount} projects are already active (limit ${MAX_ACTIVE}): pause or finish one first`
                               : undefined
                           }
                           onClick={() =>

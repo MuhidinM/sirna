@@ -4,7 +4,7 @@
  * The live chip and the save use this same function.
  */
 import { logicalDate } from "../kernel/dates";
-import { parseAmount, type Santim } from "../kernel/money";
+import { formatAmount, formatNumber, parseAmount, type Santim } from "../kernel/money";
 import { type ClockStyle, type DayWindow, localToEpoch, readWhen } from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
@@ -25,7 +25,11 @@ export type Parsed =
       /** `tomorrow morning`, `tonight`: a part of the day instead of a time. */
       plannedWindow?: DayWindow;
       area?: string;
+      /** The area is one of yours (not just any `#tag`): the task goes on its list. */
+      areaKnown?: boolean;
       waitingOn?: string;
+      /** `tonight` said after midnight: the echo says Tonight, not Tomorrow (F86). */
+      tonight?: boolean;
       /** `every fri`: a new copy comes once this one is done (T-068). */
       repeat?: Rule;
     }
@@ -69,8 +73,12 @@ export type Parsed =
   | { kind: "cheat"; body: string; area?: string }
   | { kind: "search"; query: string }
   | { kind: "away"; until?: string }
+  /** `back`, `i'm back`: away ends now (F41). */
+  | { kind: "back" }
   | SavingItem
-  | { kind: "focus" };
+  | { kind: "focus" }
+  /** `gym done`, `skipped gym` (plan §3.5): one of today's blocks, ticked or skipped. */
+  | { kind: "block"; blockId: string; title: string; status: "done" | "skipped" };
 
 /** Money lent or owed (T-061): `lent 1000 abel`, `abel paid back 400`. */
 export interface LoanItem {
@@ -154,6 +162,11 @@ export interface MoneyItem {
   accountName?: string;
   /** ISO code when not birr (`$200`, `50 eur`, or the account's currency): minor units of it. */
   currency?: string;
+  /**
+   * The amount was typed with no currency and read in the account's
+   * (`groceries 1200 @wise` is $1,200): the chip checks it against the balance.
+   */
+  bare?: boolean;
 }
 
 export interface ParseOptions {
@@ -179,9 +192,22 @@ export interface ParseOptions {
   /** Your areas and jobs, so `for job a` and `#joba` name one (time-first §1 rule 3). */
   areas?: { id: string; name: string }[];
   /** People with an open loan, so "abel paid back 400" is read only when Abel owes you. */
-  loanPeople?: { name: string; owedToMe: number; iOwe: number }[];
+  loanPeople?: {
+    name: string;
+    owedToMe: number;
+    iOwe: number;
+    /** Open per currency: a repayment lands in its loan's currency, up to what is owed. */
+    open?: { currency: string; owedToMe: number; iOwe: number }[];
+  }[];
   /** Saved rates (`money.rates`), for transfers and savings across currencies. */
   rates?: Rates;
+  /**
+   * Set by the parser itself when the line carries a currency (`$15`, `15 usd`):
+   * the amount is plainly money, so `$15 netflix` needs no spending word.
+   */
+  moneyMarked?: boolean;
+  /** Today's blocks (not rest), so `gym done` and `skipped gym` record one. */
+  blocks?: { id: string; title: string }[];
 }
 
 type AccountOption = NonNullable<ParseOptions["accounts"]>[number];
@@ -207,12 +233,29 @@ function readAccount(text: string, accounts: AccountOption[]) {
   return { rest, account };
 }
 
+/**
+ * A known account as the line's last word, without `@` (`paid rent 8000 cash`,
+ * `lunch 300 telebirr`): the word comes out of the line. Only the last word,
+ * and only after something else, so `cash 500` stays as typed.
+ */
+function trailingAccount(text: string, accounts: AccountOption[]) {
+  const match = /\s([\p{L}][\p{L}\p{N}_-]*)$/u.exec(text.trim());
+  const account = match?.[1] ? findAccount(match[1], accounts) : undefined;
+  if (!match || !account) return undefined;
+  const rest = text.trim().slice(0, match.index).trim();
+  return rest ? { rest, account } : undefined;
+}
+
 /** `afford 4500 shoes`, `can i afford 2k?` */
 const AFFORD =
   /^(?:can i )?afford\s+((?:etb\s*)?\d[\d.,]*k?(?:\s?(?:etb|birr|br))?)(?:\s+(?:a |an |the )?(.+?))?\s*\??$/i;
 
-const TRANSFER =
-  /^(?:moved|move|transferred|transfer)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)\s+(?:from\s+)?@?([\p{L}\p{N}_-]+)\s+(?:to|into)\s+@?([\p{L}\p{N}_-]+)$/iu;
+/** An account in a transfer: up to three words (`cbo savings`), checked against your accounts. */
+const TRANSFER_ACCOUNT = String.raw`@?([\p{L}\p{N}_-]+(?:\s+[\p{L}\p{N}_-]+){0,2}?)`;
+const TRANSFER = new RegExp(
+  String.raw`^(?:moved|move|transferred|transfer)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)\s+(?:from\s+)?${TRANSFER_ACCOUNT}\s+(?:to|into)\s+${TRANSFER_ACCOUNT}$`,
+  "iu",
+);
 
 const LOAN_AMOUNT = String.raw`((?:etb\s*)?\d[\d.,]*k?(?:\s?(?:etb|birr|br))?)`;
 const LOAN_PERSON = String.raw`([\p{L}][\p{L}'-]*(?:\s[\p{L}][\p{L}'-]*)?)`;
@@ -277,7 +320,7 @@ const LOAN_FORMS: [
 /** `lent 1000 abel`, `borrowed 500 from sara`, `abel paid back 400`, `paid back sara 500`. */
 /** Words that are never a person: days, fillers, things. */
 const NOT_A_PERSON =
-  /^(?:today|tonight|tomorrow|yesterday|now|later|next|this|last|week|month|morning|evening|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|the|a|an|my|your|his|her|their|it|him|them|me|you|loan|money|back|cash|some|all|shoes|book|books|item|items|order)$/i;
+  /^(?:today|tonight|tomorrow|yesterday|now|later|next|this|last|week|month|morning|evening|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|the|a|an|my|your|his|her|their|it|him|them|me|you|loan|money|back|cash|some|all|shoes|book|books|item|items|order|card|credit|bill|bills|rent|debt|mortgage|fee|fees|tax|taxes)$/i;
 
 function isPerson(name: string, options: ParseOptions): boolean {
   const words = name.trim().split(/\s+/);
@@ -290,8 +333,98 @@ function isPerson(name: string, options: ParseOptions): boolean {
   return true;
 }
 
+type LoanPerson = NonNullable<ParseOptions["loanPeople"]>[number];
+
+/** The currencies a person's loan is open in, the way being paid back. */
+function openCodes(person: LoanPerson, kind: "paid_me" | "i_paid"): string[] {
+  return (person.open ?? [])
+    .filter((line) => (kind === "paid_me" ? line.owedToMe : line.iOwe) > 0)
+    .map((line) => line.currency)
+    .sort();
+}
+
+/**
+ * A repayment that doesn't fit an open loan (F24, F27): in a currency with
+ * nothing open that way, or more than is owed. Balances would otherwise
+ * flip it silently into a new debt the other way.
+ */
+const capitalise = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+
+function repaymentProblem(parsed: LoanItem, code: string, options: ParseOptions): string | null {
+  if (parsed.loanKind !== "paid_me" && parsed.loanKind !== "i_paid") return null;
+  const person = (options.loanPeople ?? []).find((p) => squash(p.name) === squash(parsed.person));
+  if (!person?.open) return null;
+  const line = person.open.find((open) => open.currency === code);
+  const owed = line ? (parsed.loanKind === "paid_me" ? line.owedToMe : line.iOwe) : 0;
+  const name = capitalise(person.name);
+  if (owed <= 0) return `No ${code} loan open with ${name}`;
+  if (parsed.amount <= owed) return null;
+  const said =
+    parsed.loanKind === "paid_me"
+      ? `${name} owes you ${formatAmount(owed, code)}`
+      : `You owe ${name} ${formatAmount(owed, code)}`;
+  return `${said}, not ${formatAmount(parsed.amount, code)}: write the ${formatAmount(owed, code)} paid back, and the rest as a new loan`;
+}
+
+/** `abel owes me 1000`, `i owe kebede 200`, `i owe 200 to kebede`: a debt said, not a payment. */
+const OWES_FORMS: [RegExp, "lent" | "borrowed", "amount-first" | "person-first"][] = [
+  [
+    new RegExp(String.raw`^${LOAN_PERSON}\s+owes\s+me\s+${LOAN_AMOUNT}$`, "iu"),
+    "lent",
+    "person-first",
+  ],
+  [
+    new RegExp(String.raw`^i\s+owe\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`, "iu"),
+    "borrowed",
+    "amount-first",
+  ],
+  [
+    new RegExp(String.raw`^i\s+owe\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    "borrowed",
+    "person-first",
+  ],
+];
+
+/**
+ * "abel owes me 1000" is a loan, never spending (reg2-3). It says nothing
+ * about money moving today, so it is kept for tonight with the line that
+ * records it as a loan.
+ */
+function readOwes(text: string, options: ParseOptions): Stuck | undefined {
+  for (const [pattern, kind, order] of OWES_FORMS) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const [amountText, person] =
+      order === "amount-first" ? [match[1], match[2]] : [match[2], match[1]];
+    const amount = parseAmount(amountText ?? "");
+    if (amount === null || amount <= 0 || !person || !isPerson(person, options)) continue;
+    const name = person.trim().toLowerCase();
+    const said = formatNumber(amount);
+    const line = kind === "lent" ? `lent ${name} ${said}` : `borrowed ${said} from ${name}`;
+    return looseEnd(text, `Kept for tonight · for a loan, write “${line}”`);
+  }
+  return undefined;
+}
+
 function readLoan(text: string, options: ParseOptions): Parsed | undefined {
-  const { rest, account } = readAccount(text, options.accounts ?? []);
+  const owes = readOwes(text, options);
+  if (owes) return owes;
+  const accounts = options.accounts ?? [];
+  const named = readAccount(text, accounts);
+  // `lent abel 500 telebirr`: a bare account word at the end names the account.
+  const bare = named.account ? undefined : trailingAccount(named.rest, accounts);
+  return (
+    (bare && loanIn(bare.rest, bare.account, options, text)) ??
+    loanIn(named.rest, named.account, options, text)
+  );
+}
+
+function loanIn(
+  rest: string,
+  account: AccountOption | undefined,
+  options: ParseOptions,
+  text: string,
+): Parsed | undefined {
   for (const [pattern, loanKind, order] of LOAN_FORMS) {
     const match = pattern.exec(rest);
     if (!match) continue;
@@ -301,12 +434,31 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
     if (amount === null || amount <= 0 || !person || !isPerson(person, options)) continue;
     // Being paid back, or paying back, needs a loan that is open that way:
     // "job a paid me 18k" is pay, "returned shoes 500" is a refund.
+    let home: AccountOption | undefined;
     if (loanKind === "paid_me" || loanKind === "i_paid") {
       const open = (options.loanPeople ?? []).find((p) => squash(p.name) === squash(person));
-      if (!open || (loanKind === "paid_me" ? open.owedToMe : open.iOwe) <= 0) continue;
+      const owed = open ? (loanKind === "paid_me" ? open.owedToMe : open.iOwe) : 0;
+      // Someone who owes you nothing paying you back is still money in, never spending.
+      if (owed <= 0 && loanKind === "paid_me")
+        return repaidIncome(rest.replace(amountText ?? "", " "), amount, account, options);
+      // "paid back dawit 300" with nothing borrowed from Dawit is no spending
+      // either (F5): kept for tonight. "returned shoes 500" stays a refund.
+      if (owed <= 0 && !/^returned\s/i.test(rest))
+        return looseEnd(text, `You owe ${capitalise(person.trim())} nothing · will ask tonight`);
+      if (!open || owed <= 0) continue;
+      // With no @account (or currency) typed, pay back in the loan's own
+      // currency (F27): "kebede paid back 10" on a $30 loan is $10 into Wise.
+      const codes = openCodes(open, loanKind);
+      if (!account && codes.length > 1)
+        return looseEnd(
+          text,
+          `${capitalise(open.name)} has loans open in ${codes.join(" and ")}: add the currency or an @account`,
+        );
+      const code = codes[0];
+      if (!account && code && code !== "ETB") home = homeIn(options.accounts ?? [], code);
     }
     const fallback = (options.accounts ?? []).find((a) => a.kind === "cash");
-    const chosen = account ?? fallback;
+    const chosen = account ?? home ?? fallback;
     return {
       kind: "loan",
       loanKind,
@@ -317,6 +469,28 @@ function readLoan(text: string, options: ParseOptions): Parsed | undefined {
     };
   }
   return undefined;
+}
+
+/** "sara paid back 200" with no loan open: income into the pay account (or `@account`). */
+function repaidIncome(
+  /** The line without its amount, as typed: "client paid me", "sara gave back". */
+  said: string,
+  amount: Santim,
+  account: AccountOption | undefined,
+  options: ParseOptions,
+): MoneyItem {
+  const item = finishMoney(
+    {
+      kind: "income",
+      description: said.replace(/\s+/g, " ").trim(),
+      amount,
+      categoryId: guessCategory("", true),
+      date: logicalDate(options.nowMs),
+    },
+    options,
+  );
+  const into = account ?? (options.accounts ?? []).find((a) => a.pays_in === 1);
+  return into ? { ...item, account: into.id, accountName: into.name } : item;
 }
 
 /** `moved 2000 cbe to telebirr`: only when both are your accounts. */
@@ -418,6 +592,15 @@ const CATEGORY_WORDS: [RegExp, string][] = [
 ];
 
 const INCOME_WORDS: [RegExp, string][] = [[/\b(salary|payroll|wage|wages)\b/i, "cat_salary"]];
+/**
+ * Words that say money came in, though not as pay: `income 5000`, `refund 300
+ * shoes`, `client paid $200`. Not a bare "paid": "rent paid 5000" is spending,
+ * and not a bare "refunded": "refunded abel 300" is paying someone back.
+ */
+const MONEY_IN =
+  /\b(income|refund|got refunded|reimburs\w*|cashback|paid me|(?:client|customer)s? paid)\b/i;
+const isMoneyIn = (label: string) =>
+  INCOME_WORDS.some(([pattern]) => pattern.test(label)) || MONEY_IN.test(label);
 
 function guessCategory(text: string, income: boolean): string {
   const table = income ? INCOME_WORDS : CATEGORY_WORDS;
@@ -440,20 +623,34 @@ function readTag(text: string): { rest: string; area?: string } {
 const AMOUNT =
   /(?:^|\s)(?:(?:etb|br|birr)\s*)?(\d[\d,]*(?:\.\d{1,2})?k?(?:\s*(?:etb|br|birr))?)(?=\s|$)/i;
 
+/** More than this (10 million birr) on one capture line is a slip, not money: it stays a loose end. */
+const MAX_CAPTURE_MINOR = 1_000_000_000;
+
 /** Splits "label amount" or "amount label" when the line is only that. */
 function readMoney(
   text: string,
   amountFirstOk = false,
-): { label: string; amount: Santim } | undefined {
+  /** A currency was typed: "$15 netflix" is money with the amount first. */
+  markedOk = false,
+): { label: string; amount: Santim; amountFirst: boolean } | undefined {
+  // "2 coffees 90": a count before the words is part of the label, not the amount.
+  const count = /^(\d{1,2}) ([a-z].*)$/i.exec(text);
+  if (count?.[2]) {
+    const counted = readMoney(count[2]);
+    if (counted && !counted.amountFirst)
+      return { ...counted, label: `${count[1]} ${counted.label}` };
+  }
   const match = AMOUNT.exec(text);
   if (!match?.[1]) return undefined;
   // Phone numbers and codes are not money: a leading zero, or an Ethiopian
   // mobile number with or without 251 (911234567, 251911234567).
   if (/^0\d/.test(match[1]) || /^(?:251)?[79]\d{8}$/.test(match[1])) return undefined;
   const amount = parseAmount(match[1]);
-  if (amount === null || amount === 0) return undefined;
+  if (amount === null || amount === 0 || amount > MAX_CAPTURE_MINOR) return undefined;
   const before = text.slice(0, match.index).trim();
   const after = text.slice(match.index + match[0].length).trim();
+  // "buy bread 15 min" is how long, not 15 birr.
+  if (/^(?:m|mins?|minutes?|h|hrs?|hours?)\b/i.test(after)) return undefined;
   const label = `${before} ${after}`
     .replace(/\s+/g, " ")
     .trim()
@@ -464,21 +661,32 @@ function readMoney(
   // "renew passport 2027") need a word we know costs money.
   const firstWord = before.split(" ")[0]?.toLowerCase() ?? "";
   const plain = before !== "" && after === "" && !TASK_VERBS.has(firstWord);
-  if (!plain && !amountFirstOk && !isKnownSpend(label)) return undefined;
-  return { label, amount };
+  const markedFirst = markedOk && before === "";
+  if (!plain && !amountFirstOk && !markedFirst && !isKnownSpend(label)) return undefined;
+  return { label, amount, amountFirst: before === "" };
 }
 
 function isKnownSpend(label: string): boolean {
-  return [...CATEGORY_WORDS, ...INCOME_WORDS].some(([pattern]) => pattern.test(label));
+  return (
+    CATEGORY_WORDS.some(([pattern]) => pattern.test(label)) ||
+    INCOME_WORDS.some(([pattern]) => pattern.test(label))
+  );
 }
 
 function withArea<T extends object>(value: T, area: string | undefined): T & { area?: string } {
   return area ? { ...value, area } : value;
 }
 
-/** `~18h`, `about 18 hours` anywhere; a bare `18h` only at the end or before `by`. */
-const MARKED_ESTIMATE = /(?:~|\babout\s+|\baround\s+)(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)\b/i;
+/** `~18h`, `about 18 hours`, `~30 min` anywhere; a bare `18h` only at the end or before `by`. */
+const MARKED_ESTIMATE =
+  /(?:~|\babout\s+|\baround\s+)(\d+(?:\.\d+)?)\s*(h|hrs?|hours?|m|mins?|minutes?)\b/i;
 const BARE_ESTIMATE = /\s(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)(?=\s*$|\s+by\b)/i;
+/** A task's `15 min` / `15m` at the end; "in 15 min" is when, and "for 15 min" readWhen's. */
+const BARE_MINUTES = /(?<!\b(?:in|for))\s(\d{1,3})\s*(m|mins?|minutes?)\s*$/i;
+
+/** An estimate match in minutes: its unit is hours unless it starts with "m". */
+const estimateMinutes = (match: RegExpExecArray) =>
+  Math.round(Number(match[1]) * (match[2]?.toLowerCase().startsWith("m") ? 1 : 60));
 
 /**
  * An idea (plan §3.8): `idea: CLI budget tool ~18h by 20 dec` reads an
@@ -493,7 +701,7 @@ export function readIdea(
   let rest = body;
   const estimate = MARKED_ESTIMATE.exec(rest) ?? BARE_ESTIMATE.exec(` ${rest}`);
   if (estimate) {
-    const minutes = Math.round(Number(estimate[1]) * 60);
+    const minutes = estimateMinutes(estimate);
     if (minutes > 0) {
       idea.estimateMin = minutes;
       rest = ` ${rest}`.replace(estimate[0], " ").trim();
@@ -513,22 +721,22 @@ export function readIdea(
 }
 
 const SAVING =
-  /^(saved|put aside|set aside|took|withdrew)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)(?:\s+(.*))?$/i;
+  /^(saved|put aside|set aside|took out|took|withdrew)\s+((?:etb\s*)?[\d.,]+k?(?:\s?(?:etb|birr|br))?)(?:\s+(.*))?$/i;
 
 function readSaving(text: string, goals: string[]): Parsed | undefined {
   const match = SAVING.exec(text);
   if (!match) return undefined;
   const amount = parseAmount(match[2] ?? "");
   if (amount === null || amount <= 0) return undefined;
-  const out = /^(took|withdrew)$/i.test(match[1] ?? "");
+  const out = /^(took out|took|withdrew)$/i.test(match[1] ?? "");
   const rest = (match[3] ?? "").trim();
   const words = rest.replace(/^(?:from|for|to|into|on)\s+/i, "").trim();
   const names = (goal: string) =>
     goals.some((name) => name.includes(goal.toLowerCase()) || goal.toLowerCase().includes(name));
   const marked = /[a-z]/i.test(match[2] ?? ""); // `etb`, `birr`, `br` or `k`
   if (out) {
-    // Taking out names where from: `took 2000 from laptop`.
-    if (!/^from\s+/i.test(rest) || !words) return undefined;
+    // Taking out names where from: `took 2000 from laptop`, or a goal: `took 2000 laptop`.
+    if (!words || !(/^from\s+/i.test(rest) || names(words))) return undefined;
   } else if (rest && !names(words) && !marked) {
     return undefined;
   }
@@ -559,6 +767,24 @@ function jobIn(words: string, jobs: NonNullable<ParseOptions["jobs"]>) {
 }
 
 /**
+ * The category you corrected this description to: the whole description, or
+ * else, for spending the keywords didn't place, a corrected description that
+ * appears in it as whole words, longest first ("special kitfo" finds "kitfo").
+ */
+function learnedFor(item: MoneyItem, learned: Record<string, string>): string | undefined {
+  const description = item.description.trim().toLowerCase().replace(/\s+/g, " ");
+  const exact = learned[description];
+  if (exact) return exact;
+  if (item.kind !== "expense" || item.categoryId !== "cat_other") return undefined;
+  const padded = ` ${description} `;
+  const key = Object.keys(learned)
+    .filter((word) => word.trim())
+    .sort((a, b) => b.length - a.length)
+    .find((word) => padded.includes(` ${word.trim().replace(/\s+/g, " ")} `));
+  return key ? learned[key] : undefined;
+}
+
+/**
  * Settles a money line's category and job (T-056): a `#tag` naming a
  * category wins, then a category you corrected before, then the keyword
  * guess. Income names its job when the words do.
@@ -571,7 +797,7 @@ function finishMoney(item: MoneyItem, options: ParseOptions): MoneyItem {
     result.categoryId = tagged.id;
     delete result.area;
   } else {
-    const learned = options.learned?.[item.description.trim().toLowerCase()];
+    const learned = learnedFor(item, options.learned ?? {});
     if (learned && (categories.length === 0 || categories.some((c) => c.id === learned)))
       result.categoryId = learned;
   }
@@ -631,8 +857,47 @@ function splitOnAnd(piece: string, options: ParseOptions): string[] {
   return out;
 }
 
+/**
+ * "lunch 120 and call mom": a money half, then a half that is a task
+ * (reg2-4). Read whole, the task's words would sit in the entry's
+ * description. "buy bread and milk 60" (the amount at the end) and "salt and
+ * pepper 50" stay one entry.
+ */
+function foldsTask(raw: string, options: ParseOptions): boolean {
+  return raw
+    .split(COMMA_SPLIT)
+    .map((piece) => piece.split(/\s+and\s+/i).filter((half) => half.trim()))
+    .some((halves) =>
+      halves.some((half, index) => {
+        if (index === 0) return false;
+        const before = parsePiece(halves.slice(0, index).join(" and "), options);
+        return isPiece(before) && parsePiece(half, options).kind === "task";
+      }),
+    );
+}
+
 export function parseCapture(raw: string, options: ParseOptions): Parsed {
   const parsed = parsePiece(raw, options);
+  const prefixed = /^\s*(?:\?|[a-z]+\s*:)/i.test(raw);
+  if (parsed.kind !== "afford" && parsed.kind !== "transfer" && !prefixed) {
+    // "lunch 120, call mom tomorrow" reads as one expense with the task's words
+    // in it: when only part of a comma line is money, keep it for tonight.
+    const parts = raw
+      .split(COMMA_SPLIT)
+      .filter((piece) => piece.trim())
+      .flatMap((piece) => splitOnAnd(piece, options));
+    if (parts.length >= 2) {
+      // A piece kept for its own reason ("No EUR account yet") is money all the same.
+      const money = parts.map((piece) => {
+        const item = parsePiece(piece, options);
+        return isPiece(item) || isStuck(item);
+      });
+      if (money.some(Boolean) && !money.every(Boolean))
+        return looseEnd(raw, "Part of this line isn't money: put each thing on its own line");
+    }
+    if (isMoney(parsed) && foldsTask(raw, options))
+      return looseEnd(raw, "Part of this line isn't money: put each thing on its own line");
+  }
   if (isMoney(parsed) || parsed.kind === "afford" || parsed.kind === "transfer") return parsed;
   // `lunch 120, taxi 40`, `+25000 salary, saved 500 laptop and lent abel 1500`:
   // several records when every piece is money (time-first §2).
@@ -640,7 +905,7 @@ export function parseCapture(raw: string, options: ParseOptions): Parsed {
     .split(COMMA_SPLIT)
     .filter((piece) => piece.trim())
     .flatMap((piece) => splitOnAnd(piece, options));
-  if (pieces.length >= 2 && !/^\s*(?:\?|[a-z]+\s*:)/i.test(raw)) {
+  if (pieces.length >= 2 && !prefixed) {
     // "lunch 120, taxi 40 @telebirr": an account on the last piece only is
     // for the whole line.
     const accounts = options.accounts ?? [];
@@ -742,8 +1007,10 @@ function parsePiece(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
   const text = raw.trim().replace(/\s+/g, " ");
   const { rest, currency, word } = readCurrency(text);
-  const named = readAccount(rest, accounts).account;
-  let parsed = parsePlain(rest, options);
+  const named = readAccount(rest, accounts).account ?? trailingAccount(rest, accounts)?.account;
+  // "$15 netflix": a currency says it is money, whatever the order.
+  const marked = currency ? { ...options, moneyMarked: true } : options;
+  let parsed = parsePlain(rest, marked);
   if (
     currency &&
     !named &&
@@ -752,7 +1019,7 @@ function parsePiece(raw: string, options: ParseOptions): Parsed {
     parsed.kind !== "afford"
   ) {
     const home = homeIn(accounts, currency);
-    if (home) parsed = parsePlain(`${rest} @${home.id}`, options);
+    if (home) parsed = parsePlain(`${rest} @${home.id}`, marked);
   }
   if (parsed.kind === "transfer") return settleTransfer(parsed, currency, word, text, options);
   if (parsed.kind === "saving") return settleSaving(parsed, currency, word, text, options);
@@ -769,7 +1036,12 @@ function parsePiece(raw: string, options: ParseOptions): Parsed {
         named ? wrongAccount(account, currency, word, accounts) : noAccountIn(currency),
       );
     const code = currencyOf(account);
-    return code === "ETB" ? parsed : { ...parsed, currency: code };
+    const problem = parsed.kind === "loan" ? repaymentProblem(parsed, code, options) : null;
+    if (problem) return looseEnd(text, problem);
+    if (code === "ETB") return parsed;
+    // No currency typed: the number is in the account's, which may not be what was meant.
+    if (!currency && parsed.kind === "expense") return { ...parsed, currency: code, bare: true };
+    return { ...parsed, currency: code };
   }
   // A question or a task with a currency in it: read the line as typed.
   return currency ? parsePlain(raw, options) : parsed;
@@ -853,7 +1125,12 @@ function settleSaving(
       : (accounts.find((a) => a.pays_in === 1 && a.is_savings !== 1 && currencyOf(a) === code) ??
         homeIn(accounts, code));
   if (!savings) return { ...base, unbacked: `no ${code} savings account` };
-  if (!spend) return { ...base, unbacked: `no ${code} account to take it from` };
+  // Only a savings account in that currency: saving gives the goal money it
+  // already holds (F36). Taking out has nowhere to go, so it is only marked.
+  if (!spend)
+    return parsed.amount > 0
+      ? { ...base, savings: refOf(savings) }
+      : { ...base, unbacked: `no ${code} account to take it from` };
   return { ...base, spend: refOf(spend), savings: refOf(savings) };
 }
 
@@ -876,15 +1153,30 @@ function parsePlain(raw: string, options: ParseOptions): Parsed {
 /** One line, with its `@account` taken out first and money settled after. */
 function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   const accounts = options.accounts ?? [];
-  const { rest, account } = readAccount(raw, accounts);
+  const named = readAccount(raw, accounts);
+  const { rest } = named;
+  let { account } = named;
   let parsed = parseOne(rest, options);
+  // `paid rent 8000 cash`, `lunch 300 telebirr`: a bare account word at the
+  // end names the account and leaves the description (F118).
+  if (!account) {
+    const bare = trailingAccount(rest, accounts);
+    const plain = bare ? parseOne(bare.rest, options) : undefined;
+    if (bare && plain && isMoney(plain)) {
+      parsed = plain;
+      account = bare.account;
+    }
+  }
   // `saved 500 laptop @telebirr`: the money comes from Telebirr.
   if (parsed.kind === "saving" && account) return { ...parsed, account: account.id };
   // "got 5000 @telebirr": without the account nothing names the money, so
   // read the whole line and keep the account.
   if (!isMoney(parsed) && account) {
     const whole = parseOne(raw, options);
-    if (!isMoney(whole)) return whole;
+    // "pay rent 5000 @cbo": a task, titled without the account that ends it
+    // (reg2-10). "call @cbo about the loan" keeps its words.
+    const last = /@[\p{L}\p{N}_-]+\s*$/u.test(raw);
+    if (!isMoney(whole)) return parsed.kind === "task" && last ? parsed : whole;
     parsed = {
       ...whole,
       description:
@@ -901,6 +1193,49 @@ function parseMoneyLine(raw: string, options: ParseOptions): Parsed {
   return chosen ? { ...item, account: chosen.id, accountName: chosen.name } : item;
 }
 
+const COUNT_WORDS: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+};
+
+/**
+ * `away till mon`, `away for 3 days` (plan §3.11): the day you are back.
+ * A day that is already here (`away till today`) is refused rather than
+ * quietly turned into tomorrow (F41).
+ */
+function readAway(text: string, nowMs: number, clockStyle: ClockStyle): Parsed {
+  const rest = text.replace(/^away\s*/i, "").trim();
+  const span = /^for\s+(\d+|[a-z]+)\s+(day|week)s?$/i.exec(rest);
+  if (span?.[1] && span[2]) {
+    const count = /^\d+$/.test(span[1]) ? Number(span[1]) : COUNT_WORDS[span[1].toLowerCase()];
+    if (count && count > 0 && count <= 365) {
+      const days = count * (span[2].toLowerCase() === "week" ? 7 : 1);
+      return { kind: "away", until: logicalDate(nowMs + days * 24 * 60 * 60 * 1000) };
+    }
+  }
+  const when = readWhen(rest.replace(/^(?:till|until|to)\b/i, ""), nowMs, clockStyle);
+  if (!when.date) return { kind: "away" };
+  // `away till today` / `till yesterday`: no day to be away till. Nothing is
+  // saved; the box says so and keeps the line (F41).
+  if (when.date <= logicalDate(nowMs))
+    return { kind: "inbox", body: "", why: "That day is already here: say the day you're back" };
+  return { kind: "away", until: when.date };
+}
+
 function parseOne(raw: string, options: ParseOptions): Parsed {
   const { nowMs, clockStyle = "western" } = options;
   const text = raw.trim().replace(/\s+/g, " ");
@@ -909,42 +1244,66 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   // Prefixes win (plan §3.5).
   if (text.startsWith("?")) return { kind: "search", query: text.slice(1).trim() };
   if (lower === "focus" || lower === "start focus") return { kind: "focus" };
-  if (/^away\b/.test(lower)) {
-    const when = readWhen(text.replace(/^away\s*(?:till|until|to)?/i, ""), nowMs, clockStyle);
-    return when.date ? { kind: "away", until: when.date } : { kind: "away" };
-  }
+  const block = readBlock(text, options.blocks ?? []);
+  if (block) return block;
+  if (/^away\b/.test(lower)) return readAway(text, nowMs, clockStyle);
+  if (/^(?:i'?m |i am )?back(?: now)?[.!]?$/.test(lower)) return { kind: "back" };
 
   // Savings (plan §3.13). Kept narrow so ordinary lines stay what they were:
   // `saved 500` / `put aside 2k`  — nothing after the amount;
   // `saved 500 laptop`            — the words name a goal;
   // `saved 500 ETB rent`          — a currency marks it as money;
-  // `took 2000 from laptop`       — taking out needs `from` and a goal.
+  // `took 2000 from laptop`       — taking out needs `from` or a goal's name.
   const saving = readSaving(text, options.goals ?? []);
   if (saving) return saving;
 
-  const prefix = /^(t|n|idea|pin|wait|fb)\s*:\s*/i.exec(text);
+  const prefix = /^(t|n|note|idea|pin|wait|fb)\s*:\s*/i.exec(text);
   const body = prefix ? text.slice(prefix[0].length) : text;
   const { rest: untagged, area: tag } = readTag(body);
-  const area = tag ? (areaNamed(tag, options.areas ?? [])?.id ?? tag) : undefined;
+  // "idea:", "#jobhunt": nothing to save. The capture box says so and keeps the line.
+  if (!untagged.trim())
+    return {
+      kind: "inbox",
+      body: "",
+      why: prefix ? `Type something after ${prefix[1]?.toLowerCase()}:` : "Type something to save",
+    };
+  const known = tag ? areaNamed(tag, options.areas ?? []) : undefined;
+  // Money keeps any tag: `#fuel` picks a category.
+  const moneyArea = tag ? (known?.id ?? tag) : undefined;
+  // Anything else takes only a tag that names an area, so a misspelt `#jobhnt`
+  // stays in the text instead of filing the task under no area at all. A
+  // `pin:` tag names a sheet, and with no areas to check every tag is kept.
+  const keepTag = prefix?.[1]?.toLowerCase() === "pin" || (options.areas ?? []).length === 0;
+  const area = known?.id ?? (keepTag ? tag : undefined);
+  const plain = tag && !area ? body : untagged;
+  /** A task's area, and whether it names one of yours (`for job a` always does). */
+  const taskWithArea = (task: Extract<Parsed, { kind: "task" }>) => {
+    const tagged = withArea(task, area);
+    if (tag ? known : tagged.area) tagged.areaKnown = true;
+    return tagged;
+  };
 
   switch (prefix?.[1]?.toLowerCase()) {
     case "n":
-      return withArea({ kind: "note", body: untagged }, area);
+    case "note":
+      return withArea({ kind: "note", body: plain }, area);
     case "idea":
-      return withArea(readIdea(untagged, nowMs, clockStyle), area);
+      return withArea(readIdea(plain, nowMs, clockStyle), area);
     case "pin":
-      return withArea({ kind: "cheat", body: untagged }, area);
+      return withArea({ kind: "cheat", body: plain }, area);
     case "fb":
-      return { kind: "feedback", body: untagged };
+      return { kind: "feedback", body: plain };
     case "wait": {
-      const when = readWhen(untagged, nowMs, clockStyle);
+      const when = readWhen(plain, nowMs, clockStyle);
       const waitingOn = when.rest.replace(/^(?:on|for)\s+/i, "");
       const task: Parsed = { kind: "task", title: `Waiting: ${waitingOn}`, waitingOn };
       if (when.date) task.dueDate = when.date;
       return withArea(task, area);
     }
-    case "t":
-      return withArea(readTask(untagged, nowMs, clockStyle, options.areas), area);
+    case "t": {
+      const task = readTask(plain, nowMs, clockStyle, options.areas);
+      return task.title ? taskWithArea(task) : NO_TITLE;
+    }
     default:
       break;
   }
@@ -961,7 +1320,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
       money &&
       (money.amount >= 10_000 ||
         /\d\s*(?:k|etb|birr|br)\b|\b(?:etb|birr|br)\s*\d/i.test(got[1]) ||
-        INCOME_WORDS.some(([pattern]) => pattern.test(money.label)) ||
+        isMoneyIn(`got ${money.label}`) ||
         jobIn(money.label, options.jobs ?? []) !== undefined);
     if (money && looksPaid) {
       return withArea(
@@ -972,7 +1331,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
           categoryId: guessCategory(money.label, true),
           date: logicalDate(nowMs),
         },
-        area,
+        moneyArea,
       );
     }
   }
@@ -990,7 +1349,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
           categoryId: guessCategory(money.label, true),
           date: logicalDate(nowMs),
         },
-        area,
+        moneyArea,
       );
     }
   }
@@ -1001,34 +1360,109 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
     const spentText = untagged.replace(SPENT_WORDS, "");
     // Spending happened, so its day words point back: "lunch 120 mon" is last Monday.
     const when = readWhen(spentText, nowMs, clockStyle, { past: true });
-    const money = readMoney(when.rest, spent);
-    if (money && when.minutes === undefined) {
+    const money = readMoney(when.rest, spent, options.moneyMarked === true);
+    // A time or a length ("buy bread for 15 min") makes it something to do.
+    if (money && when.minutes === undefined && when.durationMin === undefined) {
+      // "$200 from client": money that came from someone.
+      const from = !spent && money.amountFirst && /^from\s+/i.test(money.label);
+      const label = from ? money.label.replace(/^from\s+/i, "") : money.label;
       // "paid salary 3000 to the house help" is spending, not income.
-      const isIncome = !spent && INCOME_WORDS.some(([pattern]) => pattern.test(money.label));
+      const isIncome = from || (!spent && isMoneyIn(label));
       return withArea(
         {
           kind: isIncome ? "income" : "expense",
-          description: money.label,
+          description: label,
           amount: money.amount,
-          categoryId: guessCategory(money.label, isIncome),
+          categoryId: guessCategory(label, isIncome),
           date: when.date ?? logicalDate(nowMs),
         },
-        area,
+        moneyArea,
       );
     }
   }
 
-  const task = readTask(untagged, nowMs, clockStyle, options.areas);
-  const firstWord = untagged.split(" ")[0]?.toLowerCase() ?? "";
-  if (task.kind === "task" && (task.dueDate || TASK_VERBS.has(firstWord) || area || task.area)) {
-    return withArea(task, area);
+  const task = readTask(plain, nowMs, clockStyle, options.areas);
+  // "tomorrow", "tomorrow 2am": only when, nothing to do. Saves nothing.
+  if (!task.title) return NO_TITLE;
+  // A time phrase the reader missed: say so and keep it for tonight (ADR-0005),
+  // instead of a silent Someday with the words left in the title.
+  const unread = task.dueDate ? null : UNREAD_WHEN.exec(task.title);
+  if (unread) return looseEnd(raw, `Couldn't read "${unread[0]}" · will ask tonight`);
+  // "pay iddir every month 200": a month with no day can't repeat (F82). Say how.
+  // Only the repeat's place counts: "write monthly report" is a task.
+  if (!task.repeat && !task.dueDate && MONTH_WITH_NO_DAY.test(task.title))
+    return looseEnd(
+      raw,
+      `Say which day, as in “monthly ${Number(logicalDate(nowMs).slice(8))}” · will ask tonight`,
+    );
+  // The verb after an unknown `#tag` still counts: "#urgent call mom" is a task.
+  const firstWord = untagged.trim().split(" ")[0]?.toLowerCase() ?? "";
+  // A length ("walk for 45 min") is planned into free time, so it makes a task too.
+  if (
+    task.kind === "task" &&
+    (task.dueDate || task.estimateMin || TASK_VERBS.has(firstWord) || area || task.area)
+  ) {
+    return taskWithArea(task);
   }
-  return withArea({ kind: "inbox", body: untagged }, area);
+  return withArea({ kind: "inbox", body: plain }, area);
+}
+
+/** `every month` or `monthly` ending a line, alone or before an amount. */
+const MONTH_WITH_NO_DAY =
+  /\s(?:every\s+month|monthly)(?:\s+(?:etb\s*)?\d[\d,]*(?:\.\d{1,2})?k?(?:\s?(?:etb|birr|br))?)?$/i;
+
+/** A line that only says when: the capture box asks for the what and keeps the line. */
+const NO_TITLE: Stuck = { kind: "inbox", body: "", why: "Type what to do" };
+
+/** Time words that should have given a day: left in a title, they were not read. */
+const UNREAD_WHEN =
+  /\b(?:in\s+(?:\d+|an?)\s*(?:mins?|minutes?|hrs?|hours?)|(?:this|next)\s+weekend|next\s+week|(?:on|by)\s+the\s+\d{1,2}(?:st|nd|rd|th)?|at\s+\d{3,4})\b/i;
+
+/** `skipped gym`, `skip the gym`, `missed quran`. */
+const BLOCK_SKIPPED_FIRST = /^(?:skip(?:ped)?|missed)\s+(?:the\s+|my\s+)?(.+?)(?:\s+today)?$/i;
+/** `gym done`, `gym ✓`, `quran finished`, `gym skipped`. */
+const BLOCK_STATUS_LAST =
+  /^(?:the\s+|my\s+)?(.+?)\s+(done|✓|✔|finished|complete|completed|skipped|missed)(?:\s+today)?$/i;
+/** `did gym`, `done with quran`, `finished the reading`. */
+const BLOCK_DONE_FIRST = /^(?:did|done with|finished)\s+(?:the\s+|my\s+)?(.+?)(?:\s+today)?$/i;
+
+/**
+ * `gym done` / `skipped gym` (plan §3.5): only when the words name one of
+ * today's blocks, so `report done` stays an ordinary capture. Exact title
+ * first, then one that contains the words, then one the words contain.
+ */
+function readBlock(
+  text: string,
+  blocks: NonNullable<ParseOptions["blocks"]>,
+): Extract<Parsed, { kind: "block" }> | undefined {
+  // A prefixed line (`n: gym done`) is what its prefix says.
+  if (blocks.length === 0 || /^[a-z]+\s*:/i.test(text)) return undefined;
+  let target: string | undefined;
+  let status: "done" | "skipped" | undefined;
+  const first = BLOCK_SKIPPED_FIRST.exec(text);
+  const last = BLOCK_STATUS_LAST.exec(text);
+  const did = BLOCK_DONE_FIRST.exec(text);
+  if (first?.[1]) [target, status] = [first[1], "skipped"];
+  else if (last?.[1] && last[2])
+    [target, status] = [last[1], /^(?:skipped|missed)$/i.test(last[2]) ? "skipped" : "done"];
+  else if (did?.[1]) [target, status] = [did[1], "done"];
+  const key = target?.trim().toLowerCase();
+  if (!key || !status || key.split(" ").length > 4) return undefined;
+  const titles = blocks.map((block) => ({ block, name: block.title.trim().toLowerCase() }));
+  const found =
+    titles.find((t) => t.name === key) ??
+    (key.length >= 3 ? titles.find((t) => t.name.includes(key)) : undefined) ??
+    titles.find((t) => t.name.length >= 3 && ` ${key} `.includes(` ${t.name} `));
+  if (!found) return undefined;
+  return { kind: "block", blockId: found.block.id, title: found.block.title, status };
 }
 
 /** A repeat at the end of a task: `every fri`, `monthly 1`, `every weekday`, `daily`. */
 const REPEAT_TAIL =
   /\s+((?:every|weekly|monthly|daily)\b(?:\s+(?:on\s+)?(?:the\s+)?[\w,]+(?:\s*(?:,|and)\s*\w+)*)?)$/i;
+
+const AMOUNT_AFTER_REPEAT =
+  /^(.*\s(?:every|weekly|monthly|daily)\b.*?)\s+((?:etb\s*)?\d[\d,]*(?:\.\d{1,2})?k?(?:\s?(?:etb|birr|br))?)$/i;
 
 type AreaOption = NonNullable<ParseOptions["areas"]>[number];
 
@@ -1048,12 +1482,15 @@ export function areaNamed(words: string, areas: AreaOption[]): AreaOption | unde
 
 /** `update CV for job hunt`: a trailing `for <area or job>` names the area and leaves the title. */
 function readForArea(title: string, areas: AreaOption[]): { rest: string; area?: string } {
-  const match = /\s+for\s+(.+)$/i.exec(title);
-  const area = match?.[1] ? areaNamed(match[1], areas) : undefined;
-  if (!match || !area) return { rest: title };
-  const rest = title.slice(0, match.index).trim();
-  // "pay for gym": a bare verb says too little, so the title stays whole.
-  return { rest: TASK_VERBS.has(rest.toLowerCase()) ? title : rest, area: area.id };
+  // "meet for 45 min for job a": the `for` that names an area, wherever it is.
+  for (const match of title.matchAll(/\s+for\s+/gi)) {
+    const area = areaNamed(title.slice(match.index + match[0].length), areas);
+    if (!area) continue;
+    const rest = title.slice(0, match.index).trim();
+    // "pay for gym": a bare verb says too little, so the title stays whole.
+    return { rest: TASK_VERBS.has(rest.toLowerCase()) ? title : rest, area: area.id };
+  }
+  return { rest: title };
 }
 
 const CONNECTOR_TAIL = /\s+(?:by|on|at|before|due|from)$/i;
@@ -1064,6 +1501,14 @@ function readTask(
   clockStyle: ClockStyle,
   areas: AreaOption[] = [],
 ): Extract<Parsed, { kind: "task" }> {
+  // "pay iddir every month 200": an amount after the repeat stays in the title
+  // (F82). A small bare number ("every month 5") is left alone.
+  const paid = AMOUNT_AFTER_REPEAT.exec(raw);
+  const paidAmount = paid?.[2] ? parseAmount(paid[2]) : null;
+  if (paid?.[1] && paidAmount !== null && (paidAmount > 3100 || /\D/.test(paid[2] ?? ""))) {
+    const task = readTask(paid[1], nowMs, clockStyle, areas);
+    if (task.repeat) return { ...task, title: `${task.title} ${paid[2]}` };
+  }
   // `t: timesheet every fri`: the repeat comes off before the date words.
   const tail = REPEAT_TAIL.exec(raw);
   const rule = tail?.[1] ? parseRule(tail[1]) : null;
@@ -1076,25 +1521,29 @@ function readTask(
     }
     return task;
   }
-  // Only a marked estimate (`~3h`, `about 2 hours`) on a task: a bare "2h" is too
-  // easily part of the title.
-  const estimate = MARKED_ESTIMATE.exec(raw);
-  const minutes = estimate ? Math.round(Number(estimate[1]) * 60) : 0;
+  // A marked estimate (`~3h`, `about 2 hours`, `~30 min`) or minutes ending the
+  // line (`15 min`): a bare "2h" is too easily part of the title.
+  const estimate = MARKED_ESTIMATE.exec(raw) ?? BARE_MINUTES.exec(` ${raw}`);
+  const minutes = estimate ? estimateMinutes(estimate) : 0;
   const text =
-    minutes > 0 && estimate ? raw.replace(estimate[0], " ").replace(/\s+/g, " ").trim() : raw;
+    minutes > 0 && estimate ? ` ${raw}`.replace(estimate[0], " ").replace(/\s+/g, " ").trim() : raw;
   const taskLine = TASK_VERBS.has(text.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
-  const when = readWhen(text, nowMs, clockStyle, { taskLine });
+  // "fix bug fri for job b": the area comes off first, so "fri" ends the line.
+  const early = readForArea(text, areas);
+  const when = readWhen(early.area ? early.rest : text, nowMs, clockStyle, { taskLine });
   // "build CLI tool by 20 dec" → "build CLI tool".
   let title = when.date ? when.rest.replace(CONNECTOR_TAIL, "") : when.rest;
-  const named = readForArea(title, areas);
+  const named = early.area ? { rest: title, area: early.area } : readForArea(title, areas);
   title = named.rest.replace(CONNECTOR_TAIL, "");
-  const task: Extract<Parsed, { kind: "task" }> = { kind: "task", title: title || text };
+  // "tomorrow 2am" alone leaves no title: callers refuse it (F81).
+  const task: Extract<Parsed, { kind: "task" }> = { kind: "task", title };
   // A range (`3-4:30pm`) or `for 45 min` is how long it takes, unless `~2h` said so.
   const length = minutes > 0 ? minutes : (when.durationMin ?? 0);
   if (length > 0) task.estimateMin = length;
   if (when.date) task.dueDate = when.date;
   if (when.date && when.minutes !== undefined) task.dueAt = localToEpoch(when.date, when.minutes);
   if (when.window) task.plannedWindow = when.window;
+  if (when.tonight) task.tonight = true;
   if (named.area) task.area = named.area;
   return task;
 }

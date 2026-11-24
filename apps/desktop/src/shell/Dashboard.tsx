@@ -26,7 +26,6 @@ import {
   FIRST_DAY_SQL,
   FOCUS_DAYS_SQL,
   type FocusDayRow,
-  GOAL_SQL,
   HABIT_DAYS_SQL,
   type HabitDayRow,
   PLAN_DAYS_SQL,
@@ -193,7 +192,6 @@ export function Dashboard() {
   }, [local]);
 
   const tiles = useLiveQuery<Tiles & Record<string, number>>(TILES_SQL, [startMs, nowMs]);
-  const goal = useLiveQuery<{ goal_min: number }>(GOAL_SQL);
   // The streak is about all areas; the chart follows the filter.
   // The streak goes back to the first day Sirna has anything for; the chart shows a year.
   const firstDay = useLiveQuery<{ first: string | null }>(FIRST_DAY_SQL);
@@ -230,7 +228,9 @@ export function Dashboard() {
   );
   const pickedCell = picked ? grid.flat().find((cell) => cell.date === picked) : undefined;
   const t = tiles.rows[0];
-  const goalMin = goal.rows[0]?.goal_min ?? 0;
+  // The week's goal and time in your areas, counted as the Week card counts them.
+  const goalMin = week.rows.reduce((sum, row) => sum + row.target_min, 0);
+  const areaMin = week.rows.reduce((sum, row) => sum + row.done_min, 0);
 
   const loose = layout.filter((place) => !place.hidden);
   /** One step among the cards in the grid (hidden ones are stepped over). */
@@ -255,13 +255,9 @@ export function Dashboard() {
             <strong className="dash-stat-value">{hoursLabel(t?.focus_min ?? 0)}</strong>
             {goalMin > 0 && (
               <>
-                <Bar
-                  value={(t?.goal_focus_min ?? 0) / goalMin}
-                  label="Focus in Grow and Admin areas against the week's goal"
-                />
+                <Bar value={areaMin / goalMin} label="Time in your areas against their targets" />
                 <span className="dash-stat-sub">
-                  {hoursLabel(t?.goal_focus_min ?? 0)} of {hoursLabel(goalMin)} aimed for in your
-                  areas
+                  {hoursLabel(areaMin)} of {hoursLabel(goalMin)} in your areas, habits included
                 </span>
               </>
             )}
@@ -304,7 +300,7 @@ export function Dashboard() {
         <PanelHead
           icon={<Flame lit={streak.alive} />}
           title="Focus streak"
-          sub="Rest days and light days never break it"
+          sub="A day counts with 2 finished sessions or your habits done. Rest, light and away days never break it."
         />
         <p className="dash-streak-count">
           <strong className="streak-number">{streak.current}</strong>{" "}

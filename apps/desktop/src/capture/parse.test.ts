@@ -97,7 +97,7 @@ describe("echo", () => {
     ["wait: recruiter reply mon", "Waiting on recruiter reply · follow up Mon 16 Nov"],
     ["idea: sell old monitor", "Idea"],
     ["pin: git stash pop #coding", "Pinned to cheat sheet · #coding"],
-    ["dentist maybe sometime", "Saved · will ask tonight"],
+    ["dentist maybe sometime", "Inbox · will ask tonight"],
     ["+25000 salary", "Income · 25,000 ETB · Salary"],
   ])("%j → %j", (text, line) => {
     expect(echo(parseCapture(text, { nowMs }), nowMs)).toBe(line);
@@ -157,6 +157,29 @@ describe("tasks with an estimate get planned", () => {
     });
     expect(later[0]).toMatchObject({ values: { status: "someday", estimate_min: null } });
   });
+
+  it("makes an undated task with an area a to-do for that area's blocks (F57)", async () => {
+    const { toOps, echo } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    const areas = [{ id: "joba", name: "Job A" }];
+    const parsed = parseCapture("#joba send report", { nowMs: now, areas });
+    const ops = toOps(parsed, { nowMs: now, newId: () => "t1" });
+    expect(ops[0]).toMatchObject({ values: { status: "todo", area_id: "joba", due_date: null } });
+    expect(echo(parsed, now)).toBe("Task · in its area's blocks · #joba");
+  });
+
+  it("keeps a task tagged with a #tag that names no area as someday", async () => {
+    const { toOps, echo } = await import("./ops");
+    const now = Date.parse("2026-11-11T09:00:00Z");
+    const areas = [{ id: "joba", name: "Job A" }];
+    const parsed = parseCapture("#urgent call mom", { nowMs: now, areas });
+    const ops = toOps(parsed, { nowMs: now, newId: () => "t1" });
+    // F77: the unknown tag stays in the title and names no area.
+    expect(ops[0]).toMatchObject({
+      values: { status: "someday", title: "#urgent call mom", area_id: null },
+    });
+    expect(echo(parsed, now)).toBe("Task · Someday");
+  });
 });
 
 describe("the echo for an estimated task", () => {
@@ -166,5 +189,44 @@ describe("the echo for an estimated task", () => {
     expect(echo(parseCapture("t: clean up the repo ~2h", { nowMs: now }), now)).toBe(
       "Task · planned into free time · ~2 h",
     );
+  });
+});
+
+describe("a habit block by name (F54, plan §3.5)", () => {
+  const blocks = [
+    { id: "b-gym", title: "Gym" },
+    { id: "b-quran", title: "Quran" },
+    { id: "b-email", title: "Check email" },
+  ];
+  const read = (text: string) => parseCapture(text, { nowMs, blocks });
+
+  it("ticks or skips one of today's blocks", () => {
+    expect(read("gym done")).toEqual({
+      kind: "block",
+      blockId: "b-gym",
+      title: "Gym",
+      status: "done",
+    });
+    expect(read("skipped gym")).toMatchObject({ blockId: "b-gym", status: "skipped" });
+    expect(read("Skip the gym today")).toMatchObject({ blockId: "b-gym", status: "skipped" });
+    expect(read("quran ✓")).toMatchObject({ blockId: "b-quran", status: "done" });
+    expect(read("did gym")).toMatchObject({ blockId: "b-gym", status: "done" });
+    expect(read("email done")).toMatchObject({ blockId: "b-email", status: "done" });
+  });
+
+  it("leaves lines that name no block as they were", () => {
+    expect(read("report done").kind).toBe("inbox");
+    expect(read("n: gym done").kind).toBe("note");
+    expect(parseCapture("gym done", { nowMs }).kind).toBe("inbox");
+    expect(read("lunch 120").kind).toBe("expense");
+  });
+
+  it("writes only the block's status, and echoes it", () => {
+    const done = read("gym done");
+    expect(toOps(done, { nowMs, newId: () => "x" })).toEqual([
+      { op: "update", table: "day_blocks", id: "b-gym", values: { status: "done" } },
+    ]);
+    expect(echo(done, nowMs)).toBe("Gym ✓");
+    expect(echo(read("skipped gym"), nowMs)).toBe("Gym skipped");
   });
 });

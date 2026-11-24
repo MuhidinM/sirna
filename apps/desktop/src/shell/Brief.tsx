@@ -7,6 +7,7 @@ import {
   type BriefChecks,
   type BriefTask,
   buildBrief,
+  moneyLines,
   WEEK_SQL,
   weekStart,
   type BriefArea,
@@ -93,6 +94,9 @@ export function Brief({
   const loans = useLoans();
   const outcomes = useWeekOutcomes(mondayOf(today));
   const [reopened, setReopened] = useState(false);
+  // After Start my day or Hide the brief is gone: focus goes to the button that
+  // brings it back, not to the top of the page.
+  const [closedHere, setClosedHere] = useState(false);
   const ready =
     !settings.loading &&
     !week.loading &&
@@ -112,7 +116,8 @@ export function Brief({
   const dismissed = setting(settings.rows, BRIEF_DISMISSED_KEY) === today;
   if (dismissed && !reopened) {
     return (
-      <Button className="brief-reopen" onClick={() => setReopened(true)}>
+      // eslint-disable-next-line jsx-a11y/no-autofocus -- opened on request
+      <Button className="brief-reopen" autoFocus={closedHere} onClick={() => setReopened(true)}>
         Morning brief
       </Button>
     );
@@ -133,7 +138,7 @@ export function Brief({
     atRisk: riskLine(risks(risky.rows, today)),
     insight: found?.[0]?.text ?? null,
     outcomes,
-    due: [...dueLines(due.items, today), ...followUpLines(loans.people, today)],
+    due: moneyLines(dueLines(due.items, today), followUpLines(loans.people, today)),
     calendar: calendarCheck(
       readStatus(settings.rows.find((row) => row.key === SYNC_KEY)?.value_json),
     ),
@@ -153,8 +158,26 @@ export function Brief({
         ))}
       </dl>
       <AiLine today={today} blocks={blocks} top={top} week={week.rows} />
-      {!dismissed && <Button onClick={() => dismiss(today)}>Start my day</Button>}
-      {dismissed && <Button onClick={() => setReopened(false)}>Hide</Button>}
+      {!dismissed && (
+        <Button
+          onClick={() => {
+            setClosedHere(true);
+            void dismiss(today);
+          }}
+        >
+          Start my day
+        </Button>
+      )}
+      {dismissed && (
+        <Button
+          onClick={() => {
+            setClosedHere(true);
+            setReopened(false);
+          }}
+        >
+          Hide
+        </Button>
+      )}
     </section>
   );
 }

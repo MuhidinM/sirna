@@ -2,9 +2,9 @@
  * The morning brief (plan §3.4): at most 12 lines, empty sections hidden, no
  * questions. Pure: the screen and the tests feed it rows and get lines back.
  */
-import { localDate, logicalDate, showDate } from "../../kernel/dates";
+import { logicalDate, showDate } from "../../kernel/dates";
 import { logicalDayStart } from "../tasks/today";
-import { type BlockRow, formatMinutes, nowAndNext } from "../plan/now";
+import { type BlockRow, formatMinutes, lightDayTop, nowAndNext } from "../plan/now";
 import { type ChangedCounts, changedText } from "./changed";
 
 export const MAX_LINES = 12;
@@ -82,6 +82,18 @@ export function loadLabel(plannedMin: number, freeMin: number): string {
   return "over";
 }
 
+/**
+ * The money lines in order: bills first, but loan follow-ups always get the
+ * second slot, so two late bills can't hide them. Two follow-ups share one
+ * line (F28), so both show in the brief's two money lines.
+ */
+export function moneyLines(bills: string[], followUps: string[]): string[] {
+  const follows =
+    followUps.length > 1 ? [followUps.slice(0, 2).join(" · "), ...followUps.slice(2)] : followUps;
+  if (bills.length === 0 || follows.length === 0) return [...bills, ...follows];
+  return [bills[0] as string, follows[0] as string, ...bills.slice(1), ...follows.slice(1)];
+}
+
 /** "1 h 30 / 4 h" with a bare "0" for nothing yet. */
 function progress(doneMin: number, targetMin: number): string {
   return `${doneMin === 0 ? "0" : formatMinutes(doneMin)} / ${formatMinutes(targetMin)}`;
@@ -89,9 +101,10 @@ function progress(doneMin: number, targetMin: number): string {
 
 export function buildBrief(input: BriefInput): BriefLine[] {
   const lines: BriefLine[] = [];
+  // The day the brief is for (D22: it starts at 03:00), beside the real time.
   lines.push({
     label: "",
-    text: showDate(localDate(input.nowMs), undefined, { weekday: true }),
+    text: showDate(logicalDate(input.nowMs), undefined, { weekday: true }),
     meta: clock.format(input.nowMs),
   });
 
@@ -109,9 +122,15 @@ export function buildBrief(input: BriefInput): BriefLine[] {
     });
 
   if (input.calendar) lines.push({ label: "CHECK", text: input.calendar, tone: "warn" });
-  (input.due ?? [])
-    .slice(0, 2)
-    .forEach((text, index) => lines.push({ label: index === 0 ? "MONEY" : "", text }));
+  // Two money lines at most; the rest are counted, never dropped silently.
+  const due = input.due ?? [];
+  due.slice(0, 2).forEach((text, index) =>
+    lines.push({
+      label: index === 0 ? "MONEY" : "",
+      text,
+      meta: index === 1 && due.length > 2 ? `+${due.length - 2} more` : undefined,
+    }),
+  );
 
   const live = input.blocks.filter((block) => block.status !== "skipped");
   const { now, next } = nowAndNext(live, input.nowMs);
@@ -122,7 +141,9 @@ export function buildBrief(input: BriefInput): BriefLine[] {
       text: `${shown.title} · ${clock.format(shown.start_at)}–${clock.format(shown.end_at)}`,
     });
 
-  input.top.slice(0, 3).forEach((task, index) => {
+  // A light day keeps one task and says why (F53).
+  const light = lightDayTop(input.top.slice(0, 3), input.blocks);
+  light.top.forEach((task, index) => {
     const due =
       task.due_date === null
         ? undefined
@@ -131,7 +152,11 @@ export function buildBrief(input: BriefInput): BriefLine[] {
           : task.due_date === input.today
             ? "due today"
             : undefined;
-    lines.push({ label: index === 0 ? "TOP 3" : "", text: task.title, meta: due });
+    lines.push({
+      label: index > 0 ? "" : light.light ? "TOP TASK" : "TOP 3",
+      text: task.title,
+      meta: due,
+    });
   });
 
   const ahead = live.filter((block) => block.kind !== "rest" && block.end_at > input.nowMs);
@@ -156,7 +181,13 @@ export function buildBrief(input: BriefInput): BriefLine[] {
   if (plannedMin > 0)
     lines.push({
       label: "LOAD",
-      text: `${formatMinutes(plannedMin)} planned of ${formatMinutes(freeMin)} free · ${loadLabel(plannedMin, freeMin)}`,
+      text: `${formatMinutes(plannedMin)} planned of ${formatMinutes(freeMin)} free · ${
+        light.light === "drained"
+          ? "light day: two drained nights"
+          : light.light === "rest"
+            ? "rest day"
+            : loadLabel(plannedMin, freeMin)
+      }`,
     });
 
   if (input.outcomes && input.outcomes.length > 0)
@@ -196,7 +227,8 @@ export function weekStart(nowMs: number): number {
 
 /**
  * Minutes done per growth, health and faith area this week: focused minutes
- * from sessions, plus routine blocks marked done (Quran, gym).
+ * from sessions, plus routine blocks marked done (Quran, gym). A done block
+ * focused on counts once: the focus, topped up to its length.
  * ?1 week start, ?2 now (for a session still running).
  */
 export const WEEK_SQL = `
@@ -209,7 +241,12 @@ export const WEEK_SQL = `
              AND COALESCE(f.area_id, fb.area_id) = a.id
          ), 0)
        + COALESCE((
-           SELECT SUM((b.end_at - b.start_at) / 60000)
+           SELECT SUM(MAX(0, (b.end_at - b.start_at) / 60000 - COALESCE((
+             SELECT SUM(MAX(0, (COALESCE(f2.ended_at, ?2) - f2.started_at - f2.paused_ms) / 60000))
+             FROM focus_sessions AS f2
+             WHERE f2.block_id = b.id AND f2.kind = 'focus' AND f2.started_at >= ?1
+               AND COALESCE(f2.area_id, b.area_id) = a.id
+           ), 0)))
            FROM day_blocks AS b
            WHERE b.deleted_at IS NULL AND b.kind = 'routine' AND b.status = 'done'
              AND b.area_id = a.id AND b.start_at >= ?1

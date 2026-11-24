@@ -10,6 +10,7 @@ import { type Query } from "../plan/dayplan";
 import { type AccountRow, ACCOUNTS_SQL } from "./accounts";
 import { afford } from "./afford";
 import { RATES_SQL, readRates, toEtb } from "./currency";
+import { type LoanEvent, LOANS_SQL } from "./loans";
 import { monthOf, monthSummary, SAVED_SQL, type TxnRow, TXNS_SQL } from "./money";
 import {
   dueItems,
@@ -34,18 +35,29 @@ export async function affordAnswer(
   const today = logicalDate(nowMs);
   const { from, to, days } = monthOf(today);
   const window = dueWindow(today);
-  const [accounts, goals, saved, waiting, regulars, regularTxns, txns, savedMonth, rateRows] =
-    await Promise.all([
-      query<Rows<AccountRow>>(ACCOUNTS_SQL),
-      query<Rows<GoalRow>>(GOALS_SQL),
-      query<{ goal_id: string; minor: number }>(GOAL_MONTH_SQL, [from, to]),
-      query<{ minor: number; n: number; held: number }>(UNASSIGNED_SQL),
-      query<Rows<RegularRow>>(REGULARS_SQL),
-      query<Rows<RegularTxn>>(REGULAR_TXNS_SQL, [window.txnFrom, window.to]),
-      query<Rows<TxnRow>>(TXNS_SQL, [from, to]),
-      query<{ minor: number }>(SAVED_SQL, [from, to]),
-      query<{ value_json: string }>(RATES_SQL),
-    ]);
+  const [
+    accounts,
+    goals,
+    saved,
+    waiting,
+    regulars,
+    regularTxns,
+    txns,
+    savedMonth,
+    rateRows,
+    loans,
+  ] = await Promise.all([
+    query<Rows<AccountRow>>(ACCOUNTS_SQL),
+    query<Rows<GoalRow>>(GOALS_SQL),
+    query<{ goal_id: string; minor: number }>(GOAL_MONTH_SQL, [from, to]),
+    query<{ minor: number; n: number; held: number }>(UNASSIGNED_SQL),
+    query<Rows<RegularRow>>(REGULARS_SQL),
+    query<Rows<RegularTxn>>(REGULAR_TXNS_SQL, [window.txnFrom, window.to]),
+    query<Rows<TxnRow>>(TXNS_SQL, [from, to]),
+    query<{ minor: number }>(SAVED_SQL, [from, to]),
+    query<{ value_json: string }>(RATES_SQL),
+    query<Rows<LoanEvent>>(LOANS_SQL),
+  ]);
   const rates = readRates(rateRows[0]?.value_json);
   const foreign = currency && currency !== "ETB" ? currency : undefined;
   const etb = toEtb(amount, foreign, rates);
@@ -64,6 +76,7 @@ export async function affordAnswer(
     unassigned: waiting[0]?.minor ?? 0,
     unassignedHeld: waiting[0]?.held ?? 0,
     rates,
+    loans,
   });
   const month = monthSummary({
     txns,

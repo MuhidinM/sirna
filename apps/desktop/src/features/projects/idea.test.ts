@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseCapture } from "../../capture/parse";
 import { echo, ideaInput, toOps } from "../../capture/ops";
 import { type PlannedProject } from "./capacity";
-import { ideaActionValues, placeIdea, shortDay } from "./idea";
+import { ideaAction, ideaActionValues, placeIdea, shortDay } from "./idea";
 
 const TODAY = "2026-11-11";
 const NOW = Date.parse("2026-11-11T09:00:00Z");
@@ -53,7 +53,7 @@ describe("placing an idea", () => {
       weekly_min: 350,
     });
     expect(placed.echo).toBe(
-      "learn Go · starts Mon 16 Nov · 5 h 50/week · ~2 weeks · Ctrl+Z undoes",
+      "learn Go · starts Mon 16 Nov · 5 h 50 min/week · ~2 weeks · Ctrl+Z undoes",
     );
   });
 
@@ -71,7 +71,7 @@ describe("placing an idea", () => {
       verdict: "good",
       weeklyNeeded: 315,
     });
-    expect(placed.echo).toBe("Good · 5 h 15/week · load 50% → 82% · see Projects");
+    expect(placed.echo).toBe("Good · 5 h 15 min/week · load 50% → 82% · see Projects");
   });
 
   it("waits for an estimate", () => {
@@ -93,7 +93,7 @@ describe("placing an idea", () => {
     const full = { ...PLAN, week: { capacity: 1000, areaCommitted: 900 } };
     const placed = placeIdea(ideaInput(idea("idea: learn Go ~10h")), full);
     expect(placed.values.status).toBe("idea");
-    expect(placed.echo).toBe("Idea · no room in the next year at 85% load");
+    expect(placed.echo).toBe("Idea · saved · no room in the next year at 85% load");
   });
 
   it("still saves when the week can't be read", () => {
@@ -141,6 +141,13 @@ describe("acting on an idea's card", () => {
       deadline: "2026-12-27",
       forecast_finish: "2026-12-27",
     });
+  });
+
+  it("keeps a later date of yours when the suggested finish is earlier (F87-new)", () => {
+    const later = { ...dated, deadline: "2027-01-15" };
+    const values = ideaActionValues(later, { kind: "suggested" }, PLAN);
+    expect(values).toMatchObject({ forecast_finish: "2026-12-27" });
+    expect(values).not.toHaveProperty("deadline");
   });
 
   it("places an undated idea, waiting when two projects run", () => {
@@ -211,5 +218,41 @@ describe("review fixes", () => {
              (0, 'user', 'capture:7', 'task_items', 't1', 'insert'),
              (0, 'user', 'capture:8', 'project_items', 'p2', 'insert')`);
     expect(db.prepare(REPLACED_PROJECTS_SQL).all("capture:7")).toEqual([{ entity_id: "p1" }]);
+  });
+});
+
+describe("user-test fixes", () => {
+  it("F43: blames the project limit, not load, when it blocks every week", () => {
+    const projects = [
+      { ...active("a"), title: "Fix the car" },
+      { ...active("b"), title: "Move flat" },
+      active("c"),
+    ];
+    const placed = placeIdea(ideaInput(idea("idea: learn Go ~2h")), { ...PLAN, projects });
+    expect(placed.values.status).toBe("idea");
+    expect(placed.echo).toBe(
+      "Idea · saved · 3 projects run every week for the next year (Fix the car, Move flat), limit 2; finish, pause or date one to place it",
+    );
+    const undated = { id: "me", estimate_min: 120, deadline: null };
+    expect(ideaAction(undated, { kind: "place" }, { ...PLAN, projects })).toEqual({
+      reason: expect.stringMatching(/^3 projects run every week .* limit is 2/) as string,
+    });
+  });
+
+  it("F43: places an idea after active projects' deadlines", () => {
+    const projects = [
+      { ...active("a"), deadline: "2026-12-03" },
+      { ...active("b"), deadline: "2026-12-17" },
+    ];
+    const placed = placeIdea(ideaInput(idea("idea: learn Go ~2h")), { ...PLAN, projects });
+    expect(placed.values).toMatchObject({ status: "next_up", start_date: "2026-12-07" });
+  });
+
+  it("F87: says why Keep can't apply", () => {
+    const projects = [active("a"), active("b"), active("c")];
+    const dated = { id: "me", estimate_min: 360, deadline: "2027-01-15" };
+    expect(ideaAction(dated, { kind: "keep" }, { ...PLAN, projects })).toEqual({
+      reason: "3 projects are already active (limit 2). Finish or pause one to start this now.",
+    });
   });
 });

@@ -11,8 +11,30 @@ export interface BlockRow {
   status: string;
   color: string | null;
   task_title: string | null;
+  task_due_at?: number | null;
+  task_remind_at?: number | null;
+  task_status?: string | null;
+  task_completed_at?: number | null;
   /** Minutes of finished focus sessions on this block (paused time left out). */
   focused_min?: number | null;
+  /** 1 when the planner made the day light (two drained nights, plan §3.7). */
+  light_day?: number | null;
+}
+
+/**
+ * A light day (F53) keeps one task in Top 3; the others move to Also due.
+ * Light when the planner made any block of the day light: a rest day (a Rest
+ * block of 6 hours or more) or two drained nights.
+ */
+export function lightDayTop<T>(
+  top: T[],
+  blocks: Pick<BlockRow, "light_day" | "kind" | "start_at" | "end_at">[],
+): { light: false | "rest" | "drained"; top: T[] } {
+  if (!blocks.some((block) => block.light_day === 1)) return { light: false, top };
+  const rest = blocks.some(
+    (block) => block.kind === "rest" && block.end_at - block.start_at >= 6 * 60 * 60_000,
+  );
+  return { light: rest ? "rest" : "drained", top: top.slice(0, 1) };
 }
 
 /** A block counts as done when you mark it, or when focus covered this much of it. */
@@ -20,7 +42,8 @@ export const FOCUS_DONE_SHARE = 0.8;
 
 /**
  * How far a block has got: focus minutes against its length, and whether it
- * counts as done (marked done, or focused for 80% of its length).
+ * counts as done (marked done, or focused for 80% of its length). A skipped
+ * block is never done: that is how "Not done" sticks on a focused block.
  */
 export function blockProgress(
   block: Pick<BlockRow, "start_at" | "end_at" | "status" | "focused_min">,
@@ -34,13 +57,36 @@ export function blockProgress(
   return {
     focusedMin,
     lengthMin,
-    done: block.status === "done" || focusedMin >= Math.ceil(lengthMin * FOCUS_DONE_SHARE),
+    done:
+      block.status === "done" ||
+      (block.status !== "skipped" && focusedMin >= Math.ceil(lengthMin * FOCUS_DONE_SHARE)),
   };
 }
 
+type Tickable = Pick<BlockRow, "start_at" | "end_at" | "status" | "focused_min">;
+
+/**
+ * The status a tick on a block writes (review step 1, the block editor): an
+ * open block becomes done; a marked one goes back to planned; one done by
+ * focus alone becomes skipped, since planned would still count it done.
+ */
+export function doneToggle(block: Tickable): "done" | "planned" | "skipped" {
+  if (!blockProgress(block).done) return "done";
+  return blockProgress({ ...block, status: "planned" }).done ? "skipped" : "planned";
+}
+
+/** Skip, or take a skip back. */
+export function skipToggle(block: Pick<BlockRow, "status">): "planned" | "skipped" {
+  return block.status === "skipped" ? "planned" : "skipped";
+}
+
+/** Marked done or skipped: over, so never Now or Next. */
+const settled = (block: BlockRow) => block.status === "done" || block.status === "skipped";
+
 export const TODAY_BLOCKS_SQL = `
   SELECT b.id, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title, b.status,
-         a.color, t.title AS task_title,
+         b.light_day, a.color, t.title AS task_title, t.due_at AS task_due_at, t.remind_at AS task_remind_at,
+         t.status AS task_status, t.completed_at AS task_completed_at,
          (SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
             FROM focus_sessions AS f
             WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL) AS focused_min
@@ -57,8 +103,12 @@ export interface NowAndNext {
   minutesToNext: number | undefined;
 }
 
-/** The block covering `nowMs` (the shortest one when they overlap), and the next to start. */
-export function nowAndNext(blocks: BlockRow[], nowMs: number): NowAndNext {
+/**
+ * The block covering `nowMs` (the shortest one when they overlap), and the
+ * next to start. Blocks marked done or skipped are left out.
+ */
+export function nowAndNext(all: BlockRow[], nowMs: number): NowAndNext {
+  const blocks = all.filter((block) => !settled(block));
   const covering = blocks
     .filter((block) => block.start_at <= nowMs && nowMs < block.end_at && block.kind !== "rest")
     .sort((a, b) => a.end_at - a.start_at - (b.end_at - b.start_at));
@@ -77,6 +127,15 @@ export function formatMinutes(minutes: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+/**
+ * "~7 min", "~1 h 30 min": an estimate in the app's one hour format (F96).
+ * Under an hour it is the minutes as typed; from an hour on it rounds to 5.
+ */
+export function formatEstimate(minutes: number): string {
+  const whole = Math.max(1, Math.round(minutes));
+  return `~${formatMinutes(whole < 60 ? whole : Math.round(whole / 5) * 5)}`;
 }
 
 /** The first step to show for a block: its task, else the block's own title. */
