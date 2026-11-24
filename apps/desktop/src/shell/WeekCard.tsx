@@ -336,6 +336,8 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
   const spendNotes = conversionNotes(money.conversion, rates);
   const approx = approxMark(spendNotes);
   const activeCount = projects.rows.filter((p) => p.status === "active").length;
+  // The same count as the Projects page: projects running this week (#174).
+  const runningNow = next?.runningNow ?? activeCount;
   const write = (ops: Parameters<typeof transact>[1], context: string) =>
     transact("user", ops, context).catch((failure: unknown) =>
       setError(`Couldn't save: ${failure instanceof Error ? failure.message : String(failure)}`),
@@ -367,7 +369,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 <p className={next.over ? "warn-text" : "meta"}>
                   {pct(next.ratio)} of your free time planned ({hoursLabel(next.committed)} of{" "}
                   {hoursLabel(next.capacity)}) · {next.activeProjects} project
-                  {next.activeProjects === 1 ? "" : "s"} running
+                  {next.activeProjects === 1 ? "" : "s"} running next week
                   {next.over ? " · over the 85% line" : ""}
                 </p>
               </>
@@ -548,9 +550,9 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 icon={<IconProjects size={18} />}
                 title="Projects"
                 sub={
-                  activeCount > MAX_ACTIVE
-                    ? `${activeCount} active (limit ${MAX_ACTIVE})`
-                    : `${activeCount} of ${MAX_ACTIVE} active`
+                  runningNow > MAX_ACTIVE
+                    ? `${runningNow} active (limit ${MAX_ACTIVE})`
+                    : `${runningNow} of ${MAX_ACTIVE} active`
                 }
               />
               {projects.rows.length === 0 && (

@@ -469,6 +469,8 @@ export function generateDay(input: PlanInput): DayPlan {
       (id): id is string => id !== null,
     );
     let used = 0;
+    /** Days left in the week, today included (Monday 7, Sunday 1). */
+    const daysLeft = 7 - ((new Date(`${input.date}T00:00:00Z`).getUTCDay() + 6) % 7);
     for (const slot of areaSlots) {
       const duration = onGrid(slot.startMin, budget - used, slot.durationMin);
       if (duration < MIN_BLOCK_MIN) {
@@ -486,9 +488,20 @@ export function generateDay(input: PlanInput): DayPlan {
       const urgentPick = urgentAreas.find(
         (id) => eligible.some((area) => area.id === id) && !(planned[id] ?? 0),
       );
+      // A running project's weekly hours are promised time (#174): it gets
+      // its share of what is left this week every day, spread over the days
+      // left, before areas compete for the rest.
+      const paced = eligible
+        .filter((area) => area.projectId && remaining(area) > 0)
+        .filter((area) => {
+          const today = planned[area.id] ?? 0;
+          return today < (remaining(area) + today) / daysLeft;
+        })
+        .sort((a, b) => a.priorityRank - b.priorityRank)[0];
       const pick =
         tied ??
         eligible.find((area) => area.id === urgentPick) ??
+        paced ??
         [...eligible].sort(
           (a, b) =>
             remaining(b) / b.weeklyTargetMin - remaining(a) / a.weeklyTargetMin ||

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../../test/sqlite";
+import { weekLoad } from "../projects/capacity";
 import {
   AREA_WEEK_SQL,
   type AreaWeek,
@@ -208,6 +209,26 @@ describe("one change", () => {
   const calm = { sessions: 4, distractions: 0, overrun_days: 0 };
   const light = nextWeek({ capacity: 1000, areaCommitted: 500 }, [], MONDAY);
   const heavy = nextWeek({ capacity: 1000, areaCommitted: 900 }, [], MONDAY);
+
+  it("counts the projects running this week the way the Projects page does (#174)", () => {
+    const running = [
+      // Ends this Sunday: running now, not next week.
+      {
+        id: "a",
+        status: "active",
+        weekly_min: 300,
+        start_date: null,
+        forecast_finish: "2026-11-15",
+      },
+      { id: "b", status: "active", weekly_min: 600, start_date: null, forecast_finish: null },
+    ];
+    const next = nextWeek({ capacity: 3000, areaCommitted: 0 }, running, MONDAY);
+    expect(next.activeProjects).toBe(1);
+    expect(next.runningNow).toBe(
+      weekLoad({ capacity: 3000, areaCommitted: 0 }, running, MONDAY).activeProjects,
+    );
+    expect(next.runningNow).toBe(2);
+  });
 
   it("pauses the project without a deadline when next week is too full", () => {
     expect(heavy).toMatchObject({ monday: "2026-11-16", ratio: 0.9, over: true });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type AreaInput, type PlanInput, type TaskInput } from "./generate";
+import { type AreaInput, type PlanInput, projectKey, type TaskInput } from "./generate";
 import { shiftDate } from "./dayplan";
 import { fromNow, planTodayOps, previewWeek, pushDeadlineOps } from "./preview";
 
@@ -160,5 +160,40 @@ describe("a task block you moved or added", () => {
     expect(preview.late).toEqual([]);
     // It isn't planned a second time either.
     expect(preview.days[1]?.blocks.some((b) => b.taskId === "d")).toBe(false);
+  });
+});
+
+describe("a project's first week (#174)", () => {
+  it("gets its weekly hours spread over the days left, not a share of a big area's", () => {
+    // Started on Wednesday with 10 h a week, beside an area with a big target.
+    const project: AreaInput = {
+      id: projectKey("p1"),
+      name: "Launch site",
+      weeklyTargetMin: 600,
+      capped: true,
+      protected: false,
+      priorityRank: 0.5,
+      active: true,
+      kind: "growth",
+      projectId: "p1",
+      areaId: "coding",
+    };
+    // Two 2-hour free slots a day: 192 minutes planned, 48 kept open.
+    const slots = [
+      { startMin: 9 * 60, durationMin: 120, kind: "area" as const, areaId: null, title: "Focus" },
+      { startMin: 18 * 60, durationMin: 120, kind: "area" as const, areaId: null, title: "Focus" },
+    ];
+    const days = [2, 3, 4, 5, 6].map((i) => ({
+      ...day(i, []),
+      template: slots,
+      areas: [coding, project],
+    }));
+    const preview = previewWeek(days);
+    const perDay = preview.days.map((d) =>
+      d.blocks.filter((b) => b.projectId === "p1").reduce((sum, b) => sum + b.durationMin, 0),
+    );
+    expect(perDay.reduce((sum, min) => sum + min, 0)).toBe(600);
+    // Every day left gets some of it.
+    expect(perDay.every((min) => min > 0)).toBe(true);
   });
 });
