@@ -241,6 +241,25 @@ describe("what is due (T-059, T-060)", () => {
     expect(LATE_KEEP_DAYS).toBeGreaterThanOrEqual(365);
   });
 
+  it("drops late pay after a month: pay that never came is not still to come", () => {
+    const added = Date.parse("2026-05-01T12:00:00+03:00");
+    const salary = regular({
+      id: "salary",
+      kind: "pay",
+      name: "Salary",
+      amount_minor: 1_800_000,
+      rule_json: JSON.stringify({ every: "month", day: 1 }),
+      created_at: added,
+    });
+    const today = "2026-11-24";
+    const window = dueWindow(today);
+    const late = dueItems([salary], [], window.from, window.to, today, window.shownFrom).filter(
+      (item) => item.state === "late",
+    );
+    // November's only: May to October's never-recorded pay doesn't count as coming.
+    expect(late.map((item) => item.date)).toEqual(["2026-11-01"]);
+  });
+
   it("skips one date, keeps the skip when changed, and pauses (F29)", () => {
     const iddir = regular({
       id: "iddir",

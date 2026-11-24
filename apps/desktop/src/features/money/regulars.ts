@@ -206,13 +206,20 @@ export const EARLY_DAYS = 7;
  * an unpaid bill went with no notice.
  */
 export const LATE_KEEP_DAYS = 366;
+/**
+ * Late pay stays this many days, as before: pay that never came is not money
+ * to count on, and Safe to spend adds every late item's `left`, so a year of
+ * missed pay would count as coming this month.
+ */
+export const LATE_PAY_KEEP_DAYS = 31;
 
 /**
  * The dates to work out a month: occurrences from the start of last month
  * (so a late payment settles last month's date, not this month's), or
  * LATE_KEEP_DAYS back if that is earlier; entries from a week before that
  * (so an early payment for the first one counts), to the month's end. Only
- * items from `shownFrom`, or still open within LATE_KEEP_DAYS of today, are shown.
+ * items from `shownFrom`, or still open within LATE_KEEP_DAYS of today
+ * (LATE_PAY_KEEP_DAYS for pay), are shown.
  */
 export function dueWindow(today: string): {
   from: string;
@@ -283,7 +290,8 @@ const daysBetween = (a: string, b: string) =>
  * a month you never recorded doesn't take the next month's payment. Dates
  * up to EARLY_DAYS after `to` are worked out too, so an early payment at the
  * end of a month counts the same on every day. Items before `shownFrom` are
- * kept only while still open and within LATE_KEEP_DAYS of today. Dates you
+ * kept only while still open and within LATE_KEEP_DAYS of today (pay:
+ * LATE_PAY_KEEP_DAYS). Dates you
  * skipped are left out: they neither show nor take a payment.
  */
 export function dueItems(
@@ -388,7 +396,9 @@ export function dueItems(
     .filter(
       (item) =>
         item.date >= shownFrom ||
-        (item.state !== "paid" && item.date >= shiftDate(today, -LATE_KEEP_DAYS)),
+        (item.state !== "paid" &&
+          item.date >=
+            shiftDate(today, -(item.regular.kind === "pay" ? LATE_PAY_KEEP_DAYS : LATE_KEEP_DAYS))),
     );
 }
 

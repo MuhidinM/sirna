@@ -86,6 +86,7 @@ describe("your accounts (T-058)", () => {
       partial: true,
     });
     expect(shownBalance({ ...base, moved_minor: 0 })).toBeNull();
+    expect(shownBalance({ ...base, moved_minor: -50_000 })).toBeNull();
     expect(
       shownBalance({ ...base, opening_date: TODAY, opening_minor: 0, moved_minor: 5 }),
     ).toEqual({
