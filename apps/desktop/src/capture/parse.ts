@@ -25,6 +25,8 @@ export type Parsed =
       /** `tomorrow morning`, `tonight`: a part of the day instead of a time. */
       plannedWindow?: DayWindow;
       area?: string;
+      /** The area is one of yours (not just any `#tag`): the task goes on its list. */
+      areaKnown?: boolean;
       waitingOn?: string;
       /** `every fri`: a new copy comes once this one is done (T-068). */
       repeat?: Rule;
@@ -925,7 +927,14 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   const prefix = /^(t|n|idea|pin|wait|fb)\s*:\s*/i.exec(text);
   const body = prefix ? text.slice(prefix[0].length) : text;
   const { rest: untagged, area: tag } = readTag(body);
-  const area = tag ? (areaNamed(tag, options.areas ?? [])?.id ?? tag) : undefined;
+  const knownTag = tag ? areaNamed(tag, options.areas ?? []) : undefined;
+  const area = tag ? (knownTag?.id ?? tag) : undefined;
+  /** A task's area, and whether it names one of yours (`for job a` always does). */
+  const taskWithArea = (task: Extract<Parsed, { kind: "task" }>) => {
+    const tagged = withArea(task, area);
+    if (tag ? knownTag : tagged.area) tagged.areaKnown = true;
+    return tagged;
+  };
 
   switch (prefix?.[1]?.toLowerCase()) {
     case "n":
@@ -944,7 +953,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
       return withArea(task, area);
     }
     case "t":
-      return withArea(readTask(untagged, nowMs, clockStyle, options.areas), area);
+      return taskWithArea(readTask(untagged, nowMs, clockStyle, options.areas));
     default:
       break;
   }
@@ -1021,7 +1030,7 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   const task = readTask(untagged, nowMs, clockStyle, options.areas);
   const firstWord = untagged.split(" ")[0]?.toLowerCase() ?? "";
   if (task.kind === "task" && (task.dueDate || TASK_VERBS.has(firstWord) || area || task.area)) {
-    return withArea(task, area);
+    return taskWithArea(task);
   }
   return withArea({ kind: "inbox", body: untagged }, area);
 }
