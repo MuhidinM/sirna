@@ -174,8 +174,11 @@ describe("tasks with an estimate get planned", () => {
     const areas = [{ id: "joba", name: "Job A" }];
     const parsed = parseCapture("#urgent call mom", { nowMs: now, areas });
     const ops = toOps(parsed, { nowMs: now, newId: () => "t1" });
-    expect(ops[0]).toMatchObject({ values: { status: "someday" } });
-    expect(echo(parsed, now)).toBe("Task · Someday · #urgent");
+    // F77: the unknown tag stays in the title and names no area.
+    expect(ops[0]).toMatchObject({
+      values: { status: "someday", title: "#urgent call mom", area_id: null },
+    });
+    expect(echo(parsed, now)).toBe("Task · Someday");
   });
 });
 

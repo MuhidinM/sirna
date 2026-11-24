@@ -1309,7 +1309,8 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   // instead of a silent Someday with the words left in the title.
   const unread = task.dueDate ? null : UNREAD_WHEN.exec(task.title);
   if (unread) return looseEnd(raw, `Couldn't read "${unread[0]}" · will ask tonight`);
-  const firstWord = plain.split(" ")[0]?.toLowerCase() ?? "";
+  // The verb after an unknown `#tag` still counts: "#urgent call mom" is a task.
+  const firstWord = untagged.trim().split(" ")[0]?.toLowerCase() ?? "";
   // A length ("walk for 45 min") is planned into free time, so it makes a task too.
   if (
     task.kind === "task" &&

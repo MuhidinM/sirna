@@ -128,7 +128,7 @@ describe("the week in plain words", () => {
         nextWeekPercent: null,
       }),
     ).toBe(
-      "1 focus session this week. On target: Quran, Reading. Over its cap: Experiments (4 h 30 of 3 h).",
+      "1 focus session this week. On target: Quran, Reading. Over its cap: Experiments (4 h 30 min of 3 h).",
     );
   });
 });
