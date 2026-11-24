@@ -18,6 +18,7 @@ import {
   DISMISSED_KEY,
   dismissOps,
   FOCUS_WEEK_SQL,
+  TIME_SESSIONS_SQL,
   type FocusWeek,
   applyOps,
   historyWeeks,
@@ -290,6 +291,9 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
     nowMs,
   ]);
   const focus = useLiveQuery<FocusWeek & Record<string, number>>(FOCUS_WEEK_SQL, [startMs, nowMs]);
+  // The sessions behind the minutes below, a running one included (reg1-5).
+  const timeSessions =
+    useLiveQuery<{ sessions: number }>(TIME_SESSIONS_SQL, [startMs, nowMs]).rows[0]?.sessions ?? 0;
   const projects = useLiveQuery<ProjectWeek & Record<string, string | number | null>>(
     PROJECTS_WEEK_SQL,
     [startMs, nowMs],
@@ -440,9 +444,9 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 sub={
                   focus.rows[0] ? (
                     <>
-                      {focus.rows[0].sessions} focus session
-                      {focus.rows[0].sessions === 1 ? "" : "s"} · {focus.rows[0].distractions}{" "}
-                      distraction{focus.rows[0].distractions === 1 ? "" : "s"} noted ·{" "}
+                      {timeSessions} focus session
+                      {timeSessions === 1 ? "" : "s"} · {focus.rows[0].distractions} distraction
+                      {focus.rows[0].distractions === 1 ? "" : "s"} noted ·{" "}
                       {focus.rows[0].overrun_days} day
                       {focus.rows[0].overrun_days === 1 ? "" : "s"} past the cap
                     </>
@@ -479,7 +483,7 @@ export function WeekCard({ onOpenDay }: { onOpenDay?: (date: string) => void } =
                 monday={monday}
                 saved={setting(PARAGRAPH_KEY)}
                 areas={areas.rows}
-                focus={focus.rows[0]}
+                focus={focus.rows[0] ? { ...focus.rows[0], sessions: timeSessions } : undefined}
                 next={next}
                 ready={ready && weekMostlyDone}
               />

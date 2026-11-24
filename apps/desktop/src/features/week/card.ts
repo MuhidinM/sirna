@@ -84,6 +84,34 @@ export const FOCUS_WEEK_SQL = `
   FROM focus_sessions
   WHERE kind = 'focus' AND started_at >= ?1 AND started_at < ?2`;
 
+/**
+ * The focus sessions in "Where time went" (reg1-5): the ones its minutes
+ * count (AREA_WEEK_SQL: an area with a weekly target that isn't a job), a
+ * running one included, so the count and the minutes cover the same sessions.
+ * ?1 week start, ?2 now.
+ */
+export const TIME_SESSIONS_SQL = `
+  SELECT count(*) AS sessions
+  FROM focus_sessions AS f
+  LEFT JOIN day_blocks AS fb ON fb.id = f.block_id
+  JOIN area_items AS a ON a.id = COALESCE(f.area_id, fb.area_id)
+  WHERE f.kind = 'focus' AND f.started_at >= ?1 AND f.started_at < ?2
+    AND a.deleted_at IS NULL AND a.active = 1 AND a.kind != 'work' AND a.weekly_target_min > 0
+    AND ${SESSION_MIN("f")} > 0`;
+
+/**
+ * Focused minutes per logical day, a running session up to now (?3), as
+ * "Where time went" counts it (reg1-5). The logical day starts at 03:00
+ * Addis, 00:00 UTC, so its date is the UTC date of the start.
+ */
+export const FOCUSED_BY_DAY_SQL = `
+  SELECT date(f.started_at / 1000, 'unixepoch') AS day,
+         SUM(${SESSION_MIN("f").replaceAll("?2", "?3")}) AS minutes
+  FROM focus_sessions AS f
+  WHERE f.kind = 'focus' AND date(f.started_at / 1000, 'unixepoch') BETWEEN ?1 AND ?2
+    AND f.started_at < ?3
+  GROUP BY day`;
+
 export interface FocusWeek {
   sessions: number;
   distractions: number;

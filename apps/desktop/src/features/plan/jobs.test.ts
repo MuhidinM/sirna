@@ -177,6 +177,19 @@ describe("task lists inside blocks", () => {
     expect(lists.get("afternoon")?.map((t) => t.id)).toEqual(["update ui"]);
   });
 
+  it("keeps a time still to come out of another day's blocks (reg1-3)", () => {
+    // A later day's Job B block (3300 to 3700); the task's time (1830) is outside it.
+    const thursday = [{ ...block("jobb", "jobb", 3700), start_at: 3300 }];
+    const timed = { ...row("review PR", "jobb"), due_at: 1830 };
+    expect(blockTaskLists(thursday, [timed], 800).get("jobb")).toBeUndefined();
+    // Once its time has passed, it is an open task of the area.
+    expect(
+      blockTaskLists(thursday, [timed], 1900)
+        .get("jobb")
+        ?.map((t) => t.id),
+    ).toEqual(["review PR"]);
+  });
+
   it("leaves out a task already picked for an area block", () => {
     const blocks = [block("c1", "coding", 300, "Read docs", "Coding: Read docs")];
     const lists = blockTaskLists(blocks, [row("Read docs", "coding"), row("Fix bug", "coding")], 0);

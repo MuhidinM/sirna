@@ -106,6 +106,8 @@ export interface WeekModel {
 
 export interface PlannedProject {
   id: string;
+  /** Its name, for a message that says which projects are in the way. */
+  title?: string | null;
   status: string; // idea | next_up | active | paused | done | dropped
   weekly_min: number | null;
   start_date: string | null;
@@ -229,22 +231,33 @@ export interface NoRoom {
   kind: "limit" | "load";
   /** Projects running in the first week the finder looks at. */
   running: number;
+  /** Their names (F43). */
+  names: string[];
 }
 
 /** Why findSlot found nothing, so the message names the real cause. */
 export function noRoom(today: string, week: WeekModel, projects: PlannedProject[]): NoRoom {
   let monday = firstMonday(today);
+  const first = monday;
   const running = weekLoad(week, projects, monday).activeProjects;
+  const names = projects
+    .filter((project) => runsIn(project, first) && project.title)
+    .map((project) => project.title as string);
   for (let i = 0; i < HORIZON_WEEKS; i++, monday = shiftDate(monday, 7))
     if (weekLoad(week, projects, monday).activeProjects < MAX_ACTIVE)
-      return { kind: "load", running };
-  return { kind: "limit", running };
+      return { kind: "load", running, names };
+  return { kind: "limit", running, names };
+}
+
+/** " (Fix the car, Move flat)" naming the projects in the way, or nothing. */
+export function namesText(reason: NoRoom): string {
+  return reason.names.length > 0 ? ` (${reason.names.join(", ")})` : "";
 }
 
 /** The sentence for a project or idea the finder can't place. */
 export function noRoomText(reason: NoRoom): string {
   return reason.kind === "limit"
-    ? `${reason.running} projects run every week for the next year, and the limit is ${MAX_ACTIVE} at once. Finish, pause or give one a deadline to make room.`
+    ? `${reason.running} projects run every week for the next year${namesText(reason)}, and the limit is ${MAX_ACTIVE} at once. Finish, pause or give one a deadline to make room.`
     : "No room in the next year at 85% load. Pause a project or lower a target.";
 }
 
@@ -380,8 +393,8 @@ export const WINDOW_SQL = `SELECT key, value_json FROM core_settings
   WHERE key IN ('day.wake', 'day.review', 'day.hard_stop')`;
 export const AREA_TARGETS_SQL = `SELECT id, weekly_target_min, active FROM area_items
   WHERE deleted_at IS NULL`;
-export const PLANNED_PROJECTS_SQL = `SELECT id, status, weekly_min, start_date, forecast_finish,
-  deadline FROM project_items WHERE deleted_at IS NULL`;
+export const PLANNED_PROJECTS_SQL = `SELECT id, title, status, weekly_min, start_date,
+  forecast_finish, deadline FROM project_items WHERE deleted_at IS NULL`;
 
 /** Defaults match the setup's (routine.ts DEFAULT_ANSWERS). */
 export function windowOf(rows: { key: string; value_json: string | null }[]): Window {

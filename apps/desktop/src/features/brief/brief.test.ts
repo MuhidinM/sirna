@@ -83,6 +83,19 @@ describe("buildBrief", () => {
     ]);
   });
 
+  it("keeps one task on a light day and says why (F53)", () => {
+    const lines = render(
+      buildBrief({ ...input, blocks: day.map((b) => ({ ...b, light_day: 1 })) }),
+    );
+    expect(lines.slice(2, 4)).toEqual([
+      "TOP TASK | Send weekly report | due today",
+      "TODAY | 06:00 Quran · 08–12 Job A · 13–17 Job B · 17:30 Gym · 19:00 Coding · +1",
+    ]);
+    expect(lines).toContain(
+      "LOAD | 2 h 10 min planned of 8 h free · light day: two drained nights",
+    );
+  });
+
   it("shows the week's outcomes after the load (T-076)", () => {
     const lines = render(buildBrief({ ...input, outcomes: ["Ship the invoice", "Gym 3 times"] }));
     expect(lines.slice(7, 9)).toEqual([
@@ -167,15 +180,18 @@ describe("buildBrief", () => {
 });
 
 describe("moneyLines", () => {
-  it("gives a loan follow-up a slot beside the bills", () => {
+  it("gives loan follow-ups a slot beside the bills, two to a line (F28)", () => {
     expect(moneyLines(["Iddir 1", "Iddir 2"], ["Ask Hana", "Ask Dawit"])).toEqual([
       "Iddir 1",
-      "Ask Hana",
+      "Ask Hana · Ask Dawit",
       "Iddir 2",
-      "Ask Dawit",
     ]);
+    expect(moneyLines(["Iddir 1"], ["Ask Hana"])).toEqual(["Iddir 1", "Ask Hana"]);
     expect(moneyLines(["Iddir 1", "Iddir 2"], [])).toEqual(["Iddir 1", "Iddir 2"]);
-    expect(moneyLines([], ["Ask Hana", "Ask Dawit"])).toEqual(["Ask Hana", "Ask Dawit"]);
+    expect(moneyLines([], ["Ask Hana", "Ask Dawit", "Ask Abel"])).toEqual([
+      "Ask Hana · Ask Dawit",
+      "Ask Abel",
+    ]);
   });
 });
 

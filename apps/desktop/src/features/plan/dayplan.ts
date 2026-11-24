@@ -8,6 +8,16 @@ import { localToEpoch } from "../../capture/when";
 import { type PlannedProject, runsIn } from "../projects/capacity";
 import { AWAY_SQL, awayUntil } from "./away";
 import {
+  carriedInput,
+  fromNow,
+  isoWeekday,
+  type PreviewBlock,
+  runChain,
+  type SavedDay,
+  shiftDate,
+  weekStart,
+} from "./carry";
+import {
   type AreaInput,
   cut,
   type DayPlan,
@@ -18,6 +28,7 @@ import {
   MIN_BLOCK_MIN,
   type PlannedBlock,
   type PlanInput,
+  projectKey,
   type TaskInput,
   type TemplateBlock,
   WINDOWS,
@@ -25,21 +36,10 @@ import {
 
 export type Query = <T extends Row>(sql: string, params?: SqlValue[]) => Promise<T[]>;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 /** The logical day starts at 03:00 (rule 4). */
 const DAY_START_MIN = 180;
 
-/** ISO weekday of a YYYY-MM-DD date: Monday = 1 … Sunday = 7. */
-export function isoWeekday(date: string): number {
-  const day = new Date(`${date}T00:00:00Z`).getUTCDay();
-  return day === 0 ? 7 : day;
-}
-
-/** The Monday that starts the week of `date`. */
-export function weekStart(date: string): string {
-  const monday = Date.parse(`${date}T00:00:00Z`) - (isoWeekday(date) - 1) * DAY_MS;
-  return new Date(monday).toISOString().slice(0, 10);
-}
+export { isoWeekday, shiftDate, weekStart };
 
 export const PLAN_EXISTS_SQL =
   "SELECT count(*) AS n FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL";
@@ -48,9 +48,9 @@ export const TEMPLATE_SQL = `
   SELECT start_min, duration_min, kind, area_id, title FROM routine_blocks
   WHERE weekday = ? AND active = 1 AND deleted_at IS NULL ORDER BY start_min`;
 
-/** Projects with weekly hours and an area: their hours add to the area's target (plan §3.8). */
+/** Projects with weekly hours and an area: they get blocks of their own (plan §3.8, F50). */
 export const PROJECT_TIME_SQL = `
-  SELECT id, status, weekly_min, start_date, forecast_finish, area_id FROM project_items
+  SELECT id, title, status, weekly_min, start_date, forecast_finish, area_id FROM project_items
   WHERE deleted_at IS NULL AND area_id IS NOT NULL AND weekly_min > 0`;
 
 export const AREAS_SQL = `
@@ -68,7 +68,10 @@ export const DONE_THIS_WEEK_SQL = `
   SELECT area_id, SUM(minutes) AS minutes FROM (
     SELECT area_id, CASE WHEN status = 'done' THEN length ELSE MIN(length, focused) END AS minutes
     FROM (
-      SELECT b.area_id, b.status, (b.end_at - b.start_at) / 60000 AS length,
+      -- A project's block counts toward the project (its planner key).
+      SELECT CASE WHEN b.project_id IS NULL THEN b.area_id ELSE 'project:' || b.project_id END
+               AS area_id,
+             b.status, (b.end_at - b.start_at) / 60000 AS length,
              COALESCE((SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
                        FROM focus_sessions f
                        WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)
@@ -88,7 +91,7 @@ export const DONE_THIS_WEEK_SQL = `
 
 /** Open tasks, with what is left of their estimate after focus time on them. */
 export const OPEN_TASKS_SQL = `
-  SELECT t.id, t.title, t.area_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
+  SELECT t.id, t.title, t.area_id, t.project_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
          t.estimate_min, t.parent_id, t.step_no,
          -- A later step of a split task: planned after the steps before it.
          EXISTS (SELECT 1 FROM task_items AS before_step
@@ -113,36 +116,6 @@ export const OPEN_TASKS_SQL = `
         AND before_step.status = 'waiting' AND before_step.deleted_at IS NULL)
   ORDER BY t.created_at`;
 
-/**
- * Minutes each task already has in saved plans from now up to (not including)
- * a later day: blocks still to come, not finished, skipped or moved, and with
- * no focus in them (focus time is in remaining_min already). ?1 = now (epoch
- * ms), ?2 = today, ?3 = the day being planned.
- */
-export const BOOKED_EARLIER_SQL = `
-  SELECT b.task_id, SUM((b.end_at - b.start_at) / 60000) AS minutes FROM day_blocks b
-  WHERE b.deleted_at IS NULL AND b.task_id IS NOT NULL
-    AND b.status NOT IN ('done', 'skipped', 'moved') AND b.end_at > ?1
-    AND b.logical_date >= ?2 AND b.logical_date < ?3
-    AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = b.id)
-  GROUP BY b.task_id`;
-
-/**
- * A later day is planned after the days before it (as Next 7 days forecasts
- * it): a task's minutes booked on earlier saved days come off what it still
- * needs; a task covered by them, or with no estimate and a block already,
- * isn't planned again. A task with a time or a part of this day keeps it.
- */
-export function afterBooked(tasks: TaskInput[], booked: Map<string, number>): TaskInput[] {
-  return tasks.flatMap((task) => {
-    const minutes = booked.get(task.id);
-    if (minutes === undefined || (task.atMin ?? null) !== null || task.window) return [task];
-    if (!hasEstimate(task)) return [];
-    const left = (task.remainingMin ?? task.estimateMin ?? 0) - minutes;
-    return left > 0 ? [{ ...task, remainingMin: left }] : [];
-  });
-}
-
 export const CHOSEN_TOP_SQL =
   "SELECT task_id FROM task_daily_top WHERE logical_date = ? AND chosen_by = 'user' ORDER BY position";
 
@@ -151,7 +124,7 @@ export const CHOSEN_TOP_SQL =
  * focus session ran in (a capture heals today's plan mid-session).
  */
 export const KEPT_BLOCKS_SQL = `
-  SELECT id, start_at, end_at, task_id, title, kind, area_id FROM day_blocks
+  SELECT id, start_at, end_at, task_id, title, kind, area_id, project_id FROM day_blocks
   WHERE logical_date = ? AND deleted_at IS NULL
     AND (source = 'user' OR user_edited_at IS NOT NULL
       OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`;
@@ -191,15 +164,11 @@ export const ENERGY_SQL = `
   WHERE logical_date IN (?, ?) AND energy IS NOT NULL
   ORDER BY logical_date DESC`;
 
-/** A YYYY-MM-DD date moved by whole days. */
-export function shiftDate(date: string, days: number): string {
-  return new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
-}
-
 export type OpenTaskRow = {
   id: string;
   title: string;
   area_id: string | null;
+  project_id?: string | null;
   due_date: string | null;
   due_at: number | null;
   planned_window: string | null;
@@ -219,13 +188,15 @@ const WINDOW_NAMES = new Set<string>(["morning", "afternoon", "evening"]);
  * An open task as the planner sees it on `date` (time first, rules 1 and 2):
  * timed on that day → its minute; a part of that day → its window; set for a
  * later day → not today (undefined). A time or window on a day already gone
- * is forgotten, so the task is planned like any other.
+ * is forgotten, so the task is planned like any other; a time still to come
+ * (`nowMs`) on an earlier day keeps it there, off later days (reg1-3).
  */
-export function taskOnDay(task: OpenTaskRow, date: string): TaskInput | undefined {
+export function taskOnDay(task: OpenTaskRow, date: string, nowMs?: number): TaskInput | undefined {
   const base: TaskInput = {
     id: task.id,
     title: task.title,
     areaId: task.area_id,
+    ...(task.project_id ? { projectId: task.project_id } : {}),
     dueDate: task.due_date,
     createdAt: task.created_at,
     remainingMin: task.remaining_min,
@@ -241,6 +212,7 @@ export function taskOnDay(task: OpenTaskRow, date: string): TaskInput | undefine
     if (day === date && timedDay === date)
       return { ...base, atMin: Math.round((task.due_at - localToEpoch(date, 0)) / 60000) };
     if (day > date) return undefined;
+    if (nowMs !== undefined && task.due_at > nowMs && day === timedDay) return undefined;
     return base;
   }
   if (task.planned_window && WINDOW_NAMES.has(task.planned_window)) {
@@ -260,6 +232,7 @@ type KeptRow = {
   kind: string;
   area_id?: string | null;
   light_day?: number;
+  project_id?: string | null;
 };
 
 function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBlock {
@@ -270,13 +243,14 @@ function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBloc
     title: block.title,
     kind: block.kind as TemplateBlock["kind"],
     areaId: block.area_id ?? null,
+    ...(block.project_id ? { projectId: block.project_id } : {}),
   };
 }
 
 /**
- * What the generator needs for `date`. With `nowMs` and a day after today,
- * the tasks' time already booked on the saved days before it comes off
- * (`afterBooked`); without it (the in-memory forecast) nothing is taken off.
+ * What the generator needs for `date`, on its own. `nowMs` keeps a task whose
+ * time is still to come on its own day. A day after today is planned after
+ * the days before it: `chainedInput`.
  */
 export async function loadPlanInput(
   query: Query,
@@ -319,15 +293,11 @@ export async function loadPlanInput(
       localToEpoch(date, DAY_START_MIN),
     ]),
   ]);
-  const projects = await query<PlannedProject & { area_id: string } & Row>(PROJECT_TIME_SQL);
-  /** Weekly minutes of the projects running this week, per area. */
-  const projectMin = new Map<string, number>();
-  for (const project of projects)
-    if (runsIn(project, weekStart(date)))
-      projectMin.set(
-        project.area_id,
-        (projectMin.get(project.area_id) ?? 0) + (project.weekly_min ?? 0),
-      );
+  const projects = (
+    await query<PlannedProject & { id: string; title: string; area_id: string } & Row>(
+      PROJECT_TIME_SQL,
+    )
+  ).filter((project) => runsIn(project, weekStart(date)));
   const removed = await query<{ task_id: string }>(REMOVED_TASK_BLOCKS_SQL, [date]);
   const removedBlocks = await query<{
     start_at: number;
@@ -339,18 +309,6 @@ export async function loadPlanInput(
     shiftDate(date, -1),
     shiftDate(date, -2),
   ]);
-  const today = nowMs === undefined ? undefined : logicalDate(nowMs);
-  const booked = new Map(
-    nowMs !== undefined && today !== undefined && today < date
-      ? (
-          await query<{ task_id: string; minutes: number }>(BOOKED_EARLIER_SQL, [
-            nowMs,
-            today,
-            date,
-          ])
-        ).map((row) => [row.task_id, row.minutes])
-      : [],
-  );
 
   let restDay: number | undefined;
   try {
@@ -390,29 +348,44 @@ export async function loadPlanInput(
       kind: block.kind as PlanInput["template"][number]["kind"],
       title: block.title,
     })),
-    // A running project's weekly hours are its area's time too, so the
-    // planner gives them slots (an area switched off still gets them).
-    areas: areas.map((area): AreaInput => {
-      const extra = projectMin.get(area.id) ?? 0;
-      return {
+    // A project running this week gets blocks of its own up to its weekly
+    // hours (an area switched off still gets them); they hold its tasks.
+    areas: [
+      ...areas.map((area): AreaInput => ({
         id: area.id,
         name: area.name,
         kind: area.kind as AreaInput["kind"],
-        weeklyTargetMin: area.weekly_target_min + extra,
+        weeklyTargetMin: area.weekly_target_min,
         capped: area.capped === 1,
         protected: area.protected === 1,
         priorityRank: area.priority_rank,
-        active: area.active === 1 || extra > 0,
-      };
-    }),
-    doneThisWeekMin: Object.fromEntries(done.map((row) => [row.area_id, row.minutes])),
-    tasks: afterBooked(
-      tasks.flatMap((task) => {
-        const planned = taskOnDay(task, date);
-        return planned ? [planned] : [];
+        active: area.active === 1,
+      })),
+      ...projects.flatMap((project): AreaInput[] => {
+        const area = areas.find((a) => a.id === project.area_id);
+        if (!area) return [];
+        return [
+          {
+            id: projectKey(project.id),
+            name: project.title,
+            kind: "growth",
+            weeklyTargetMin: project.weekly_min ?? 0,
+            capped: true,
+            protected: false,
+            // Ahead of its own area on a tie: you started it for this week.
+            priorityRank: area.priority_rank - 0.5,
+            active: true,
+            projectId: project.id,
+            areaId: area.id,
+          },
+        ];
       }),
-      booked,
-    ),
+    ],
+    doneThisWeekMin: Object.fromEntries(done.map((row) => [row.area_id, row.minutes])),
+    tasks: tasks.flatMap((task) => {
+      const planned = taskOnDay(task, date, nowMs);
+      return planned ? [planned] : [];
+    }),
     chosenTop: chosen.map((row) => row.task_id),
     // Clipped to the logical day (03:00 to 03:00).
     events: events.map((event) => {
@@ -441,6 +414,7 @@ export function planOps(
       kind: block.kind,
       area_id: block.areaId,
       task_id: block.taskId,
+      project_id: block.projectId ?? null,
       title: block.title,
       // A task's own block is stored as a generator block with task_id set
       // (the schema has no 'task' source), so a replan remakes it from the
@@ -497,7 +471,8 @@ export async function isAwayOn(query: Query, date: string): Promise<boolean> {
 export const REST_DAY_MIN = 6 * 60;
 
 /** Today's plan blocks Sirna made and you didn't touch. */
-export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id, light_day
+export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id, light_day,
+  project_id
   FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL
   AND source IN ('template', 'generator') AND user_edited_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)`;
@@ -512,7 +487,7 @@ async function replanInput(
   date: string,
   nowMs?: number,
 ): Promise<{ input: PlanInput; stale: KeptRow[] }> {
-  const loaded = startingNow(await loadPlanInput(query, date, nowMs), nowMs);
+  const loaded = startingNow(await chainedInput(query, date, nowMs), nowMs);
   const untouched = await query<KeptRow>(STALE_BLOCKS_SQL, [date]);
   if (loaded.notBeforeMin === undefined || nowMs === undefined)
     return { input: loaded, stale: untouched };
@@ -576,42 +551,114 @@ async function extraTopOps(query: Query, date: string, plan: DayPlan): Promise<O
 }
 
 /**
- * After you move a block by a command ("move gym to 6pm"): when it now sits on
- * an untouched planner block still to come, the day's untouched blocks are
- * planned again around it (`replanDay`; your moved block is yours now, so it
- * stays). Returns the ops that undo the replan, or null when nothing was in
- * the way. A drag on the board doesn't call this: there you place it yourself.
+ * After you move a block by a command ("move gym to 6pm"): the planner's
+ * focus blocks it now sits on, untouched and still to come, move out of its
+ * way into the day's free time (`bumpOps`); every other block stays as it
+ * was (F15, reg1-4). Returns the ops that undo the moves, or null when
+ * nothing was in the way. A drag on the board doesn't call this: there you
+ * place it yourself.
  */
 export async function replanAround(
   query: Query,
   transact: (ops: Op[]) => Promise<unknown>,
   date: string,
   blockId: string,
-  newId: () => string,
+  _newId: () => string,
   nowMs: number,
 ): Promise<Op[] | null> {
-  const { input, stale } = await replanInput(query, date, nowMs);
-  const [moved] = (await query<LiveRow>(LIVE_BLOCKS_SQL, [date])).filter(
-    (row) => row.id === blockId,
-  );
+  const live = await query<LiveRow>(LIVE_BLOCKS_SQL, [date]);
+  const moved = live.find((row) => row.id === blockId);
   if (!moved) return null;
-  const inTheWay = stale.some(
-    (block) =>
-      block.id !== blockId && block.start_at < moved.end_at && moved.start_at < block.end_at,
+  // A task's own block holds the task's time or window (time first, rule 1):
+  // it stays put, like a block you placed.
+  const own = new Set(
+    (await query<{ id: string }>(OWN_TASK_BLOCKS_SQL, [date])).map((row) => row.id),
   );
-  if (!inTheWay) return null;
-  const plan = generateDay(input);
-  const ops: Op[] = [
-    ...stale.map(({ id }): Op => ({ op: "delete", table: "day_blocks", id })),
-    ...planOps(plan, date, newId, true),
-  ];
-  await transact(ops);
-  // Undo: the new blocks go, the old ones come back as they were.
-  return [
-    ...ops.flatMap((op): Op[] =>
-      op.op === "insert" ? [{ op: "delete", table: "day_blocks", id: op.id }] : [],
-    ),
-    ...stale.map((block): Op => ({
+  const untouched = new Set(
+    (await query<KeptRow>(STALE_BLOCKS_SQL, [date]))
+      .filter((block) => block.end_at > nowMs && !own.has(block.id))
+      .map((block) => block.id),
+  );
+  const slots = (
+    await query<{ start_min: number; duration_min: number; kind: string }>(TEMPLATE_SQL, [
+      isoWeekday(date),
+    ])
+  )
+    .filter((block) => block.kind === "area")
+    .map((block) => ({
+      start_at: localToEpoch(date, block.start_min),
+      end_at: localToEpoch(date, block.start_min + block.duration_min),
+    }));
+  const bump = bumpOps(date, moved, live, untouched, slots, nowMs);
+  if (!bump) return null;
+  await transact(bump.ops);
+  return bump.undo;
+}
+
+/** A day's live blocks that are a task's own block (its title is the task's). */
+export const OWN_TASK_BLOCKS_SQL = `
+  SELECT b.id FROM day_blocks b
+  JOIN task_items t ON t.id = b.task_id AND t.title = b.title
+  WHERE b.logical_date = ? AND b.deleted_at IS NULL`;
+
+const QUARTER_MS = 15 * 60_000;
+
+/**
+ * Moves the untouched focus blocks that overlap `moved` into the first free
+ * time in the day's free slots (the routine's focus time) nearest their old
+ * start, later first: whole if they fit, else the longest piece of at least
+ * 25 minutes; a block with no room left goes. Pure; null when nothing
+ * overlaps. `undo` puts each block back where it was.
+ */
+export function bumpOps(
+  date: string,
+  moved: { id: string; start_at: number; end_at: number },
+  live: LiveRow[],
+  untouched: ReadonlySet<string>,
+  slots: { start_at: number; end_at: number }[],
+  nowMs: number,
+): { ops: Op[]; undo: Op[] } | null {
+  const overlaps = (a: { start_at: number; end_at: number }, b: typeof a) =>
+    a.start_at < b.end_at && b.start_at < a.end_at;
+  const inTheWay = live
+    .filter(
+      (row) =>
+        row.id !== moved.id && row.kind === "area" && untouched.has(row.id) && overlaps(row, moved),
+    )
+    .sort((a, b) => a.start_at - b.start_at);
+  if (inTheWay.length === 0) return null;
+  const busy = live.filter((row) => !inTheWay.includes(row));
+  const ops: Op[] = [];
+  const undo: Op[] = [];
+  for (const block of inTheWay) {
+    const length = block.end_at - block.start_at;
+    const gaps = slots.flatMap((slot) => {
+      let pieces = [{ start: Math.max(slot.start_at, nowMs), end: slot.end_at }];
+      for (const taken of busy)
+        pieces = pieces.flatMap((piece) =>
+          taken.end_at <= piece.start || taken.start_at >= piece.end
+            ? [piece]
+            : [
+                { start: piece.start, end: Math.max(piece.start, taken.start_at) },
+                { start: Math.min(piece.end, taken.end_at), end: piece.end },
+              ],
+        );
+      return pieces
+        .map((piece) => ({
+          start: Math.ceil(piece.start / QUARTER_MS) * QUARTER_MS,
+          end: piece.end,
+        }))
+        .filter((piece) => piece.end - piece.start >= MIN_BLOCK_MIN * 60_000);
+    });
+    const distance = (start: number) =>
+      Math.abs(start - block.start_at) + (start < block.start_at ? 1 : 0);
+    const whole = gaps
+      .filter((gap) => gap.end - gap.start >= length)
+      .sort((a, b) => distance(a.start) - distance(b.start))[0];
+    const piece =
+      whole ??
+      [...gaps].sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start)[0];
+    const back: Op = {
       op: "upsert",
       table: "day_blocks",
       id: block.id,
@@ -625,30 +672,73 @@ export async function replanAround(
         area_id: block.area_id ?? null,
         light_day: block.light_day ?? 0,
       },
-    })),
-  ];
+    };
+    if (!piece) {
+      ops.push({ op: "delete", table: "day_blocks", id: block.id });
+      undo.push(back);
+      continue;
+    }
+    const start = piece.start;
+    const end = Math.min(piece.end, start + length);
+    ops.push({
+      op: "update",
+      table: "day_blocks",
+      id: block.id,
+      values: { start_at: start, end_at: end },
+    });
+    undo.push(back);
+    busy.push({ ...block, start_at: start, end_at: end });
+  }
+  return { ops, undo };
 }
 
 /**
- * The undo `replanAround` gave, as it stands now: a block from that replan
- * you have since moved or focused in is yours and stays. Run the result as
- * the system, not as you, so the blocks it brings back stay untouched planner
- * blocks that heals and replans may still change.
+ * The undo `replanAround` gave, as it stands now: a block it moved that you
+ * have since moved or focused in is yours and stays; one a heal or replan
+ * has deleted since stays gone (the day was planned again without it), and
+ * none comes back onto a live block of the same name and start. Run the
+ * result as the system, not as you, so the blocks it puts back stay
+ * untouched planner blocks that heals and replans may still change.
  */
 export async function replanUndoOps(query: Query, undo: Op[]): Promise<Op[]> {
-  const deletes = undo.filter((op) => op.op === "delete").map((op) => op.id);
-  if (deletes.length === 0) return undo;
-  const kept = new Set(
-    (
-      await query<{ id: string }>(
-        `SELECT id FROM day_blocks WHERE id IN (${deletes.map(() => "?").join(", ")})
-          AND (user_edited_at IS NOT NULL
-            OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id))`,
-        deletes,
-      )
-    ).map((row) => row.id),
+  const ids = undo.map((op) => op.id);
+  if (ids.length === 0) return undo;
+  const rows = await query<{
+    id: string;
+    logical_date: string;
+    start_at: number;
+    deleted: number;
+    yours: number;
+  }>(
+    `SELECT id, logical_date, start_at, deleted_at IS NOT NULL AS deleted,
+       (user_edited_at IS NOT NULL
+         OR EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)) AS yours
+     FROM day_blocks WHERE id IN (${ids.map(() => "?").join(", ")})`,
+    ids,
   );
-  return undo.filter((op) => op.op !== "delete" || !kept.has(op.id));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const dates = [...new Set(rows.map((row) => row.logical_date))];
+  const live =
+    dates.length === 0
+      ? []
+      : await query<{ id: string; start_at: number; title: string }>(
+          `SELECT id, start_at, title FROM day_blocks WHERE deleted_at IS NULL
+             AND logical_date IN (${dates.map(() => "?").join(", ")})`,
+          dates,
+        );
+  return undo.filter((op) => {
+    const row = byId.get(op.id);
+    if (!row) return false;
+    if (row.yours === 1) return false;
+    const values = ("values" in op ? op.values : {}) as { start_at?: number; title?: string };
+    // The replan's own delete leaves the block where it was; a block moved
+    // and then deleted was deleted since.
+    if (row.deleted === 1 && row.start_at !== values.start_at) return false;
+    return !live.some(
+      (other) =>
+        other.id !== op.id && other.start_at === values.start_at && other.title === values.title,
+    );
+  });
 }
 
 /** Days from today on that have a plan. */
@@ -777,6 +867,7 @@ export function orphanOps(
     title: string;
     kind: string;
     area_id?: string | null;
+    project_id?: string | null;
   }[],
 ): { ops: Op[]; dropped: Set<string>; refill: boolean } {
   const tasks = new Map(input.tasks.map((task) => [task.id, task]));
@@ -793,7 +884,14 @@ export function orphanOps(
   for (const block of stale) {
     if (block.task_id === null) continue;
     const task = tasks.get(block.task_id);
-    const area = block.area_id ? areas.get(block.area_id) : undefined;
+    // A project's block is named after the project and holds its tasks.
+    const area = block.project_id
+      ? areas.get(projectKey(block.project_id))
+      : block.area_id
+        ? areas.get(block.area_id)
+        : undefined;
+    const owner = (t: TaskInput) =>
+      block.project_id ? t.projectId === block.project_id : t.areaId === block.area_id;
     const timed = task !== undefined && ((task.atMin ?? null) !== null || !!task.window);
     // A focus slot ("Coding skills: …") that holds a task, not the task's own
     // block. Told apart by more than the area's name, which may have changed
@@ -807,7 +905,7 @@ export function orphanOps(
         (task !== undefined && !timed) ||
         (task === undefined && block.title.includes(": ")));
     if (slot) {
-      if (!task || timed || task.areaId !== block.area_id) {
+      if (!task || timed || !owner(task)) {
         drop(block.id);
         refill = true;
       } else if (area && block.title !== `${area.name}: ${task.title}`)
@@ -955,11 +1053,38 @@ export async function healPlans(
     today,
     shiftDate(today, 7),
   ]);
+  // Each day's heal loads the chain of the days before it: one run reads the
+  // same rows again and again. They are read once until something is written.
+  const memo = memoQuery(query);
+  const write = (ops: Op[]) => {
+    memo.clear();
+    return transact(ops);
+  };
   const healed: string[] = [];
   for (const { logical_date: date } of days) {
-    if (await ensureDayPlan(query, transact, nowMs, newId, date)) healed.push(date);
+    if (await ensureDayPlan(memo.query, write, nowMs, newId, date)) healed.push(date);
   }
   return healed;
+}
+
+/**
+ * `query` with each answer kept by its SQL and parameters until `clear` (a
+ * write). Callers get their own copy of the list.
+ */
+export function memoQuery(query: Query): { query: Query; clear: () => void } {
+  const seen = new Map<string, Promise<Row[]>>();
+  const cached: Query = <T extends Row>(sql: string, params: SqlValue[] = []) => {
+    const key = JSON.stringify([sql, params]);
+    let answer = seen.get(key);
+    if (!answer) {
+      answer = query<Row>(sql, params);
+      seen.set(key, answer);
+      // A failed read is tried again next time.
+      answer.catch(() => seen.delete(key));
+    }
+    return answer.then((rows) => rows.map((row) => ({ ...row })) as T[]);
+  };
+  return { query: cached, clear: () => seen.clear() };
 }
 
 async function planOnce(
@@ -976,9 +1101,119 @@ async function planOnce(
   // A day already gone stays as it was.
   if ((exists?.n ?? 0) > 0)
     return date < logicalDate(nowMs) ? false : healDay(query, transact, date, newId, nowMs);
-  const input = startingNow(await loadPlanInput(query, date, nowMs), nowMs);
+  const input = startingNow(await chainedInput(query, date, nowMs), nowMs);
   if (input.template.length === 0) return false; // no routine yet (setup not done)
   const plan = generateDay(input);
   await transact(planOps(plan, date, newId, input.chosenTop.length > 0));
   return true;
+}
+
+/** Days a chain looks back over before the day it plans. */
+export const CHAIN_DAYS = 7;
+
+/** Saved blocks of a range of days, for `savedDays`. */
+export const SAVED_BLOCKS_SQL = `
+  SELECT b.logical_date, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title,
+         b.light_day, b.status, b.project_id,
+         EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = b.id) AS focused
+  FROM day_blocks b
+  WHERE b.deleted_at IS NULL AND b.logical_date BETWEEN ? AND ?
+  ORDER BY b.logical_date, b.start_at`;
+
+export type SavedRow = {
+  logical_date: string;
+  start_at: number;
+  end_at: number;
+  kind: string;
+  area_id: string | null;
+  task_id: string | null;
+  title: string;
+  light_day: number;
+  status: string;
+  focused: number;
+  project_id?: string | null;
+};
+
+/**
+ * The days that have a plan, as the chain sees them: the blocks still to
+ * come that are not finished, skipped or moved and have no focus in them
+ * (focus time is in a task's remaining minutes already). A block missed
+ * earlier today gave its task nothing, so it doesn't count (F18). Pure.
+ */
+export function savedDays(rows: SavedRow[], nowMs: number): Map<string, SavedDay> {
+  const days = new Map<string, SavedDay>();
+  for (const row of rows) {
+    const day = days.get(row.logical_date) ?? { light: false, blocks: [], booked: [] };
+    days.set(row.logical_date, day);
+    if (row.light_day === 1) day.light = true;
+    if (["done", "skipped", "moved"].includes(row.status) || row.end_at <= nowMs) continue;
+    if (row.focused === 1) continue;
+    const durationMin = Math.round((row.end_at - row.start_at) / 60000);
+    const focus = row.kind === "area";
+    day.booked.push({
+      areaId: focus ? row.area_id : null,
+      taskId: row.task_id,
+      durationMin,
+      ...(focus && row.project_id ? { projectId: row.project_id } : {}),
+    });
+    if (focus) {
+      const block: PreviewBlock = {
+        startMin: Math.round((row.start_at - localToEpoch(row.logical_date, 0)) / 60000),
+        durationMin,
+        areaId: row.area_id,
+        title: row.title,
+        taskId: row.task_id,
+      };
+      day.blocks.push(block);
+    }
+  }
+  return days;
+}
+
+/**
+ * The inputs of the days from `from` to `to` (today from now on), the away
+ * days and the days already saved: what `runChain` needs.
+ */
+export async function loadChain(
+  query: Query,
+  from: string,
+  to: string,
+  nowMs: number,
+): Promise<{ inputs: PlanInput[]; away: Set<string>; saved: Map<string, SavedDay> }> {
+  const today = logicalDate(nowMs);
+  const inputs: PlanInput[] = [];
+  const away = new Set<string>();
+  for (let date = from; date <= to; date = shiftDate(date, 1)) {
+    const input = await loadPlanInput(query, date, nowMs);
+    inputs.push(
+      date === today
+        ? fromNow(input, Math.round((nowMs - localToEpoch(today, 0)) / 60_000))
+        : input,
+    );
+    if (await isAwayOn(query, date)) away.add(date);
+  }
+  const rows = await query<SavedRow>(SAVED_BLOCKS_SQL, [from, to]);
+  return { inputs, away, saved: savedDays(rows, nowMs) };
+}
+
+/**
+ * What the generator needs for `date`, planned after the days before it, as
+ * Next 7 days forecasts it (F18, reg1-1, reg1-2): a task's time on earlier
+ * days (saved, or as they would be planned) comes off what it still needs,
+ * and their focus time counts toward the week's area targets. So a 1-hour
+ * task is planned once, whichever day you open first.
+ */
+export async function chainedInput(query: Query, date: string, nowMs?: number): Promise<PlanInput> {
+  const own = await loadPlanInput(query, date, nowMs);
+  if (nowMs === undefined) return own;
+  const today = logicalDate(nowMs);
+  if (date <= today) return own;
+  const back = shiftDate(date, -CHAIN_DAYS);
+  const { inputs, away, saved } = await loadChain(
+    query,
+    back > today ? back : today,
+    shiftDate(date, -1),
+    nowMs,
+  );
+  return carriedInput(own, runChain(inputs, away, saved).carry);
 }

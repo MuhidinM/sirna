@@ -1,6 +1,7 @@
 import { showDate } from "../kernel/dates";
 import { shiftDate, weekStart } from "../features/plan/dayplan";
 import { formatMinutes } from "../features/plan/now";
+import { FOCUSED_BY_DAY_SQL } from "../features/week/card";
 import { IconChart } from "./icons";
 import { type Bar, BarChart, PanelHead } from "./kit";
 import { useLiveQuery } from "./useLiveQuery";
@@ -13,28 +14,22 @@ const PLANNED_SQL = `
     AND logical_date BETWEEN ?1 AND ?2
   GROUP BY logical_date`;
 
-/**
- * Focused minutes per day. Addis is UTC+3 and the day starts at 03:00, so the
- * logical date is the UTC date of the start.
- */
-const FOCUSED_SQL = `
-  SELECT date(started_at / 1000, 'unixepoch') AS day,
-         sum(max(0, (COALESCE(ended_at, started_at) - started_at - paused_ms) / 60000)) AS minutes
-  FROM focus_sessions
-  WHERE kind = 'focus' AND date(started_at / 1000, 'unixepoch') BETWEEN ?1 AND ?2
-  GROUP BY day`;
-
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /** "2 h 10 min", the app's one way to write a length of time. */
 const hours = (minutes: number) => formatMinutes(Math.round(minutes));
 
 /** This week's focus: planned (cap) against done (body), today highlighted. */
-export function FocusWeek({ today }: { today: string }) {
+export function FocusWeek({ today, nowMs }: { today: string; nowMs: number }) {
   const monday = weekStart(today);
   const sunday = shiftDate(monday, 6);
   const planned = useLiveQuery<{ day: string; minutes: number }>(PLANNED_SQL, [monday, sunday]);
-  const focused = useLiveQuery<{ day: string; minutes: number }>(FOCUSED_SQL, [monday, sunday]);
+  // A running session counts up to now, as on Plan's "Where time went" (reg1-5).
+  const focused = useLiveQuery<{ day: string; minutes: number }>(FOCUSED_BY_DAY_SQL, [
+    monday,
+    sunday,
+    nowMs,
+  ]);
   if (planned.loading || focused.loading) return null;
   const totalDone = focused.rows.reduce((sum, row) => sum + row.minutes, 0);
   const bars: Bar[] = DAYS.map((label, i) => {

@@ -4,7 +4,7 @@
  */
 import { logicalDate, showDate } from "../../kernel/dates";
 import { logicalDayStart } from "../tasks/today";
-import { type BlockRow, formatMinutes, nowAndNext } from "../plan/now";
+import { type BlockRow, formatMinutes, lightDayTop, nowAndNext } from "../plan/now";
 import { type ChangedCounts, changedText } from "./changed";
 
 export const MAX_LINES = 12;
@@ -83,12 +83,15 @@ export function loadLabel(plannedMin: number, freeMin: number): string {
 }
 
 /**
- * The money lines in order: bills first, but a loan follow-up always gets
- * the second slot, so two late bills can't hide every follow-up.
+ * The money lines in order: bills first, but loan follow-ups always get the
+ * second slot, so two late bills can't hide them. Two follow-ups share one
+ * line (F28), so both show in the brief's two money lines.
  */
 export function moneyLines(bills: string[], followUps: string[]): string[] {
-  if (bills.length === 0 || followUps.length === 0) return [...bills, ...followUps];
-  return [bills[0] as string, followUps[0] as string, ...bills.slice(1), ...followUps.slice(1)];
+  const follows =
+    followUps.length > 1 ? [followUps.slice(0, 2).join(" · "), ...followUps.slice(2)] : followUps;
+  if (bills.length === 0 || follows.length === 0) return [...bills, ...follows];
+  return [bills[0] as string, follows[0] as string, ...bills.slice(1), ...follows.slice(1)];
 }
 
 /** "1 h 30 / 4 h" with a bare "0" for nothing yet. */
@@ -138,7 +141,9 @@ export function buildBrief(input: BriefInput): BriefLine[] {
       text: `${shown.title} · ${clock.format(shown.start_at)}–${clock.format(shown.end_at)}`,
     });
 
-  input.top.slice(0, 3).forEach((task, index) => {
+  // A light day keeps one task and says why (F53).
+  const light = lightDayTop(input.top.slice(0, 3), input.blocks);
+  light.top.forEach((task, index) => {
     const due =
       task.due_date === null
         ? undefined
@@ -147,7 +152,11 @@ export function buildBrief(input: BriefInput): BriefLine[] {
           : task.due_date === input.today
             ? "due today"
             : undefined;
-    lines.push({ label: index === 0 ? "TOP 3" : "", text: task.title, meta: due });
+    lines.push({
+      label: index > 0 ? "" : light.light ? "TOP TASK" : "TOP 3",
+      text: task.title,
+      meta: due,
+    });
   });
 
   const ahead = live.filter((block) => block.kind !== "rest" && block.end_at > input.nowMs);
@@ -172,7 +181,13 @@ export function buildBrief(input: BriefInput): BriefLine[] {
   if (plannedMin > 0)
     lines.push({
       label: "LOAD",
-      text: `${formatMinutes(plannedMin)} planned of ${formatMinutes(freeMin)} free · ${loadLabel(plannedMin, freeMin)}`,
+      text: `${formatMinutes(plannedMin)} planned of ${formatMinutes(freeMin)} free · ${
+        light.light === "drained"
+          ? "light day: two drained nights"
+          : light.light === "rest"
+            ? "rest day"
+            : loadLabel(plannedMin, freeMin)
+      }`,
     });
 
   if (input.outcomes && input.outcomes.length > 0)

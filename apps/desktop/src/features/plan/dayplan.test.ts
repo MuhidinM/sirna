@@ -9,20 +9,26 @@ import {
   healPlans,
   isoWeekday,
   loadPlanInput,
+  memoQuery,
   type OpenTaskRow,
   replanAround,
   replanDay,
   replanFromToday,
   replanUndoOps,
+  savedDays,
+  type SavedRow,
   startingNow,
   taskOnDay,
   weekStart,
 } from "./dayplan";
 import { deleteOps } from "./edit";
+import { loadPreview } from "./preview";
 import { DEFAULT_ANSWERS } from "./routine";
 import { setupOps } from "./setup";
 
 const NOW = Date.parse("2026-11-11T12:00:00+03:00"); // Wednesday
+/** Late on the same day: today has no free time left, so a later day gets the tasks. */
+const LATE = Date.parse("2026-11-11T23:30:00+03:00");
 
 /** Applies ops the way Rust does, enough for these tests (inserts and upserts). */
 function apply(db: DatabaseSync, ops: Op[]) {
@@ -317,7 +323,7 @@ describe("ensureDayPlan", () => {
     expect(input.doneThisWeekMin).toEqual({ quran: 30 });
   });
 
-  it("adds a running project's weekly hours to its area's target (F50)", async () => {
+  it("gives a running project an entry of its own for its weekly hours (F50)", async () => {
     const h = harness();
     h.db.exec(
       `INSERT INTO project_items (id, title, area_id, weekly_min, start_date, forecast_finish, status, created_at, updated_at) VALUES
@@ -327,13 +333,65 @@ describe("ensureDayPlan", () => {
     );
     h.db.exec("UPDATE area_items SET active = 0 WHERE id = 'coding'");
     const areas = (await loadPlanInput(h.query, "2026-11-11")).areas;
-    expect(areas.find((a) => a.id === "coding")).toMatchObject({
-      weeklyTargetMin: 240 + 600,
+    expect(areas.find((a) => a.id === "coding")).toMatchObject({ weeklyTargetMin: 240 });
+    expect(areas.find((a) => a.id === "project:go")).toMatchObject({
+      name: "learn Go",
+      weeklyTargetMin: 600,
+      areaId: "coding",
+      projectId: "go",
       active: true,
     });
-    expect(areas.find((a) => a.id === "experiments")?.weeklyTargetMin).toBe(180);
+    expect(areas.some((a) => a.projectId === "idea" || a.projectId === "later")).toBe(false);
     const nextWeek = (await loadPlanInput(h.query, "2026-11-17")).areas;
-    expect(nextWeek.find((a) => a.id === "coding")?.weeklyTargetMin).toBe(240 + 300);
+    expect(nextWeek.find((a) => a.id === "project:later")?.weeklyTargetMin).toBe(300);
+  });
+
+  it("plans a running project's blocks, holding its tasks (F50)", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO project_items (id, title, area_id, weekly_min, start_date, forecast_finish, status, created_at, updated_at) VALUES
+       ('go', 'learn Go', 'coding', 600, '2026-11-09', '2026-11-22', 'active', 0, 0)`,
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, project_id, created_at, updated_at) VALUES
+       ('tour', 'Go tour', 'todo', 'coding', 'go', 0, 0),
+       ('page', 'Write About page', 'todo', 'coding', NULL, 1, 1)`,
+    );
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, "2026-11-12");
+    const rows = h.db
+      .prepare(
+        `SELECT title, area_id, project_id, task_id FROM day_blocks
+         WHERE logical_date = '2026-11-12' AND kind = 'area' AND deleted_at IS NULL ORDER BY start_at`,
+      )
+      .all() as { title: string; area_id: string; project_id: string | null; task_id: string }[];
+    expect(rows).toContainEqual({
+      title: "learn Go: Go tour",
+      area_id: "coding",
+      project_id: "go",
+      task_id: "tour",
+    });
+    // The project's task isn't put in the area's own slot too.
+    expect(rows.filter((r) => r.task_id === "tour")).toHaveLength(1);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
+  });
+
+  it("keeps a kept project block's project (F50)", async () => {
+    const h = harness();
+    h.db.exec(
+      `INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, project_id, title, source, user_edited_at, created_at, updated_at) VALUES
+       ('p', '2026-11-11', 0, 3600000, 'area', 'coding', 'go', 'learn Go: Go tour', 'generator', 5, 0, 0)`,
+    );
+    const input = await loadPlanInput(h.query, "2026-11-11");
+    expect(input.kept).toEqual([expect.objectContaining({ areaId: "coding", projectId: "go" })]);
   });
 
   it("counts focus started for an area with no block, this week only (F21)", async () => {
@@ -465,6 +523,15 @@ describe("time first: tasks with a time or a part of the day", () => {
     const moved = row({ due_at: at("2026-11-12T10:00:00+03:00"), planned_date: "2026-11-11" });
     expect(taskOnDay(moved, "2026-11-11")).toMatchObject({ id: "t" });
     expect(taskOnDay(moved, "2026-11-11")?.atMin).toBeUndefined();
+  });
+
+  it("keeps a time still to come off later days (reg1-3)", () => {
+    const timed = row({ due_at: at("2026-11-11T18:30:00+03:00"), due_date: "2026-11-11" });
+    expect(taskOnDay(timed, "2026-11-13", at("2026-11-11T08:00:00+03:00"))).toBeUndefined();
+    // Once its time is gone and it isn't done, it is an ordinary task.
+    expect(taskOnDay(timed, "2026-11-13", at("2026-11-11T19:30:00+03:00"))).toMatchObject({
+      id: "t",
+    });
   });
 
   it("reads a part of the day for its own day only", () => {
@@ -978,14 +1045,14 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
         "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('cv', 'Update CV', 'todo', 'jobhunt', ?, 0, 0), ('apply', 'Apply to Kifiya', 'todo', 'jobhunt', NULL, 1, 1)",
       )
       .run(TOMORROW);
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, TOMORROW);
     const [slot] = liveOf(h, "cv", TOMORROW);
     expect(slot?.title).toBe("Job hunt: Update CV");
     h.db.prepare("UPDATE task_items SET status = 'done' WHERE id = 'cv'").run();
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([TOMORROW]);
     expect(liveOf(h, "cv", TOMORROW)).toEqual([]);
     expect(liveOf(h, "apply", TOMORROW).map((b) => b.title)).toContain("Job hunt: Apply to Kifiya");
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
   });
 
   it("renames a slot's task in place, and replans when it moves to another area", async () => {
@@ -995,16 +1062,16 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
         "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('cv', 'Update CV', 'todo', 'jobhunt', ?, 0, 0)",
       )
       .run(TOMORROW);
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, TOMORROW);
     const [slot] = liveOf(h, "cv", TOMORROW);
     h.db.prepare("UPDATE task_items SET title = 'Update my CV' WHERE id = 'cv'").run();
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([TOMORROW]);
     expect(liveOf(h, "cv", TOMORROW)).toEqual([{ ...slot, title: "Job hunt: Update my CV" }]);
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
     h.db.prepare("UPDATE task_items SET area_id = 'coding' WHERE id = 'cv'").run();
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([TOMORROW]);
     expect(liveOf(h, "cv", TOMORROW).map((b) => b.title)).toEqual(["Coding skills: Update my CV"]);
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
   });
 
   it("keeps a slot when its area is renamed, and gives it the new name", async () => {
@@ -1014,15 +1081,15 @@ describe("a planned day lets go of a task that changed (F10, F11, F13)", () => {
         "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('page', 'Write About page copy', 'todo', 'coding', ?, 0, 0)",
       )
       .run(TOMORROW);
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, TOMORROW);
     const [slot] = liveOf(h, "page", TOMORROW);
     expect(slot?.title).toBe("Coding skills: Write About page copy");
     h.db.prepare("UPDATE area_items SET name = 'Coding' WHERE id = 'coding'").run();
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([TOMORROW]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([TOMORROW]);
     expect(liveOf(h, "page", TOMORROW)).toEqual([
       { ...slot, title: "Coding: Write About page copy" },
     ]);
-    expect(await healPlans(h.query, h.transact, NOW, h.newId)).toEqual([]);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
   });
 });
 
@@ -1086,11 +1153,119 @@ describe("a later day is planned after the days before it (F18)", () => {
           .prepare(
             "SELECT logical_date FROM day_blocks WHERE task_id = 'a' AND deleted_at IS NULL AND end_at > ?",
           )
-          .all(NOW) as { logical_date: string }[]
+          .all(LATE) as { logical_date: string }[]
       ).map((row) => row.logical_date);
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-12");
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, "2026-11-13");
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, "2026-11-12");
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, "2026-11-13");
     expect(taskDays()).toEqual(["2026-11-12"]);
+  });
+});
+
+describe("an opened day holds what the forecast said (F18, reg1-1, reg1-2)", () => {
+  const MORNING = Date.parse("2026-11-11T08:00:00+03:00");
+  function week() {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, due_date, estimate_min, created_at, updated_at) VALUES
+       ('a', 'Write About page', 'todo', 'coding', '2026-11-10', 60, 0, 0),
+       ('b', 'Apply at Kifiya', 'todo', 'jobhunt', '2026-11-12', 45, 1, 1),
+       ('c', 'Renew residence ID', 'todo', 'admin', '2026-11-13', 60, 2, 2),
+       ('d', 'Case study', 'todo', 'coding', '2026-11-14', 120, 3, 3)`,
+    );
+    return h;
+  }
+  const dayShape = (h: ReturnType<typeof harness>, date: string) =>
+    (
+      h.db
+        .prepare(
+          `SELECT start_at, end_at, title, task_id FROM day_blocks
+           WHERE logical_date = ? AND deleted_at IS NULL ORDER BY start_at`,
+        )
+        .all(date) as { start_at: number; end_at: number; title: string; task_id: string }[]
+    ).map((b) => `${b.start_at}-${b.end_at} ${b.title}`);
+
+  it("plans a day the same whichever day you open first", async () => {
+    const one = week();
+    const two = week();
+    // Today's plan was made early this morning; it is now 08:00.
+    await ensureDayPlan(one.query, one.transact, MORNING - 3 * 3600_000, one.newId);
+    await ensureDayPlan(two.query, two.transact, MORNING - 3 * 3600_000, two.newId);
+    await ensureDayPlan(one.query, one.transact, MORNING, one.newId, "2026-11-13");
+    await ensureDayPlan(one.query, one.transact, MORNING, one.newId, "2026-11-12");
+    await ensureDayPlan(two.query, two.transact, MORNING, two.newId, "2026-11-12");
+    await ensureDayPlan(two.query, two.transact, MORNING, two.newId, "2026-11-13");
+    expect(dayShape(one, "2026-11-13")).toEqual(dayShape(two, "2026-11-13"));
+    expect(dayShape(one, "2026-11-12")).toEqual(dayShape(two, "2026-11-12"));
+    // A later day gives a task time only when the days before didn't cover it.
+    const rows = one.db
+      .prepare(
+        `SELECT task_id, (end_at - start_at) / 60000 AS minutes FROM day_blocks
+         WHERE task_id IS NOT NULL AND deleted_at IS NULL AND end_at > ? ORDER BY start_at`,
+      )
+      .all(MORNING) as { task_id: string; minutes: number }[];
+    const estimate: Record<string, number> = { a: 60, b: 45, c: 60, d: 120 };
+    const got = new Map<string, number>();
+    for (const row of rows) {
+      expect(got.get(row.task_id) ?? 0).toBeLessThan(estimate[row.task_id] ?? 0);
+      got.set(row.task_id, (got.get(row.task_id) ?? 0) + row.minutes);
+    }
+  });
+
+  it("opens each day as Next 7 days showed it", async () => {
+    const h = week();
+    await ensureDayPlan(h.query, h.transact, MORNING - 3 * 3600_000, h.newId);
+    const forecast = await loadPreview(h.query, "2026-11-11", MORNING);
+    for (const date of ["2026-11-14", "2026-11-12", "2026-11-13"]) {
+      await ensureDayPlan(h.query, h.transact, MORNING, h.newId, date);
+      const shown = forecast.days.find((day) => day.date === date)?.blocks ?? [];
+      const focus = (
+        h.db
+          .prepare(
+            `SELECT start_at, end_at, title FROM day_blocks
+             WHERE logical_date = ? AND kind = 'area' AND deleted_at IS NULL ORDER BY start_at`,
+          )
+          .all(date) as { start_at: number; end_at: number; title: string }[]
+      ).map((b) => b.title);
+      expect(focus).toEqual(shown.map((b) => b.title));
+    }
+    // The forecast doesn't change when the days are opened.
+    expect((await loadPreview(h.query, "2026-11-11", MORNING)).days).toEqual(forecast.days);
+  });
+
+  it("doesn't count a block missed earlier today as time the task got", () => {
+    const day = "2026-11-11";
+    const block = (start: string, end: string, over: Partial<SavedRow> = {}): SavedRow => ({
+      logical_date: day,
+      start_at: Date.parse(`${day}T${start}:00+03:00`),
+      end_at: Date.parse(`${day}T${end}:00+03:00`),
+      kind: "area",
+      area_id: "coding",
+      task_id: "a",
+      title: "Coding: Write About page",
+      light_day: 0,
+      status: "planned",
+      focused: 0,
+      ...over,
+    });
+    const saved = savedDays(
+      [
+        block("06:30", "07:45"),
+        block("17:15", "18:00", { task_id: "b", title: "Job hunt: Apply" }),
+        block("18:00", "18:30", { task_id: "c", status: "done" }),
+      ],
+      MORNING,
+    ).get(day);
+    expect(saved?.booked).toEqual([{ areaId: "coding", taskId: "b", durationMin: 45 }]);
+    expect(saved?.blocks.map((b) => b.title)).toEqual(["Job hunt: Apply"]);
   });
 });
 
@@ -1127,7 +1302,7 @@ describe("a block moved by a command onto a planner block (F15)", () => {
     h.db.exec(
       "INSERT INTO task_items (id, title, status, area_id, due_date, created_at, updated_at) VALUES ('k', 'Apply at Kifiya', 'todo', 'jobhunt', '2026-11-12', 0, 0)",
     );
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, TOMORROW);
     const before = liveBlocks(h);
     const quran = before.find((b) => b.title === "Quran");
     const slot = before.find((b) => b.title.startsWith("Job hunt") && b.untouched === 1);
@@ -1138,7 +1313,7 @@ describe("a block moved by a command onto a planner block (F15)", () => {
     h.db
       .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
       .run(start, start + length, quran.id);
-    const undo = await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, NOW);
+    const undo = await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, LATE);
     expect(undo).not.toBeNull();
     const after = liveBlocks(h);
     const clash = after.filter(
@@ -1148,7 +1323,7 @@ describe("a block moved by a command onto a planner block (F15)", () => {
     // The task still gets its time somewhere.
     expect(after.some((b) => b.title === "Job hunt: Apply at Kifiya")).toBe(true);
     // Nothing in the way: nothing to do.
-    expect(await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, NOW)).toBeNull();
+    expect(await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, LATE)).toBeNull();
     apply(h.db, undo ?? []);
     h.db
       .prepare("UPDATE day_blocks SET start_at = ?, end_at = ? WHERE id = ?")
@@ -1157,7 +1332,7 @@ describe("a block moved by a command onto a planner block (F15)", () => {
     expect(shape(liveBlocks(h))).toEqual(shape(before));
   });
 
-  it("undo keeps a replanned block you moved since", async () => {
+  it("undo keeps a moved block you moved again since", async () => {
     const h = harness();
     apply(
       h.db,
@@ -1168,7 +1343,7 @@ describe("a block moved by a command onto a planner block (F15)", () => {
         h.newId,
       ),
     );
-    await ensureDayPlan(h.query, h.transact, NOW, h.newId, TOMORROW);
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, TOMORROW);
     const before = liveBlocks(h);
     const quran = before.find((b) => b.title === "Quran");
     const slot = before.find((b) => b.kind === "area" && b.untouched === 1);
@@ -1177,15 +1352,147 @@ describe("a block moved by a command onto a planner block (F15)", () => {
     h.db
       .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
       .run(start, start + (quran.end_at - quran.start_at), quran.id);
-    const undo = (await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, NOW)) ?? [];
-    const fresh = liveBlocks(h).find(
-      (b) => b.untouched === 1 && !before.some((old) => old.id === b.id),
-    );
-    if (!fresh) throw new Error("expected a replanned block");
-    // A later command moved one of the replanned blocks: it is yours now.
-    h.db.prepare("UPDATE day_blocks SET user_edited_at = 6 WHERE id = ?").run(fresh.id);
+    const undo = (await replanAround(h.query, h.transact, TOMORROW, quran.id, h.newId, LATE)) ?? [];
+    expect(undo.map((op) => op.id)).toContain(slot.id);
+    // A later command moved the block that made room: it is yours now.
+    h.db.prepare("UPDATE day_blocks SET user_edited_at = 6 WHERE id = ?").run(slot.id);
     const now = await replanUndoOps(h.query, undo);
-    expect(now.some((op) => op.op === "delete" && op.id === fresh.id)).toBe(false);
+    expect(now.some((op) => op.id === slot.id)).toBe(false);
     expect(now).toHaveLength(undo.length - 1);
+  });
+
+  it("moves only the block in the way, into free time later (reg1-4)", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, due_date, estimate_min, created_at, updated_at) VALUES
+       ('a', 'Write About page', 'todo', 'coding', '2026-11-10', 60, 0, 0),
+       ('k', 'Apply at Kifiya', 'todo', 'jobhunt', '2026-11-12', 45, 1, 1)`,
+    );
+    const WED = "2026-11-18";
+    const at = (time: string) => Date.parse(`${WED}T${time}:00+03:00`);
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, WED);
+    const rows = () =>
+      h.db
+        .prepare(
+          `SELECT id, start_at, end_at, title FROM day_blocks
+           WHERE logical_date = ? AND deleted_at IS NULL ORDER BY start_at`,
+        )
+        .all(WED) as { id: string; start_at: number; end_at: number; title: string }[];
+    const before = rows();
+    const gym = before.find((b) => b.title === "Gym");
+    const evening = before.find((b) => b.start_at === at("18:30"));
+    if (!gym || !evening) throw new Error("expected Gym and an evening focus block");
+    // "move gym to 6pm"
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
+      .run(at("18:00"), at("18:45"), gym.id);
+    const undo = await replanAround(h.query, h.transact, WED, gym.id, h.newId, LATE);
+    const after = rows();
+    // The evening block keeps its task and length, from the end of Gym.
+    expect(after.find((b) => b.id === evening.id)).toEqual({
+      ...evening,
+      start_at: at("18:45"),
+      end_at: at("18:45") + (evening.end_at - evening.start_at),
+    });
+    // Nothing else moved.
+    const others = (list: typeof before) =>
+      list.filter((b) => b.id !== evening.id && b.id !== gym.id);
+    expect(others(after)).toEqual(others(before));
+    apply(h.db, undo ?? []);
+    expect(rows().find((b) => b.id === evening.id)).toEqual(evening);
+  });
+
+  /** Wed planned with a timed task, "move gym to 6pm" applied (reg1-4). */
+  async function gymOnTimedTask() {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    const WED = "2026-11-18";
+    const at = (time: string) => Date.parse(`${WED}T${time}:00+03:00`);
+    h.db
+      .prepare(
+        `INSERT INTO task_items (id, title, status, area_id, due_date, due_at, estimate_min, created_at, updated_at)
+         VALUES ('bank', 'Call bank', 'todo', 'admin', ?, ?, 30, 0, 0)`,
+      )
+      .run(WED, at("18:00"));
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, WED);
+    const rows = () =>
+      h.db
+        .prepare(
+          `SELECT id, start_at, end_at, title FROM day_blocks
+           WHERE logical_date = ? AND deleted_at IS NULL ORDER BY start_at`,
+        )
+        .all(WED) as { id: string; start_at: number; end_at: number; title: string }[];
+    const before = rows();
+    const gym = before.find((b) => b.title === "Gym");
+    const bank = before.find((b) => b.title === "Call bank");
+    if (!gym || !bank) throw new Error("expected Gym and Call bank");
+    expect(bank.start_at).toBe(at("18:00"));
+    h.db
+      .prepare("UPDATE day_blocks SET start_at = ?, end_at = ?, user_edited_at = 5 WHERE id = ?")
+      .run(at("18:00"), at("18:45"), gym.id);
+    const undo = (await replanAround(h.query, h.transact, WED, gym.id, h.newId, LATE)) ?? [];
+    return { h, WED, at, rows, bank, undo };
+  }
+
+  it("leaves a timed task's own block at its time (reg1-4)", async () => {
+    const { h, WED, rows, bank, undo } = await gymOnTimedTask();
+    expect(rows().find((b) => b.id === bank.id)).toEqual(bank);
+    expect(undo.some((op) => op.id === bank.id)).toBe(false);
+    // Nothing for a heal to fix afterwards.
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).not.toContain(WED);
+  });
+
+  it("undo leaves out a moved block deleted since (reg1-4)", async () => {
+    const { h, rows, undo } = await gymOnTimedTask();
+    const moved = undo.find((op) => op.op === "upsert");
+    if (!moved || moved.op !== "upsert") throw new Error("expected a block that made room");
+    const block = rows().find((b) => b.id === moved.id);
+    if (!block) throw new Error("expected the moved block");
+    // A heal deleted it and made a fresh block at its old time.
+    const v = moved.values;
+    h.db.prepare("UPDATE day_blocks SET deleted_at = 9 WHERE id = ?").run(moved.id);
+    h.db
+      .prepare(
+        `INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, title, source, created_at, updated_at)
+         VALUES ('fresh', ?, ?, ?, 'area', ?, 'generator', 0, 0)`,
+      )
+      .run(...([v.logical_date, v.start_at, v.end_at, v.title] as never[]));
+    const now = await replanUndoOps(h.query, undo);
+    expect(now.some((op) => op.id === moved.id)).toBe(false);
+    expect(() => apply(h.db, now)).not.toThrow();
+  });
+});
+
+describe("memoQuery", () => {
+  it("reads each query once until a write clears it", async () => {
+    let reads = 0;
+    const memo = memoQuery(<T extends Row>() => {
+      reads += 1;
+      return Promise.resolve([{ n: reads }] as unknown as T[]);
+    });
+    const first = await memo.query<{ n: number }>("SELECT ?", [1]);
+    const [row] = first;
+    if (row) row.n = 99;
+    expect(await memo.query("SELECT ?", [1])).toEqual([{ n: 1 }]);
+    expect(await memo.query("SELECT ?", [2])).toEqual([{ n: 2 }]);
+    memo.clear();
+    expect(await memo.query("SELECT ?", [1])).toEqual([{ n: 3 }]);
   });
 });
