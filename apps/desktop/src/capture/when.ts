@@ -261,7 +261,13 @@ export interface ReadOptions {
 }
 
 /** A day named anywhere in the text: today, tomorrow, a weekday, `in 3 days`, `20 dec`, `20/12`. */
-const MONTH_NAMES = Object.keys(MONTHS).join("|");
+export const MONTH_NAMES = Object.keys(MONTHS).join("|");
+/**
+ * A bare hour right after a day word: it ends the line or a word follows
+ * ("tomorrow 9 call abel"), but not a count ("mon 3 days", "tomorrow 2 hours").
+ */
+const DAY_HOUR =
+  /^\s+(\d{1,2})(?=\s*$|\s+(?!(?:am|pm|h|hrs?|hours?|m|mins?|minutes?|days?|weeks?|times?|x)\b)[a-z])/i;
 const NAMES_A_DAY = new RegExp(
   String.raw`\b\d{4}-\d{2}-\d{2}\b|\b(?:today|tdy|${TOMORROW}|yesterday|yday|${Object.keys(WEEKDAY_WORDS).join("|")})\b|\bin\s+\d{1,3}\s+(?:days?|weeks?)\b|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:${MONTH_NAMES})\b|\b(?:${MONTH_NAMES})\s+\d{1,2}\b`,
   "i",
@@ -306,6 +312,8 @@ export function readWhen(
   let dayAt: number | undefined;
   /** "tonight" said after midnight: already the calendar evening, not a night to shift. */
   let calendarEvening = false;
+  /** The time was a bare "at 8" (no am/pm, no minutes), so "tonight" can make it the evening. */
+  let bareHour = false;
 
   // A range first, so its end isn't left behind in the title (time-first §2).
   take(RANGE, (m) => {
@@ -331,6 +339,8 @@ export function readWhen(
       const minute = Number(m[2]);
       if (hour === undefined || minute > 59) return false;
       minutes = hour * 60 + minute;
+      // "tonight at 8:30" is 20:30; "08:30" is the 24-hour clock and stays.
+      bareHour = !m[3] && !/^0\d/.test(m[1] ?? "");
       return true;
     });
   if (minutes === undefined) {
@@ -346,6 +356,7 @@ export function readWhen(
         const minute = Number(minuteText);
         if (hour === undefined || minute > 59) return false;
         minutes = hour * 60 + minute;
+        bareHour = !ampm;
         return true;
       },
     );
@@ -373,6 +384,7 @@ export function readWhen(
       const hour = readHour(Number(m[1]), undefined, style);
       if (hour === undefined) return false;
       minutes = hour * 60;
+      bareHour = true;
       return true;
     });
   }
@@ -428,6 +440,9 @@ export function readWhen(
       calendarEvening = true;
     } else if (word === "tonight" || lead === "this" || lead === "today") date = today;
     else if (lead && IS_TOMORROW.test(lead)) date = addDays(today, 1);
+    // "tonight at 8" is 20:00: a bare morning hour moves to the evening (#174).
+    const night = word === "tonight" || word === "evening";
+    if (night && bareHour && minutes !== undefined && minutes < 12 * 60) minutes += 12 * 60;
     // A time you gave wins over the part of the day.
     if (minutes === undefined) window = word === "tonight" ? "evening" : (word as DayWindow);
     return true;
@@ -478,7 +493,11 @@ export function readWhen(
       if (target === undefined) return false;
       const after = rest.slice(m.index + m[0].length).trim();
       // "call bank fri 4": a bare hour after it still ends the line.
-      const isLast = after === "" || (!past && minutes === undefined && /^\d{1,2}$/.test(after));
+      // "mon 10 dentist": a weekday opening the line with a bare hour after it (#174).
+      const hourNext = !past && minutes === undefined && DAY_HOUR.test(` ${after} `);
+      const isLast =
+        after === "" ||
+        (hourNext && (/^\d{1,2}$/.test(after) || rest.slice(0, m.index).trim() === ""));
       const prefix = m[1]?.toLowerCase();
       const beforeWindow = windowAfterDayAt === m.index + m[0].length;
       if (!prefix && !isLast && !beforeWindow) return false;
@@ -543,13 +562,17 @@ export function readWhen(
     });
   }
 
-  // "tomorrow 9", "fri 4": a bare hour right after the day, ending the line.
+  // "tomorrow 9", "fri 4", "tomorrow 9 call abel": a bare hour right after the day.
   if (date && dayAt !== undefined && minutes === undefined && !past) {
-    const hour = /^\s+(\d{1,2})\s*$/.exec(rest.slice(dayAt));
-    const read = hour ? readHour(Number(hour[1]), undefined, style) : undefined;
-    if (read !== undefined) {
+    const hour = DAY_HOUR.exec(rest.slice(dayAt));
+    // With words after the hour, only a day that opens the line: "tomorrow 9
+    // call abel" is a time, "buy eggs tomorrow 12 pieces" is a count.
+    const opens = rest.slice(0, dayAt).trim() === "";
+    const ends = hour ? rest.slice(dayAt + hour[0].length).trim() === "" : false;
+    const read = hour && (opens || ends) ? readHour(Number(hour[1]), undefined, style) : undefined;
+    if (hour && read !== undefined) {
       minutes = read * 60;
-      rest = rest.slice(0, dayAt) + " ";
+      rest = rest.slice(0, dayAt) + " " + rest.slice(dayAt + hour[0].length);
     }
   }
 
