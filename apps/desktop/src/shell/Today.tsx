@@ -498,7 +498,15 @@ function LooseEnds({
             <li key={item.id}>
               <span className="dot-cream" aria-hidden="true" />
               <span className="grow">
-                Waiting on {item.waiting_on ?? item.title}
+                {/* A card dragged to Waiting has no name yet: show its title, not "Waiting on <title>". */}
+                {item.waiting_on ? (
+                  `Waiting on ${item.waiting_on}`
+                ) : (
+                  <>
+                    {item.title}
+                    <span className="meta"> · waiting</span>
+                  </>
+                )}
                 {item.follow_up_date && (
                   <span className="meta"> · follow up {showDate(item.follow_up_date, today)}</span>
                 )}
