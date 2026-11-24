@@ -179,6 +179,48 @@ describe("the emergency fund (T-062)", () => {
     expect(isEmergency({ title: " emergency FUND " })).toBe(true);
   });
 
+  it("counts your regular bills as essentials, without counting rent twice (F100)", () => {
+    const bill = (over: Partial<RegularRow>): RegularRow => ({
+      ...regular("bill"),
+      rule_json: '{"every":"month","day":1}',
+      ...over,
+    });
+    const usual = new Map<string, number | null>([
+      ["cat_food", 294_000],
+      ["cat_transport", 23_000],
+    ]);
+    const bills = [
+      bill({ id: "rent", amount_minor: 1_200_000, category_id: "cat_housing" }),
+      // Outside the essential categories: added as the comment promises.
+      bill({ id: "net", amount_minor: 120_000, category_id: "cat_shopping" }),
+      // $15 a month at 132.50 = 1,987.50 ETB.
+      bill({ id: "figma", amount_minor: 1_500, category_id: null, currency: "USD" }),
+      // Weekly on Mon and Thu: 100 × 2 × 52 / 12 ≈ 866.67 a month.
+      bill({
+        id: "maid",
+        amount_minor: 10_000,
+        category_id: "cat_food",
+        rule_json: '{"every":"week","days":[1,4]}',
+      }),
+      // Paused or pay: not counted.
+      bill({ id: "old", amount_minor: 999_900, category_id: "cat_housing", active: 0 }),
+      { ...bill({ id: "pay", amount_minor: 999_900 }), kind: "pay" as const },
+    ];
+    const rates = { USD: { rate: "132.50", set_on: "2026-11-01" } };
+    // Food: the larger of usual 2,940 and bills 866.67 = 2,940.
+    expect(essentialMonth(usual, bills, rates)).toBe(
+      294_000 + 23_000 + 1_200_000 + 120_000 + 198_750,
+    );
+    // Rent already in the usual month: the larger, not the sum.
+    expect(
+      essentialMonth(new Map([["cat_housing", 1_200_000]]), [bills[0] as RegularRow], rates),
+    ).toBe(1_200_000);
+    // No history yet: the bills alone.
+    expect(essentialMonth(new Map(), [bills[0] as RegularRow])).toBe(1_200_000);
+    // 15,170 a month × 3 = 45,510 → 46,000.
+    expect(emergencyTarget(essentialMonth(usual, [bills[0] as RegularRow]) ?? 0)).toBe(4_600_000);
+  });
+
   it("reads this month's saving per goal", () => {
     const db = openTestDb();
     const add = db.prepare(

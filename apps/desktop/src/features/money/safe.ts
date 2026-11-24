@@ -16,7 +16,7 @@ import {
   type Rates,
 } from "./currency";
 import { balances, type LoanEvent } from "./loans";
-import { type DueItem } from "./regulars";
+import { type DueItem, readRule, type RegularRow } from "./regulars";
 
 /** Saved into goals in total, and this month per goal (?1 first day, ?2 last day). */
 export const GOAL_MONTH_SQL = `SELECT goal_id, COALESCE(sum(amount_minor), 0) AS minor
@@ -155,20 +155,49 @@ export const EMERGENCY_MONTHS = 3;
 export const isEmergency = (goal: Pick<GoalRow, "title">) =>
   goal.title.trim().toLowerCase() === EMERGENCY_TITLE.toLowerCase();
 
+/** A bill's cost in a month, in its own currency: weekly ones × 52 ÷ 12. */
+function billPerMonth(bill: Pick<RegularRow, "amount_minor" | "rule_json">): Santim {
+  const rule = readRule(bill.rule_json);
+  if (rule?.every === "week") return Math.round((bill.amount_minor * rule.days.length * 52) / 12);
+  return bill.amount_minor;
+}
+
 /**
  * A month of essentials: your usual spending in the essential categories,
- * and any bill outside them (rent you track as a bill is already in Housing
- * once paid). Null with no history yet.
+ * and your regular bills (F100). In an essential category the larger of the
+ * two counts, so rent already in Housing's usual isn't counted twice; a bill
+ * outside them is added. Null with no history and no bills yet.
  */
-export function essentialMonth(usual: Map<string, number | null>): Santim | null {
+export function essentialMonth(
+  usual: Map<string, number | null>,
+  bills: Pick<
+    RegularRow,
+    "kind" | "active" | "amount_minor" | "rule_json" | "category_id" | "currency"
+  >[] = [],
+  rates: Rates = {},
+): Santim | null {
+  const billed = new Map<string, Santim>();
+  const conversion = newConversion();
+  for (const bill of bills) {
+    if (bill.kind !== "bill" || bill.active !== 1) continue;
+    const etb = convert(conversion, rates, billPerMonth(bill), bill.currency);
+    if (etb === null) continue;
+    const key = bill.category_id ?? "";
+    billed.set(key, (billed.get(key) ?? 0) + etb);
+  }
   let total = 0;
   let any = false;
   for (const id of ESSENTIAL_CATEGORIES) {
     const value = usual.get(id);
-    if (value !== undefined && value !== null) {
-      total += value;
-      any = true;
-    }
+    const fromBills = billed.get(id);
+    if ((value === undefined || value === null) && fromBills === undefined) continue;
+    total += Math.max(value ?? 0, fromBills ?? 0);
+    any = true;
+  }
+  for (const [id, minor] of billed) {
+    if (ESSENTIAL_CATEGORIES.includes(id)) continue;
+    total += minor;
+    any = true;
   }
   return any ? total : null;
 }

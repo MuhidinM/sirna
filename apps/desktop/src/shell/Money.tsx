@@ -510,9 +510,11 @@ function EmergencyCard({ today }: { today: string }) {
     historyParams(today),
   );
   const { rates } = useRates();
+  const regulars = useLiveQuery<RegularRow & Record<string, string | number | null>>(REGULARS_SQL);
   const [note, setNote] = useState<string | null>(null);
-  if (loading || history.loading) return null;
-  const month = essentialMonth(usualByCategory(history.rows, rates));
+  if (loading || history.loading || regulars.loading) return null;
+  // Rent and other regular bills count even before a month of history (F100).
+  const month = essentialMonth(usualByCategory(history.rows, rates), regulars.rows, rates);
   const fund = goals.find((goal) => isEmergency(goal) && goal.status !== "done");
   const head = (
     <PanelHead
