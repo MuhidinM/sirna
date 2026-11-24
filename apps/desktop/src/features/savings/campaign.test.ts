@@ -6,7 +6,7 @@
 import { type DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
-import { echo, type OpsContext, toOps } from "../../capture/ops";
+import { echo, type OpsContext, takeOutProblem, toOps } from "../../capture/ops";
 import { type ParseOptions, parseCapture } from "../../capture/parse";
 import { type Op } from "../../kernel/db";
 import { openTestDb } from "../../test/sqlite";
@@ -32,11 +32,15 @@ import {
   loadSavingsContext,
   matchGoal,
   moveOps,
+  ORPHAN_SAVINGS_SQL,
+  OVERDRAWN_SQL,
+  type OverdrawnEntry,
   overclaimed,
   putAsideOps,
   savingGoal,
   savingsSyncOps,
   SAVINGS_TRANSFERS_SQL,
+  type SavingsTransfer,
   takeOutOps,
   takeOutRoom,
   transferGoal,
@@ -836,5 +840,89 @@ describe("round 2: a goal never holds below zero in an account", () => {
     expect(goal(db, "laptop")).toMatchObject({ saved_minor: 650_000, flow_minor: 650_000 });
     expect(unclaimed(accounts(db), heldBy(db), rates)).toEqual([]);
     expect(overclaimed(accounts(db), heldBy(db), rates)).toEqual([]);
+  });
+});
+
+describe("leftovers #174: a take-out whose put-aside was deleted", () => {
+  /** What the Savings page's repair sync does, run until it has nothing left to write. */
+  const sync = (db: DatabaseSync) => {
+    for (let pass = 0; pass < 3; pass++) {
+      const ops = savingsSyncOps({
+        transfers: db.prepare(SAVINGS_TRANSFERS_SQL).all() as unknown as SavingsTransfer[],
+        orphans: db.prepare(ORPHAN_SAVINGS_SQL).all() as unknown as { id: string }[],
+        overdrawn: db.prepare(OVERDRAWN_SQL).all() as unknown as OverdrawnEntry[],
+        goals: goals(db),
+        held: goalHeld(db),
+        since: {},
+        rates: {},
+        newId: () => `s${++n}`,
+      });
+      if (ops.length === 0) return;
+      apply(db, ops);
+    }
+  };
+  const takeOut = (db: DatabaseSync, goalId: string, minor: number) =>
+    apply(
+      db,
+      takeOutOps({
+        goal: goal(db, goalId),
+        amount: minor,
+        spend: account(db, "cbo"),
+        savings: account(db, "cbo-savings"),
+        nowMs: NOW,
+        date: TODAY,
+        ids: { ...ids(), plain: `p${n}` },
+        available: takeOutRoom(goalId, account(db, "cbo-savings"), goalHeld(db), {}),
+      }).ops,
+    );
+
+  it("never leaves the goal below zero, and a later put-aside counts in full", () => {
+    const db = fresh();
+    putAside(db, "test", 250_000);
+    const putAsideTransfer = `t${n}`;
+    takeOut(db, "test", 250_000);
+    // Ledger deletes the put-aside; the sync drops its saving.
+    db.prepare("UPDATE money_txns SET deleted_at = 1 WHERE transfer_id = ?").run(putAsideTransfer);
+    sync(db);
+    expect(goal(db, "test")).toMatchObject({ saved_minor: 0, held_minor: 0 });
+    putAside(db, "test", 100_000);
+    sync(db);
+    expect(goal(db, "test")).toMatchObject({ saved_minor: 100_000, held_minor: 100_000 });
+    // No goal waits for the money that left.
+    expect(db.prepare(WAITING_SQL).all()).toEqual([]);
+  });
+
+  it("charges the goal only what it still holds when one put-aside of two goes", () => {
+    const db = fresh();
+    putAside(db, "test", 100_000);
+    putAside(db, "test", 250_000);
+    const second = `t${n}`;
+    takeOut(db, "test", 300_000);
+    db.prepare("UPDATE money_txns SET deleted_at = 1 WHERE transfer_id = ?").run(second);
+    sync(db);
+    expect(goal(db, "test")).toMatchObject({ saved_minor: 0, held_minor: 0 });
+    putAside(db, "test", 50_000);
+    expect(goal(db, "test")).toMatchObject({ saved_minor: 50_000, held_minor: 50_000 });
+  });
+});
+
+describe("leftovers #174: the chip refuses a take-out the save would refuse", () => {
+  it("says the refusal before Enter, in the same words", async () => {
+    const db = fresh();
+    putAside(db, "test", 100_000);
+    const parsed = parseCapture("took 3000 from test", {
+      nowMs: NOW,
+      accounts: accounts(db),
+      goals: ["laptop", "test"],
+    });
+    if (parsed.kind !== "saving") throw new Error(parsed.kind);
+    const context = await loadSavingsContext(read(db), rates);
+    const found = goalFinder(context)(parsed.goal, parsed.amount);
+    if (!found) throw new Error("no goal");
+    expect(takeOutProblem(parsed, found)).toBe("That's more than this goal holds.");
+    expect(takeOutProblem({ ...parsed, amount: -50_000, worth: -50_000 }, found)).toBeNull();
+    await expect(capture(db, "took 3000 from test")).rejects.toBe(
+      "That's more than this goal holds.",
+    );
   });
 });

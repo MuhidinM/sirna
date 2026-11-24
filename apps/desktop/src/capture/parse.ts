@@ -259,6 +259,8 @@ const TRANSFER = new RegExp(
 
 const LOAN_AMOUNT = String.raw`((?:etb\s*)?\d[\d.,]*k?(?:\s?(?:etb|birr|br))?)`;
 const LOAN_PERSON = String.raw`([\p{L}][\p{L}'-]*(?:\s[\p{L}][\p{L}'-]*)?)`;
+/** "i paid back tigist 150" reads as "paid back tigist 150" (#174). */
+const I_SAID = String.raw`(?:i\s+)?`;
 const LOAN_FORMS: [
   RegExp,
   "lent" | "borrowed" | "paid_me" | "i_paid",
@@ -301,17 +303,23 @@ const LOAN_FORMS: [
     "amount-first",
   ],
   [
-    new RegExp(String.raw`^(?:paid back|repaid|returned)\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`, "iu"),
+    new RegExp(
+      String.raw`^${I_SAID}(?:paid back|repaid|returned)\s+${LOAN_PERSON}\s+${LOAN_AMOUNT}$`,
+      "iu",
+    ),
     "i_paid",
     "person-first",
   ],
   [
-    new RegExp(String.raw`^paid\s+${LOAN_PERSON}\s+back\s+${LOAN_AMOUNT}$`, "iu"),
+    new RegExp(String.raw`^${I_SAID}paid\s+${LOAN_PERSON}\s+back\s+${LOAN_AMOUNT}$`, "iu"),
     "i_paid",
     "person-first",
   ],
   [
-    new RegExp(String.raw`^(?:paid back|repaid)\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`, "iu"),
+    new RegExp(
+      String.raw`^${I_SAID}(?:paid back|repaid)\s+${LOAN_AMOUNT}\s+to\s+${LOAN_PERSON}$`,
+      "iu",
+    ),
     "i_paid",
     "amount-first",
   ],
@@ -443,7 +451,7 @@ function loanIn(
         return repaidIncome(rest.replace(amountText ?? "", " "), amount, account, options);
       // "paid back dawit 300" with nothing borrowed from Dawit is no spending
       // either (F5): kept for tonight. "returned shoes 500" stays a refund.
-      if (owed <= 0 && !/^returned\s/i.test(rest))
+      if (owed <= 0 && !/^(?:i\s+)?returned\s/i.test(rest))
         return looseEnd(text, `You owe ${capitalise(person.trim())} nothing · will ask tonight`);
       if (!open || owed <= 0) continue;
       // With no @account (or currency) typed, pay back in the loan's own

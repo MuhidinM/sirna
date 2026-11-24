@@ -177,7 +177,7 @@ pub fn last_capture(conn: &Connection) -> Option<(i64, String)> {
         Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?))
     })
     .ok()
-    .filter(|(_, _, status)| status != "new")
+    .filter(|(_, _, status)| status != "new" && status != "failed")
     .map(|(id, body, _)| (id, body))
 }
 

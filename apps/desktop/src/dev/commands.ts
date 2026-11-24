@@ -191,6 +191,14 @@ function markIgnored(conn: Conn, rawId: number) {
   conn.run("UPDATE core_raw_items SET parse_status = 'ignored' WHERE id = ?", [rawId]);
 }
 
+/** db::mark_refused */
+function markRefused(conn: Conn, rawId: number, why: string) {
+  conn.run("UPDATE core_raw_items SET parse_status = 'failed', error = ? WHERE id = ?", [
+    why,
+    rawId,
+  ]);
+}
+
 /** store_capture: the raw line and its records, logged under capture:<id>. */
 export function storeCapture(
   conn: Conn,
@@ -211,6 +219,8 @@ interface CaptureArgs {
   rawText?: unknown;
   ops?: unknown;
   parser?: unknown;
+  /** capture_commit only: why nothing was made from the line. */
+  refused?: unknown;
 }
 
 const opsArg = (name: string, ops: unknown) =>
@@ -221,7 +231,12 @@ export function captureCommit(conn: Conn, args: CaptureArgs, now: number): Done<
   const ops = opsArg("capture_commit", args.ops);
   const rawText = String(args.rawText ?? "");
   checkCapture(rawText, ops);
-  const rawId = command(conn, () => storeCapture(conn, rawText, ops, parserArg(args.parser), now));
+  const refused = typeof args.refused === "string" ? args.refused : null;
+  const rawId = command(conn, () => {
+    const id = storeCapture(conn, rawText, ops, parserArg(args.parser), now);
+    if (ops.length === 0 && refused !== null) markRefused(conn, id, refused);
+    return id;
+  });
   return { result: rawId, changed: [...tablesOf(ops), "core_raw_items"] };
 }
 

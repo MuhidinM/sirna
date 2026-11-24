@@ -33,6 +33,7 @@ import {
   SAME_PROJECT_SQL,
   sameProject,
   type SavingGoal,
+  takeOutProblem,
   toOps,
 } from "./ops";
 import { balances, type LoanEvent, loanPeople, LOANS_SQL } from "../features/money/loans";
@@ -261,6 +262,12 @@ function showChip() {
     current.kind === "saving"
       ? goalFinder(savingsContext)(current.goal, current.amount)
       : undefined;
+  // A take-out the save would refuse says so now, in the same words (#174).
+  const refused = current.kind === "saving" && goal ? takeOutProblem(current, goal) : null;
+  if (refused) {
+    output.textContent = `${editing ? "Fix · " : ""}${refused}${hint}`;
+    return;
+  }
   const line = echoLine(current, systemClock.now(), undefined, goal, {
     hasGoals: savingsContext.goals.some((row) => row.status === "active"),
     ...(moneyContext.areas ? { areas: moneyContext.areas } : {}),
@@ -367,7 +374,7 @@ form.addEventListener("submit", (event) => {
       // stays open on it so Enter after a correction fixes that capture.
       // A fix that is refused leaves the capture it was fixing alone.
       if (typeof refusal !== "string" || fixing) throw refusal;
-      return commitCapture(rawText, [], parser).then((rawId) => {
+      return commitCapture(rawText, [], parser, refusal).then((rawId) => {
         editing = { id: rawId, body: rawText };
         fixKind = undefined;
         throw refusal;

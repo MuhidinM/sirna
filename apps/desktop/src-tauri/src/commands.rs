@@ -101,6 +101,7 @@ pub fn capture_commit(
     raw_text: String,
     ops: Option<Vec<Op>>,
     parser: Option<String>,
+    refused: Option<String>,
     app: AppHandle,
     db: State<'_, Db>,
 ) -> Result<i64, String> {
@@ -111,6 +112,10 @@ pub fn capture_commit(
         let mut conn = db.write.lock();
         let txn = conn.transaction().map_err(|error| error.to_string())?;
         let raw_id = store_capture(&txn, &raw_text, &ops, parser.as_deref(), now)?;
+        // Refused (a take-out bigger than the goal holds): kept, marked failed.
+        if let (true, Some(why)) = (ops.is_empty(), refused.as_deref()) {
+            db::mark_refused(&txn, raw_id, why).map_err(|error| error.to_string())?;
+        }
         txn.commit().map_err(|error| error.to_string())?;
         raw_id
     };

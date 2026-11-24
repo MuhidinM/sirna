@@ -141,6 +141,16 @@ pub fn mark_parsed(
     Ok(())
 }
 
+/// Marks a capture nothing was made from because it was refused (a take-out
+/// bigger than the goal holds), keeping why as its error.
+pub fn mark_refused(conn: &Connection, raw_id: i64, why: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE core_raw_items SET parse_status = 'failed', error = ?2 WHERE id = ?1",
+        params![raw_id, why],
+    )?;
+    Ok(())
+}
+
 /// Marks an undone capture so re-parsing skips it.
 pub fn mark_ignored(conn: &Connection, raw_id: i64) -> rusqlite::Result<()> {
     conn.execute(
@@ -176,6 +186,22 @@ mod tests {
         assert_eq!(source, "capture");
         assert_eq!(stored, body);
         assert_eq!(status, "new");
+    }
+
+    #[test]
+    fn a_refused_capture_is_kept_as_failed_with_why() {
+        let conn = memory_db();
+        let id = insert_capture(&conn, "took 3000 from test", 1).expect("insert");
+        mark_refused(&conn, id, "That's more than this goal holds.").expect("refuse");
+        let (status, error): (String, String) = conn
+            .query_row(
+                "SELECT parse_status, error FROM core_raw_items WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read back");
+        assert_eq!(status, "failed");
+        assert_eq!(error, "That's more than this goal holds.");
     }
 
     #[test]

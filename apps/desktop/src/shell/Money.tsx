@@ -69,6 +69,7 @@ import {
   transferOps,
 } from "../features/money/accounts";
 import {
+  approxAmount,
   approxMark,
   checkRate,
   conversionNotes,
@@ -473,7 +474,7 @@ function AccountsPanel({ onOpen }: { onOpen: () => void }) {
         id="money-accounts"
         icon={<IconMoney size={18} />}
         title="Accounts"
-        sub={`${approxMark(notes)}${formatAmount(total)} in all${unknown > 0 ? ` · ${unknown} not set` : ""}`}
+        sub={`${approxAmount(total, notes)} in all${unknown > 0 ? ` · ${unknown} not set` : ""}`}
         action={
           <button
             type="button"
@@ -1157,9 +1158,8 @@ export function MonthReviewCard({ month, today }: { month: string; today: string
       )}
       {review.netWorth !== null && (
         <p className="meta">
-          Net worth now: {approxMark(review.notes)}
-          {formatAmount(review.netWorth)} (accounts and savings, plus owed to you, less what you
-          owe)
+          Net worth now: {approxAmount(review.netWorth, review.notes)} (accounts and savings, plus
+          owed to you, less what you owe)
         </p>
       )}
       <RateNotes notes={summary.notes} />
@@ -3082,11 +3082,7 @@ function AccountsView({ today }: { today: string }) {
   return (
     <>
       <p className="money-headline">
-        <strong className="money-num">
-          {approxMark(notes)}
-          {formatAmount(total)}
-        </strong>{" "}
-        in your accounts
+        <strong className="money-num">{approxAmount(total, notes)}</strong> in your accounts
         {unknown > 0 && (
           <span className="meta">
             {" "}

@@ -114,7 +114,10 @@ export type LastCapture = {
   received_at?: number;
 };
 
-/** The capture Ctrl+Z or Up acts on: none when the newest one made nothing. */
+/**
+ * The capture Ctrl+Z or Up acts on: none when the newest one made nothing
+ * (`new`, or `failed`: refused, like a take-out bigger than the goal).
+ */
 export function actionable(last: LastCapture | undefined): LastCapture | undefined {
-  return last && last.parse_status !== "new" ? last : undefined;
+  return last && last.parse_status !== "new" && last.parse_status !== "failed" ? last : undefined;
 }

@@ -4,6 +4,7 @@ import { openTestDb } from "../../test/sqlite";
 import { type GoalRow } from "../savings/savings";
 import { type AccountRow, ACCOUNTS_SQL, inEtb, transferOps, checkTransfer } from "./accounts";
 import {
+  approxAmount,
   checkRate,
   conversionNotes,
   convert,
@@ -356,5 +357,12 @@ describe("currency in the database", () => {
     expect(checkTransfer("wise", "cbo", 10_000, null)).toMatch(/arrived/);
     expect(checkTransfer("wise", "cbo", 10_000, 1_300_000)).toBeNull();
     expect(checkTransfer("cash", "cbo", 10_000)).toBeNull();
+  });
+});
+
+describe("a converted total is whole birr (#174)", () => {
+  it("drops the santim when a rate was used, keeps them when exact", () => {
+    expect(approxAmount(13_253_846, { approx: true })).toBe("≈ 132,538 ETB");
+    expect(approxAmount(13_253_846, { approx: false })).toBe("132,538.46 ETB");
   });
 });

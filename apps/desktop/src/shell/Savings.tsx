@@ -43,6 +43,8 @@ import {
   goalStatusOps,
   moveOps,
   ORPHAN_SAVINGS_SQL,
+  OVERDRAWN_SQL,
+  type OverdrawnEntry,
   SAVINGS_TRANSFERS_SQL,
   type SavingsTransfer,
   savingsSyncOps,
@@ -82,6 +84,7 @@ let lastSync = "";
 export function useSavingsSync() {
   const transfers = useLiveQuery<Rows<SavingsTransfer>>(SAVINGS_TRANSFERS_SQL);
   const orphans = useLiveQuery<{ id: string }>(ORPHAN_SAVINGS_SQL);
+  const overdrawn = useLiveQuery<Rows<OverdrawnEntry>>(OVERDRAWN_SQL);
   const goals = useLiveQuery<Rows<GoalRow>>(GOALS_SQL);
   const held = useLiveQuery<Rows<GoalHeld>>(GOAL_HELD_SQL);
   const since = useLiveQuery<{ value_json: string }>(SAVINGS_SINCE_SQL);
@@ -89,6 +92,7 @@ export function useSavingsSync() {
   const loading =
     transfers.loading ||
     orphans.loading ||
+    overdrawn.loading ||
     goals.loading ||
     held.loading ||
     since.loading ||
@@ -98,6 +102,7 @@ export function useSavingsSync() {
     : savingsSyncOps({
         transfers: transfers.rows,
         orphans: orphans.rows,
+        overdrawn: overdrawn.rows,
         goals: goals.rows,
         held: held.rows,
         since: readSavingsSince(since.rows[0]?.value_json),
@@ -105,7 +110,11 @@ export function useSavingsSync() {
         newId: () => ulid(),
       });
   // The same rows twice (before the change comes back) must not write twice.
-  const key = [...transfers.rows.map((row) => row.id), ...orphans.rows.map((row) => row.id)].join();
+  const key = [
+    ...transfers.rows.map((row) => row.id),
+    ...orphans.rows.map((row) => row.id),
+    ...overdrawn.rows.map((row) => `${row.id}:${row.amount_minor}`),
+  ].join();
   useEffect(() => {
     if (ops.length === 0 || lastSync === key) return;
     lastSync = key;

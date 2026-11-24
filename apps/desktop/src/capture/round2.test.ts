@@ -30,6 +30,27 @@ describe("paying back someone you owe nothing is never spending (F5)", () => {
     });
   });
 
+  it.each(["i paid back tigist 150", "I paid back Tigist 150", "i repaid tigist 150"])(
+    "%j with no loan is held like dawit's (#174)",
+    (text) => {
+      expect(read(text)).toEqual({
+        kind: "inbox",
+        body: text,
+        why: "You owe Tigist nothing · will ask tonight",
+      });
+    },
+  );
+
+  it("'i paid back' still pays back a loan you have (#174)", () => {
+    const loanPeople = [{ name: "tigist", owedToMe: 0, iOwe: 50000 }];
+    expect(read("i paid back tigist 150", { loanPeople })).toMatchObject({
+      kind: "loan",
+      loanKind: "i_paid",
+      person: "tigist",
+      amount: 15000,
+    });
+  });
+
   it("repaying a card is spending, not a loan (F5)", () => {
     expect(read("repaid credit card 3000")).toMatchObject({ kind: "expense", amount: 300000 });
   });

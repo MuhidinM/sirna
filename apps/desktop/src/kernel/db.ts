@@ -48,9 +48,22 @@ export function transact(actor: Actor, ops: Op[], context?: string): Promise<str
   return invoke<string[]>("db_tx", { actor, context: context ?? null, ops });
 }
 
-/** Saves a capture as typed plus the records parsed from it; returns the raw item id. */
-export function commitCapture(rawText: string, ops: Op[] = [], parser?: string): Promise<number> {
-  return invoke<number>("capture_commit", { rawText, ops, parser: parser ?? null });
+/**
+ * Saves a capture as typed plus the records parsed from it; returns the raw
+ * item id. `refused`: why nothing was made from it, kept as its error (#174).
+ */
+export function commitCapture(
+  rawText: string,
+  ops: Op[] = [],
+  parser?: string,
+  refused?: string,
+): Promise<number> {
+  return invoke<number>("capture_commit", {
+    rawText,
+    ops,
+    parser: parser ?? null,
+    refused: refused ?? null,
+  });
 }
 
 /** Fixes a capture: undoes the old one and saves the new text, in one transaction. */
