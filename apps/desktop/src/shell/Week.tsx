@@ -36,6 +36,7 @@ import { isoWeekday, replanDay, shiftDate } from "../features/plan/dayplan";
 import { formatMinutes } from "../features/plan/now";
 import { toHhmm, type Weekday } from "../features/plan/routine";
 import { IconArrowUpRight, IconClock, IconPlus } from "./icons";
+import { useEscapeToCancel } from "./keys";
 import { EventCard, PanelHead, type Tone, toneOf } from "./kit";
 import { Segmented } from "./Nav";
 import { type AreaColor, Bar, Button } from "./ui";
@@ -124,9 +125,12 @@ function BlockForm({
     (day) => clashes(rows, draft, day, ignore).map((row) => `${dayName(day)} ${row.title}`),
   );
   const active = areas.filter((area) => area.active === 1 || area.id === draft.areaId);
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="card block-form rt-form"
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const effective =
@@ -386,9 +390,12 @@ function AreaForm({
     setError(null);
     setDraft({ ...draft, ...change });
   };
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="card block-form rt-form"
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkArea(draft, areas, editing?.id ?? null);

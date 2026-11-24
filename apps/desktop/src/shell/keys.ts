@@ -3,7 +3,7 @@
  * keys across a tab strip, and arrow keys across the month grid (one Tab stop,
  * not thirty).
  */
-import { type KeyboardEvent } from "react";
+import { type KeyboardEvent, useState } from "react";
 
 /**
  * `onKeyDown` for an inline form with a Cancel button: Escape cancels it.
@@ -16,6 +16,26 @@ export function cancelOnEscape(cancel: () => void) {
     event.stopPropagation();
     cancel();
   };
+}
+
+/**
+ * `cancelOnEscape` for a form that opens from a button: after Escape, focus
+ * goes back to the button that opened it (when it is still on the page),
+ * not to the top of the page.
+ */
+export function useEscapeToCancel(cancel: () => void) {
+  // Read once, on the form's first render: before any field in it takes focus.
+  const [opener] = useState(() =>
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  return cancelOnEscape(() => {
+    cancel();
+    setTimeout(() => {
+      if (opener?.isConnected) opener.focus();
+    }, 0);
+  });
 }
 
 /** The tab an arrow key moves to (wrapping), or null for any other key. */

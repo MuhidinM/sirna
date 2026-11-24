@@ -47,6 +47,7 @@ import { ESTIMATE, type EstimateReply, TIMING } from "../features/ai/touchpoints
 import { weekStart } from "../features/plan/dayplan";
 import { statusOps } from "../features/tasks/list";
 import { IconClock, IconPlus, IconProjects } from "./icons";
+import { useEscapeToCancel } from "./keys";
 import { EventCard, GhostCard, PanelHead, toneOf } from "./kit";
 import { Segmented } from "./Nav";
 import { type AreaColor, Button, Chip } from "./ui";
@@ -159,9 +160,14 @@ function ProjectForm({
   const [draft, setDraft] = useState<ProjectDraft>(project ? draftOf(project) : EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  // A new project's form opens under the board: bring it into view.
+  const onEscape = useEscapeToCancel(onCancel);
+  // A new project's form opens under the board: bring it into view, and put
+  // the cursor in its first field.
   useEffect(() => {
     formRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    formRef.current?.querySelector<HTMLElement>("input, textarea, select")?.focus({
+      preventScroll: true,
+    });
   }, []);
   const set = (change: Partial<ProjectDraft>) => {
     setError(null);
@@ -172,10 +178,12 @@ function ProjectForm({
       ? timingOf(draft, project?.id ?? null, plan.week, plan.projects, plan.today)
       : null;
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       ref={formRef}
       className="project-form proj-form"
       aria-labelledby={titleId}
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkDraft(draft);

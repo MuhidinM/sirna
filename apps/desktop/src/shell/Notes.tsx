@@ -17,6 +17,7 @@ import {
   tokens,
 } from "../features/notes/cheat";
 import { IconSearch } from "./icons";
+import { cancelOnEscape } from "./keys";
 import { PanelHead, type Tone, toneOf } from "./kit";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -92,7 +93,9 @@ function CardView({
           ))}
         </ul>
       ) : (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
         <form
+          onKeyDown={cancelOnEscape(() => setEditing(undefined))}
           onSubmit={(event) => {
             event.preventDefault();
             void save(editing.text, editing.base);

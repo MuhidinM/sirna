@@ -179,6 +179,7 @@ import {
   IconPlus,
   IconSearch,
 } from "./icons";
+import { cancelOnEscape } from "./keys";
 import { type Bar as ChartBar, BarChart, PanelHead } from "./kit";
 import { Segmented } from "./Nav";
 import { Savings, useSavingsSync } from "./Savings";
@@ -1241,8 +1242,10 @@ function TxnForm({
   // An entry is in its account's currency.
   const currency = currencyOf(accounts.find((account) => account.id === accountId));
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="money-form"
+      onKeyDown={onCancel ? cancelOnEscape(onCancel) : undefined}
       onSubmit={(event) => {
         event.preventDefault();
         const full = {

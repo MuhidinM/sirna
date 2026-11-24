@@ -43,6 +43,7 @@ import {
   VIEWS,
 } from "../features/tasks/list";
 import { IconPlus, IconSearch } from "./icons";
+import { useEscapeToCancel } from "./keys";
 import { PanelHead } from "./kit";
 import { type AreaColor, Button, Chip } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -160,10 +161,13 @@ function TaskForm({
     setError(null);
     setDraft({ ...draft, ...change });
   };
+  const onEscape = useEscapeToCancel(onDone);
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape cancels; keydown bubbles from its fields
     <form
       className="task-form task-edit"
       aria-label={`Edit ${row.title}`}
+      onKeyDown={onEscape}
       onSubmit={(event) => {
         event.preventDefault();
         const problem = checkTask(draft);
