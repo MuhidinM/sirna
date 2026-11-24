@@ -70,7 +70,6 @@ import {
 } from "../features/money/accounts";
 import {
   approxAmount,
-  approxMark,
   checkRate,
   conversionNotes,
   type ConversionNotes,
@@ -416,8 +415,7 @@ function SafeCard({ today, onAccounts }: { today: string; onAccounts: () => void
           <li className="total">
             <strong>Safe to spend</strong>
             <strong className="money-num">
-              {approxMark(safe.notes ?? { approx: false })}
-              {formatAmount(safe.total)}
+              {approxAmount(safe.total, safe.notes ?? { approx: false })}
             </strong>
           </li>
           <li className="meta">Savings accounts aren&apos;t counted: that money is put aside.</li>
