@@ -25,3 +25,6 @@ Thumbs.db
 apps/desktop/evals/last-run.json
 # Dev-only preview data (scripts/preview-db.mjs); outside public/ so builds never copy it.
 apps/desktop/dev-data/
+
+# User-test screenshots and logs (scripts/user-test).
+apps/desktop/user-test-out/

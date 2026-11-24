@@ -27,6 +27,11 @@ import "@fontsource-variable/bricolage-grotesque";
 import "../theme/tokens.css";
 import "./capture.css";
 
+// In a plain browser during development, stand in for Tauri before this page
+// calls it (src/dev/tauriPreview.ts). Removed from production builds.
+if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window))
+  await import("../dev/tauriPreview").then((preview) => preview.install());
+
 applyTheme(cachedTheme());
 
 const ECHO_MS = 1500;
