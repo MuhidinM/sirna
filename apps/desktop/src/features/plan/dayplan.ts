@@ -28,6 +28,7 @@ import {
   MIN_BLOCK_MIN,
   type PlannedBlock,
   type PlanInput,
+  projectKey,
   type TaskInput,
   type TemplateBlock,
   WINDOWS,
@@ -47,9 +48,9 @@ export const TEMPLATE_SQL = `
   SELECT start_min, duration_min, kind, area_id, title FROM routine_blocks
   WHERE weekday = ? AND active = 1 AND deleted_at IS NULL ORDER BY start_min`;
 
-/** Projects with weekly hours and an area: their hours add to the area's target (plan §3.8). */
+/** Projects with weekly hours and an area: they get blocks of their own (plan §3.8, F50). */
 export const PROJECT_TIME_SQL = `
-  SELECT id, status, weekly_min, start_date, forecast_finish, area_id FROM project_items
+  SELECT id, title, status, weekly_min, start_date, forecast_finish, area_id FROM project_items
   WHERE deleted_at IS NULL AND area_id IS NOT NULL AND weekly_min > 0`;
 
 export const AREAS_SQL = `
@@ -67,7 +68,10 @@ export const DONE_THIS_WEEK_SQL = `
   SELECT area_id, SUM(minutes) AS minutes FROM (
     SELECT area_id, CASE WHEN status = 'done' THEN length ELSE MIN(length, focused) END AS minutes
     FROM (
-      SELECT b.area_id, b.status, (b.end_at - b.start_at) / 60000 AS length,
+      -- A project's block counts toward the project (its planner key).
+      SELECT CASE WHEN b.project_id IS NULL THEN b.area_id ELSE 'project:' || b.project_id END
+               AS area_id,
+             b.status, (b.end_at - b.start_at) / 60000 AS length,
              COALESCE((SELECT SUM(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
                        FROM focus_sessions f
                        WHERE f.block_id = b.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)
@@ -87,7 +91,7 @@ export const DONE_THIS_WEEK_SQL = `
 
 /** Open tasks, with what is left of their estimate after focus time on them. */
 export const OPEN_TASKS_SQL = `
-  SELECT t.id, t.title, t.area_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
+  SELECT t.id, t.title, t.area_id, t.project_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
          t.estimate_min, t.parent_id, t.step_no,
          -- A later step of a split task: planned after the steps before it.
          EXISTS (SELECT 1 FROM task_items AS before_step
@@ -164,6 +168,7 @@ export type OpenTaskRow = {
   id: string;
   title: string;
   area_id: string | null;
+  project_id?: string | null;
   due_date: string | null;
   due_at: number | null;
   planned_window: string | null;
@@ -191,6 +196,7 @@ export function taskOnDay(task: OpenTaskRow, date: string, nowMs?: number): Task
     id: task.id,
     title: task.title,
     areaId: task.area_id,
+    ...(task.project_id ? { projectId: task.project_id } : {}),
     dueDate: task.due_date,
     createdAt: task.created_at,
     remainingMin: task.remaining_min,
@@ -226,6 +232,7 @@ type KeptRow = {
   kind: string;
   area_id?: string | null;
   light_day?: number;
+  project_id?: string | null;
 };
 
 function keptOf(block: KeptRow, minuteOf: (epochMs: number) => number): KeptBlock {
@@ -285,15 +292,11 @@ export async function loadPlanInput(
       localToEpoch(date, DAY_START_MIN),
     ]),
   ]);
-  const projects = await query<PlannedProject & { area_id: string } & Row>(PROJECT_TIME_SQL);
-  /** Weekly minutes of the projects running this week, per area. */
-  const projectMin = new Map<string, number>();
-  for (const project of projects)
-    if (runsIn(project, weekStart(date)))
-      projectMin.set(
-        project.area_id,
-        (projectMin.get(project.area_id) ?? 0) + (project.weekly_min ?? 0),
-      );
+  const projects = (
+    await query<PlannedProject & { id: string; title: string; area_id: string } & Row>(
+      PROJECT_TIME_SQL,
+    )
+  ).filter((project) => runsIn(project, weekStart(date)));
   const removed = await query<{ task_id: string }>(REMOVED_TASK_BLOCKS_SQL, [date]);
   const removedBlocks = await query<{
     start_at: number;
@@ -344,21 +347,39 @@ export async function loadPlanInput(
       kind: block.kind as PlanInput["template"][number]["kind"],
       title: block.title,
     })),
-    // A running project's weekly hours are its area's time too, so the
-    // planner gives them slots (an area switched off still gets them).
-    areas: areas.map((area): AreaInput => {
-      const extra = projectMin.get(area.id) ?? 0;
-      return {
+    // A project running this week gets blocks of its own up to its weekly
+    // hours (an area switched off still gets them); they hold its tasks.
+    areas: [
+      ...areas.map((area): AreaInput => ({
         id: area.id,
         name: area.name,
         kind: area.kind as AreaInput["kind"],
-        weeklyTargetMin: area.weekly_target_min + extra,
+        weeklyTargetMin: area.weekly_target_min,
         capped: area.capped === 1,
         protected: area.protected === 1,
         priorityRank: area.priority_rank,
-        active: area.active === 1 || extra > 0,
-      };
-    }),
+        active: area.active === 1,
+      })),
+      ...projects.flatMap((project): AreaInput[] => {
+        const area = areas.find((a) => a.id === project.area_id);
+        if (!area) return [];
+        return [
+          {
+            id: projectKey(project.id),
+            name: project.title,
+            kind: "growth",
+            weeklyTargetMin: project.weekly_min ?? 0,
+            capped: true,
+            protected: false,
+            // Ahead of its own area on a tie: you started it for this week.
+            priorityRank: area.priority_rank - 0.5,
+            active: true,
+            projectId: project.id,
+            areaId: area.id,
+          },
+        ];
+      }),
+    ],
     doneThisWeekMin: Object.fromEntries(done.map((row) => [row.area_id, row.minutes])),
     tasks: tasks.flatMap((task) => {
       const planned = taskOnDay(task, date, nowMs);
@@ -392,6 +413,7 @@ export function planOps(
       kind: block.kind,
       area_id: block.areaId,
       task_id: block.taskId,
+      project_id: block.projectId ?? null,
       title: block.title,
       // A task's own block is stored as a generator block with task_id set
       // (the schema has no 'task' source), so a replan remakes it from the
@@ -448,7 +470,8 @@ export async function isAwayOn(query: Query, date: string): Promise<boolean> {
 export const REST_DAY_MIN = 6 * 60;
 
 /** Today's plan blocks Sirna made and you didn't touch. */
-export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id, light_day
+export const STALE_BLOCKS_SQL = `SELECT id, start_at, end_at, task_id, title, kind, area_id, light_day,
+  project_id
   FROM day_blocks WHERE logical_date = ? AND deleted_at IS NULL
   AND source IN ('template', 'generator') AND user_edited_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = day_blocks.id)`;
@@ -805,6 +828,7 @@ export function orphanOps(
     title: string;
     kind: string;
     area_id?: string | null;
+    project_id?: string | null;
   }[],
 ): { ops: Op[]; dropped: Set<string>; refill: boolean } {
   const tasks = new Map(input.tasks.map((task) => [task.id, task]));
@@ -821,7 +845,14 @@ export function orphanOps(
   for (const block of stale) {
     if (block.task_id === null) continue;
     const task = tasks.get(block.task_id);
-    const area = block.area_id ? areas.get(block.area_id) : undefined;
+    // A project's block is named after the project and holds its tasks.
+    const area = block.project_id
+      ? areas.get(projectKey(block.project_id))
+      : block.area_id
+        ? areas.get(block.area_id)
+        : undefined;
+    const owner = (t: TaskInput) =>
+      block.project_id ? t.projectId === block.project_id : t.areaId === block.area_id;
     const timed = task !== undefined && ((task.atMin ?? null) !== null || !!task.window);
     // A focus slot ("Coding skills: …") that holds a task, not the task's own
     // block. Told apart by more than the area's name, which may have changed
@@ -835,7 +866,7 @@ export function orphanOps(
         (task !== undefined && !timed) ||
         (task === undefined && block.title.includes(": ")));
     if (slot) {
-      if (!task || timed || task.areaId !== block.area_id) {
+      if (!task || timed || !owner(task)) {
         drop(block.id);
         refill = true;
       } else if (area && block.title !== `${area.name}: ${task.title}`)
@@ -1017,7 +1048,7 @@ export const CHAIN_DAYS = 7;
 /** Saved blocks of a range of days, for `savedDays`. */
 export const SAVED_BLOCKS_SQL = `
   SELECT b.logical_date, b.start_at, b.end_at, b.kind, b.area_id, b.task_id, b.title,
-         b.light_day, b.status,
+         b.light_day, b.status, b.project_id,
          EXISTS (SELECT 1 FROM focus_sessions f WHERE f.block_id = b.id) AS focused
   FROM day_blocks b
   WHERE b.deleted_at IS NULL AND b.logical_date BETWEEN ? AND ?
@@ -1034,6 +1065,7 @@ export type SavedRow = {
   light_day: number;
   status: string;
   focused: number;
+  project_id?: string | null;
 };
 
 /**
@@ -1052,7 +1084,12 @@ export function savedDays(rows: SavedRow[], nowMs: number): Map<string, SavedDay
     if (row.focused === 1) continue;
     const durationMin = Math.round((row.end_at - row.start_at) / 60000);
     const focus = row.kind === "area";
-    day.booked.push({ areaId: focus ? row.area_id : null, taskId: row.task_id, durationMin });
+    day.booked.push({
+      areaId: focus ? row.area_id : null,
+      taskId: row.task_id,
+      durationMin,
+      ...(focus && row.project_id ? { projectId: row.project_id } : {}),
+    });
     if (focus) {
       const block: PreviewBlock = {
         startMin: Math.round((row.start_at - localToEpoch(row.logical_date, 0)) / 60000),

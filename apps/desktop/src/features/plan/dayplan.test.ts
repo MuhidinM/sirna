@@ -322,7 +322,7 @@ describe("ensureDayPlan", () => {
     expect(input.doneThisWeekMin).toEqual({ quran: 30 });
   });
 
-  it("adds a running project's weekly hours to its area's target (F50)", async () => {
+  it("gives a running project an entry of its own for its weekly hours (F50)", async () => {
     const h = harness();
     h.db.exec(
       `INSERT INTO project_items (id, title, area_id, weekly_min, start_date, forecast_finish, status, created_at, updated_at) VALUES
@@ -332,13 +332,55 @@ describe("ensureDayPlan", () => {
     );
     h.db.exec("UPDATE area_items SET active = 0 WHERE id = 'coding'");
     const areas = (await loadPlanInput(h.query, "2026-11-11")).areas;
-    expect(areas.find((a) => a.id === "coding")).toMatchObject({
-      weeklyTargetMin: 240 + 600,
+    expect(areas.find((a) => a.id === "coding")).toMatchObject({ weeklyTargetMin: 240 });
+    expect(areas.find((a) => a.id === "project:go")).toMatchObject({
+      name: "learn Go",
+      weeklyTargetMin: 600,
+      areaId: "coding",
+      projectId: "go",
       active: true,
     });
-    expect(areas.find((a) => a.id === "experiments")?.weeklyTargetMin).toBe(180);
+    expect(areas.some((a) => a.projectId === "idea" || a.projectId === "later")).toBe(false);
     const nextWeek = (await loadPlanInput(h.query, "2026-11-17")).areas;
-    expect(nextWeek.find((a) => a.id === "coding")?.weeklyTargetMin).toBe(240 + 300);
+    expect(nextWeek.find((a) => a.id === "project:later")?.weeklyTargetMin).toBe(300);
+  });
+
+  it("plans a running project's blocks, holding its tasks (F50)", async () => {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    h.db.exec(
+      `INSERT INTO project_items (id, title, area_id, weekly_min, start_date, forecast_finish, status, created_at, updated_at) VALUES
+       ('go', 'learn Go', 'coding', 600, '2026-11-09', '2026-11-22', 'active', 0, 0)`,
+    );
+    h.db.exec(
+      `INSERT INTO task_items (id, title, status, area_id, project_id, created_at, updated_at) VALUES
+       ('tour', 'Go tour', 'todo', 'coding', 'go', 0, 0),
+       ('page', 'Write About page', 'todo', 'coding', NULL, 1, 1)`,
+    );
+    await ensureDayPlan(h.query, h.transact, LATE, h.newId, "2026-11-12");
+    const rows = h.db
+      .prepare(
+        `SELECT title, area_id, project_id, task_id FROM day_blocks
+         WHERE logical_date = '2026-11-12' AND kind = 'area' AND deleted_at IS NULL ORDER BY start_at`,
+      )
+      .all() as { title: string; area_id: string; project_id: string | null; task_id: string }[];
+    expect(rows).toContainEqual({
+      title: "learn Go: Go tour",
+      area_id: "coding",
+      project_id: "go",
+      task_id: "tour",
+    });
+    // The project's task isn't put in the area's own slot too.
+    expect(rows.filter((r) => r.task_id === "tour")).toHaveLength(1);
+    expect(await healPlans(h.query, h.transact, LATE, h.newId)).toEqual([]);
   });
 
   it("counts focus started for an area with no block, this week only (F21)", async () => {

@@ -5,7 +5,13 @@
  * from the same chain, so it holds what the forecast said. A day already
  * saved enters the chain as it was saved. Pure.
  */
-import { generateDay, type PlanInput, TASK_BLOCK_MIN, type TaskInput } from "./generate";
+import {
+  generateDay,
+  type PlanInput,
+  projectKey,
+  TASK_BLOCK_MIN,
+  type TaskInput,
+} from "./generate";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -32,6 +38,7 @@ export interface PreviewBlock {
   areaId: string | null;
   title: string;
   taskId: string | null;
+  projectId?: string | null;
 }
 
 export interface PreviewDay {
@@ -47,6 +54,8 @@ export interface PreviewDay {
 export interface Booking {
   /** Set for a focus block: its minutes count toward the area's week. */
   areaId: string | null;
+  /** A project's block: its minutes count toward the project's week instead. */
+  projectId?: string | null;
   taskId: string | null;
   durationMin: number;
 }
@@ -87,7 +96,8 @@ function book(carry: Carry, input: PlanInput, booked: Booking[]): void {
   const monday = weekStart(input.date);
   const already = carry.plannedByWeek.get(monday) ?? {};
   for (const block of booked) {
-    if (block.areaId) already[block.areaId] = (already[block.areaId] ?? 0) + block.durationMin;
+    const key = block.projectId ? projectKey(block.projectId) : block.areaId;
+    if (key) already[key] = (already[key] ?? 0) + block.durationMin;
     if (!block.taskId || carry.finished.has(block.taskId)) continue;
     const task = input.tasks.find((t) => t.id === block.taskId);
     const need = carry.left.has(block.taskId)
@@ -155,6 +165,7 @@ export function runChain(
           areaId: block.areaId,
           title: block.title,
           taskId: block.taskId,
+          ...(block.projectId ? { projectId: block.projectId } : {}),
         }));
       // A task block you moved or added (kept) covers its task that day too.
       const keptTaskTime = day.kept.flatMap((block) =>
