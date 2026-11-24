@@ -111,9 +111,13 @@ export function formatMinutes(minutes: number): string {
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
-/** "~1 h 30 min": an estimate, to 5 minutes, in the app's one hour format (F96). */
+/**
+ * "~7 min", "~1 h 30 min": an estimate in the app's one hour format (F96).
+ * Under an hour it is the minutes as typed; from an hour on it rounds to 5.
+ */
 export function formatEstimate(minutes: number): string {
-  return `~${formatMinutes(Math.max(5, Math.round(minutes / 5) * 5))}`;
+  const whole = Math.max(1, Math.round(minutes));
+  return `~${formatMinutes(whole < 60 ? whole : Math.round(whole / 5) * 5)}`;
 }
 
 /** The first step to show for a block: its task, else the block's own title. */

@@ -162,6 +162,14 @@ describe("an estimate (formatEstimate, F96)", () => {
     expect(formatEstimate(45)).toBe("~45 min");
     expect(formatEstimate(90)).toBe("~1 h 30 min");
     expect(formatEstimate(120)).toBe("~2 h");
-    expect(formatEstimate(2)).toBe("~5 min");
+  });
+
+  it("repeats minutes under an hour as typed and rounds to 5 from an hour on", () => {
+    expect(formatEstimate(7)).toBe("~7 min");
+    expect(formatEstimate(1)).toBe("~1 min");
+    expect(formatEstimate(2)).toBe("~2 min");
+    expect(formatEstimate(59)).toBe("~59 min");
+    expect(formatEstimate(62)).toBe("~1 h");
+    expect(formatEstimate(143)).toBe("~2 h 25 min");
   });
 });

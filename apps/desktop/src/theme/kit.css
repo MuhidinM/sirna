@@ -479,7 +479,8 @@ button.month-day:hover {
   box-shadow: var(--faded-edge);
 }
 
-.event.faded:hover {
+/* Not on the current block: one marked done while it runs keeps its ring. */
+.event.faded:not(.current):hover {
   box-shadow:
     var(--faded-edge),
     0 8px 22px rgb(0 0 0 / 10%);
@@ -747,14 +748,16 @@ button.month-day:hover {
   container-type: inline-size;
 }
 
-/* The title keeps at least 6em; the time never shrinks below what it needs
-   unless that would take the title's 6em, so the title gives way first and the
-   time stays whole (F22). In a narrow lane the time hides (the editor and the
-   screen reader label still give it). */
+/* The title gives way first, down to its 6em; only then does the time shrink,
+   with an ellipsis, so it stays whole beside a long title and never runs off the
+   card when a "2 tasks" pill shares the row (F22). Flex shrinks by factor times
+   size, so the title's 1000 against the time's 1 leaves the time a fraction of a
+   pixel until the title stops at its min-width; then the time takes the rest.
+   In a narrow lane the time hides (the editor and the screen reader label still
+   give it). */
 .day-lanes .event.short .event-label {
   order: 2;
-  flex: 0 0 auto;
-  max-width: calc(100% - 6 * var(--text-sm) - 8px); /* the title's 6em, and the gap */
+  flex: 0 1 auto;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -762,7 +765,7 @@ button.month-day:hover {
 }
 
 .day-lanes .event.short .event-title {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   min-width: min(100%, 6em);
   font-size: var(--text-sm);
   white-space: nowrap;
