@@ -246,7 +246,7 @@ describe("generateDay", () => {
 
   it("counts a focus block kept from earlier today as that area's time (F12)", () => {
     const slot = {
-      startMin: 17 * 60,
+      startMin: 19 * 60,
       durationMin: 60,
       kind: "area" as const,
       areaId: null,
@@ -261,6 +261,36 @@ describe("generateDay", () => {
       }),
     );
     expect(areaBlocks(plan).map((b) => b.taskId)).toEqual(["apply"]);
+  });
+
+  it("never puts a focus block on a routine block moved into its slot (F17)", () => {
+    const evening = {
+      startMin: 18 * 60 + 30,
+      durationMin: 150,
+      kind: "area" as const,
+      areaId: null,
+      title: "Focus block",
+    };
+    const gym = {
+      startMin: 19 * 60,
+      durationMin: 45,
+      kind: "routine" as const,
+      areaId: "gym",
+      title: "Gym",
+    };
+    const plan = generateDay(
+      input({
+        template: [evening, gym],
+        tasks: [task("about", "coding"), task("apply", "jobhunt")],
+      }),
+    );
+    const focus = areaBlocks(plan);
+    expect(focus.length).toBeGreaterThan(0);
+    for (const block of focus)
+      expect(
+        block.startMin < gym.startMin + gym.durationMin &&
+          gym.startMin < block.startMin + block.durationMin,
+      ).toBe(false);
   });
 
   it("gives a free Saturday three area blocks across different areas", () => {

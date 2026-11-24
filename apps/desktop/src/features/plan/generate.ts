@@ -414,11 +414,18 @@ export function generateDay(input: PlanInput): DayPlan {
     const off = input.template.filter((block) => block.kind === "rest");
     const areaSlots = input.template
       .filter((block) => block.kind === "area")
-      .filter(free)
       .filter((slot) => !off.some((rest) => overlaps(rest, slot)))
-      // An event or a task's own block takes its time out of a slot; the rest still gets filled.
+      // An event, a routine block (Gym moved into the evening, F17), a block
+      // you kept or a task's own block takes its time out of a slot; the rest
+      // still gets filled.
       .flatMap((slot) =>
-        cut(slot, [...events, ...taken, ...removedAreaTime]).map((piece) => ({
+        cut(slot, [
+          ...events,
+          ...blocks.filter((block) => !block.fromTask && block.kind !== "area"),
+          ...input.kept,
+          ...taken,
+          ...removedAreaTime,
+        ]).map((piece) => ({
           ...slot,
           ...piece,
         })),
