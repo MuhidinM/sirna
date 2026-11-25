@@ -154,9 +154,9 @@ Milestone 3 of [docs/proposals/money-and-planning.md](proposals/money-and-planni
 | ID    | Issue                                                | Task                                                       | Reqs               | Size | Status |
 | ----- | ---------------------------------------------------- | ---------------------------------------------------------- | ------------------ | ---- | ------ |
 | T-063 | [#130](https://github.com/MuhidinM/sirna/issues/130) | A spending cap on every category, with suggested amounts   | R-MON-08           | S    | done   |
-| T-064 | [#131](https://github.com/MuhidinM/sirna/issues/131) | An advisor: at most two findings a day, each with a button | R-MON-09, R-AI-02  | M    | todo   |
-| T-065 | [#132](https://github.com/MuhidinM/sirna/issues/132) | Can I afford it? Fine, Tight or Not now                    | R-MON-10           | S    | todo   |
-| T-066 | [#133](https://github.com/MuhidinM/sirna/issues/133) | A month review on the first Sunday                         | R-MON-11, R-CHK-04 | M    | todo   |
+| T-064 | [#131](https://github.com/MuhidinM/sirna/issues/131) | An advisor: at most two findings a day, each with a button | R-MON-09, R-AI-02  | M    | done   |
+| T-065 | [#132](https://github.com/MuhidinM/sirna/issues/132) | Can I afford it? Fine, Tight or Not now                    | R-MON-10           | S    | done   |
+| T-066 | [#133](https://github.com/MuhidinM/sirna/issues/133) | A month review on the first Sunday                         | R-MON-11, R-CHK-04 | M    | done   |
 
 ## M12 — Planning that looks ahead
 
@@ -182,3 +182,13 @@ The smaller items of [docs/proposals/money-and-planning.md](proposals/money-and-
 | T-075 | [#153](https://github.com/MuhidinM/sirna/issues/153) | A status strip at the top of Settings       | R-UX-02   | S    | done   |
 | T-076 | [#154](https://github.com/MuhidinM/sirna/issues/154) | A Sunday planning step                      | R-PLAN-10 | M    | done   |
 | T-077 | [#155](https://github.com/MuhidinM/sirna/issues/155) | Remind me the day before a bill is due      | R-MON-14  | M    | done   |
+
+## M14 — Jobs as you work them
+
+Setup handles any number of jobs, and a job day can be split around lunch, so hours and birr per hour match the time you work ([ADR 0010](decisions/0010-job-parts-and-lunch.md)).
+
+| ID | Issue | Task | Reqs | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| T-078 | [#178](https://github.com/MuhidinM/sirna/issues/178) | Add and remove jobs in setup | R-PLAN-11 | M | done |
+| T-079 | [#179](https://github.com/MuhidinM/sirna/issues/179) | A job day in 2-3 parts (split shift), with an optional lunch | R-PLAN-12 | M | done |
+| T-080 | [#180](https://github.com/MuhidinM/sirna/issues/180) | Effort-vs-return insights | R-PRG-06, R-MON-15 | L | todo |
