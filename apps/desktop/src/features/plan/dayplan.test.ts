@@ -346,6 +346,34 @@ describe("ensureDayPlan", () => {
     expect(nextWeek.find((a) => a.id === "project:later")?.weeklyTargetMin).toBe(300);
   });
 
+  it("gives a project nothing before its start date, then its share of the week", async () => {
+    const h = harness();
+    h.db.exec(
+      `INSERT INTO project_items (id, title, area_id, weekly_min, start_date, forecast_finish, deadline, status, created_at, updated_at) VALUES
+       ('thu', 'from Thursday', 'coding', 600, '2026-11-12', '2026-11-29', NULL, 'active', 0, 0),
+       ('wf', 'Wed to Fri', 'coding', 600, '2026-11-11', '2026-11-13', NULL, 'active', 0, 0),
+       ('nx', 'next week', 'coding', 600, '2026-11-16', '2026-11-29', NULL, 'next_up', 0, 0),
+       ('old', 'overdue', 'coding', 600, '2026-10-01', NULL, '2026-11-01', 'active', 0, 0)`,
+    );
+    const on = async (date: string) =>
+      Object.fromEntries(
+        (await loadPlanInput(h.query, date)).areas
+          .filter((a) => a.projectId)
+          .map((a) => [a.projectId, { target: a.weeklyTargetMin, until: a.paceUntil }]),
+      );
+    expect(await on("2026-11-11")).toEqual({
+      wf: { target: 600, until: "2026-11-13" },
+      old: { target: 600, until: undefined },
+    });
+    expect(await on("2026-11-12")).toEqual({
+      thu: { target: 345, until: undefined },
+      wf: { target: 600, until: "2026-11-13" },
+      old: { target: 600, until: undefined },
+    });
+    // After its end it is paced to Sunday, as before.
+    expect((await on("2026-11-14")).wf).toEqual({ target: 600, until: undefined });
+  });
+
   it("plans a running project's blocks, holding its tasks (F50)", async () => {
     const h = harness();
     apply(

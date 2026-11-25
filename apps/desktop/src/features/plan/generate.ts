@@ -42,6 +42,11 @@ export interface AreaInput {
    */
   projectId?: string;
   areaId?: string;
+  /**
+   * A project that ends before Sunday: its last day this week. Its weekly
+   * hours are spread over the days up to it instead of up to Sunday.
+   */
+  paceUntil?: string;
 }
 
 /** The planner key of a project entry. */
@@ -491,7 +496,11 @@ export function generateDay(input: PlanInput): DayPlan {
       // A running project's weekly hours are promised time (#174): it gets
       // its share of what is left this week every day, spread over the days
       // left, before areas compete for the rest.
-      const share = (area: AreaInput) => (remaining(area) + (planned[area.id] ?? 0)) / daysLeft;
+      const share = (area: AreaInput) =>
+        (remaining(area) + (planned[area.id] ?? 0)) /
+        (area.paceUntil && area.paceUntil >= input.date
+          ? daysBetween(input.date, area.paceUntil) + 1
+          : daysLeft);
       /** How much of today's share it has (0 = none yet). */
       const paceOf = (area: AreaInput) => (planned[area.id] ?? 0) / share(area);
       const paced = eligible
