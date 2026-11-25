@@ -165,6 +165,19 @@ import { type Afford, afford } from "../features/money/afford";
 import { monthReview } from "../features/money/review";
 import { JOB_MINUTES_SQL, JOB_PAY_SQL, jobRates } from "../features/money/rate";
 import {
+  compareMoneyText,
+  compareRates,
+  driftMoneyText,
+  JOB_MONTH_MINUTES_SQL,
+  JOB_MONTH_PAY_SQL,
+  type MonthMinutes,
+  type MonthPay,
+  rateDrifts,
+  ratesByMonth,
+  shiftMonth,
+  USUAL_MONTHS,
+} from "../features/insights/effort";
+import {
   DISMISSED_SUGGESTIONS_KEY,
   notAgainOps,
   readDismissed,
@@ -1185,6 +1198,16 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
     [from, to],
   );
   const { rates } = useRates();
+  // The shown month and the 3 before it, for the trend against your usual (T-080).
+  const since = `${shiftMonth(shown.key, -USUAL_MONTHS)}-01`;
+  const history = useLiveQuery<MonthMinutes & Record<string, string | number>>(
+    JOB_MONTH_MINUTES_SQL,
+    [since, to],
+  );
+  const historyPay = useLiveQuery<MonthPay & Record<string, string | number | null>>(
+    JOB_MONTH_PAY_SQL,
+    [since, to],
+  );
   // This month's hours, only to say why there is nothing yet in your first month.
   const thisMonth = monthOf(month);
   const current = useLiveQuery<{ area_id: string }>(JOB_MINUTES_SQL, [
@@ -1192,7 +1215,8 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
     thisMonth.to,
     nowMs,
   ]);
-  if (minutes.loading || pay.loading || current.loading) return null;
+  if (minutes.loading || pay.loading || current.loading || history.loading || historyPay.loading)
+    return null;
   if (minutes.rows.length === 0) {
     if (!running || current.rows.length === 0) return null;
     return (
@@ -1205,6 +1229,9 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
     );
   }
   const perJob = jobRates(minutes.rows, pay.rows, rates);
+  const compare = compareRates(perJob);
+  const drifts = rateDrifts(ratesByMonth(history.rows, historyPay.rows, rates), shown.key);
+  const tagged = new Set(pay.rows.map((p) => p.area_id));
   return (
     <section className="card" aria-labelledby="job-rates">
       <h2 id="job-rates">Your jobs in {monthLabel(shown.key)}</h2>
@@ -1213,12 +1240,24 @@ function JobRatesCard({ month, today }: { month: string; today: string }) {
           <li key={rate.areaId}>
             <span>{rate.name}</span>
             <span className="meta money-num">
-              {formatAmount(rate.pay)} for {Math.round(rate.minutes / 60)} h
-              {rate.perHour !== null ? ` · about ${formatAmount(rate.perHour)} an hour` : ""}
+              {tagged.has(rate.areaId) ? (
+                <>
+                  {formatAmount(rate.pay)} for {Math.round(rate.minutes / 60)} h
+                  {rate.perHour !== null ? ` · about ${formatAmount(rate.perHour)} an hour` : ""}
+                </>
+              ) : (
+                <>{Math.round(rate.minutes / 60)} h · Tag pay with the job to see its rate</>
+              )}
             </span>
           </li>
         ))}
       </ul>
+      {compare && <p className="meta">{compareMoneyText(compare)}</p>}
+      {drifts.map((drift) => (
+        <p key={drift.areaId} className="meta">
+          {driftMoneyText(drift)}
+        </p>
+      ))}
       <p className="hint">
         Hours are the job&apos;s blocks that month (skipped or moved ones left out); pay is income
         you recorded for that job.{running ? " This month shows once it is over." : ""}
