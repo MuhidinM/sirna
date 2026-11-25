@@ -320,3 +320,34 @@ export const MONEY: AiTask<MoneyFacts, { tip: string }> = {
     return groundText([output.tip], MONEY.facts(input));
   },
 };
+
+// --- Insight line (T-080) -----------------------------------------------------------
+
+/** Two job names and the ratio of their pay per hour: never an amount of money (R-AI-02). */
+export interface InsightFacts {
+  best: string;
+  other: string;
+  ratio: number;
+}
+
+export const INSIGHT: AiTask<InsightFacts, { line: string }> = {
+  id: "insight",
+  version: "1",
+  schema: s.object({
+    line: s.string({ maxLength: 160, description: "One plain sentence, at most 22 words" }),
+  }),
+  system: SYSTEM,
+  facts: (f) =>
+    [
+      `job that pays more per hour worked: ${f.best}`,
+      `job that pays less per hour worked: ${f.other}`,
+      `ratio of their pay per hour worked: ${f.ratio}`,
+    ].join("\n"),
+  ask: () =>
+    "Say this in one plain sentence (at most 22 words). Keep the ratio as given. No amounts of money, no advice to quit.",
+  ground: (output, input) => {
+    if (/\b(?:birr|etb|br)\b|\$|santim/i.test(output.line)) return "names an amount of money";
+    if (output.line.split(/\s+/).length > 26) return "longer than 22 words";
+    return groundText([output.line], INSIGHT.facts(input));
+  },
+};
