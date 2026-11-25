@@ -75,4 +75,16 @@ describe("birr per hour for each job (T-073)", () => {
       { area_id: "joba", minor: 1_800_000, currency: "ETB" },
     ]);
   });
+
+  it("adds up both parts of a split job day (T-079)", () => {
+    const db = openTestDb();
+    const block = db.prepare(
+      "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, title, status, created_at, updated_at) VALUES (?, '2026-11-16', ?, ?, 'fixed', 'joba', 'Job A', 'planned', 0, 0)",
+    );
+    block.run("am", at("2026-11-16", "08:00"), at("2026-11-16", "10:00"));
+    block.run("pm", at("2026-11-16", "13:00"), at("2026-11-16", "15:00"));
+    expect(
+      db.prepare(JOB_MINUTES_SQL).all("2026-11-01", "2026-11-30", at("2026-11-20", "12:00")),
+    ).toEqual([{ area_id: "joba", name: "Job A", minutes: 240 }]);
+  });
 });

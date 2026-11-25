@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ANSWERS,
   defaultRoutine,
+  type JobAnswer,
   jobFromBlocks,
+  jobParts,
   jobProblems,
+  type SavedJob,
   parseTimes,
   toHhmm,
   toMinutes,
@@ -83,7 +86,9 @@ describe("defaultRoutine", () => {
   it("follows the user's job hours", () => {
     const blocks = defaultRoutine({
       ...DEFAULT_ANSWERS,
-      jobs: [{ areaId: "joba", name: "Kifiya", days: [2, 4], start: "09:30", end: "18:00" }],
+      jobs: [
+        { areaId: "joba", name: "Kifiya", days: [2, 4], parts: [{ start: "09:30", end: "18:00" }] },
+      ],
     });
     const tuesday = blocks.filter((block) => block.weekday === 2);
     expect(tuesday).toContainEqual(
@@ -158,8 +163,22 @@ describe("jobs made in My week", () => {
       areaId: "job-c",
       name: "Shop",
       days: [1, 3, 5],
-      start: "09:00",
-      end: "14:00",
+      parts: [{ start: "09:00", end: "14:00" }],
+    });
+  });
+
+  it("read back a split day as its parts", () => {
+    const rows = [
+      { weekday: 2, start_min: 780, duration_min: 120 },
+      { weekday: 2, start_min: 480, duration_min: 120 },
+      { weekday: 4, start_min: 480, duration_min: 120 },
+    ];
+    expect(jobFromBlocks("joba", "Job A", rows)).toMatchObject({
+      days: [2, 4],
+      parts: [
+        { start: "08:00", end: "10:00" },
+        { start: "13:00", end: "15:00" },
+      ],
     });
   });
 
@@ -169,13 +188,19 @@ describe("jobs made in My week", () => {
 });
 
 describe("jobProblems", () => {
-  const job = {
+  const job: JobAnswer = {
     areaId: "joba",
     name: "Job A",
-    days: [1, 2] as Weekday[],
-    start: "08:00",
-    end: "12:00",
+    days: [1, 2],
+    parts: [{ start: "08:00", end: "12:00" }],
   };
+  const jobB: JobAnswer = {
+    areaId: "jobb",
+    name: "Job B",
+    days: [2, 3],
+    parts: [{ start: "13:00", end: "17:00" }],
+  };
+  const parts = (...ranges: [string, string][]) => ranges.map(([start, end]) => ({ start, end }));
 
   it("passes the default jobs", () => {
     expect(jobProblems(DEFAULT_ANSWERS.jobs)).toBeNull();
@@ -191,5 +216,133 @@ describe("jobProblems", () => {
   it("needs a day for a job that is on, not for one ticked off", () => {
     expect(jobProblems([{ ...job, days: [] }])).toBe("Job A: pick its days, or untick it.");
     expect(jobProblems([{ ...job, days: [], enabled: false }])).toBeNull();
+  });
+
+  it("needs each part to end after it starts, on the same day", () => {
+    expect(jobProblems([{ ...job, parts: parts(["12:00", "08:00"]) }])).toBe(
+      "Job A: 12:00–08:00 must end after it starts, on the same day.",
+    );
+    expect(jobProblems([{ ...job, parts: parts(["22:00", "02:00"]) }])).toMatch(/same day/);
+    expect(jobProblems([{ ...job, parts: parts(["08:00", "08:00"]) }])).toMatch(/end after/);
+    expect(jobProblems([{ ...job, parts: parts(["08:00", ""]) }])).toBe(
+      "Job A: fill in each From and To time.",
+    );
+  });
+
+  it("allows up to 3 parts that don't overlap", () => {
+    const three = parts(["06:00", "08:00"], ["09:00", "11:00"], ["13:00", "15:00"]);
+    expect(jobProblems([{ ...job, parts: three }])).toBeNull();
+    expect(jobProblems([{ ...job, parts: [...three, { start: "16:00", end: "17:00" }] }])).toBe(
+      "Job A: at most 3 parts a day.",
+    );
+    expect(jobProblems([{ ...job, parts: parts(["08:00", "11:00"], ["10:30", "12:00"]) }])).toBe(
+      "Job A: two parts overlap.",
+    );
+    // Touching parts are fine.
+    expect(jobProblems([{ ...job, parts: parts(["08:00", "10:00"], ["10:00", "12:00"]) }])).toBe(
+      null,
+    );
+  });
+
+  it("stops two jobs overlapping on a day they share, not on other days", () => {
+    const clash = { ...jobB, parts: parts(["11:00", "14:00"]) };
+    expect(jobProblems([job, clash])).toBe("Job A and Job B overlap on the same day.");
+    expect(jobProblems([job, { ...clash, days: [3, 4] as Weekday[] }])).toBeNull();
+    expect(jobProblems([job, { ...clash, enabled: false }])).toBeNull();
+  });
+
+  it("keeps lunch out of job hours", () => {
+    expect(jobProblems([job, jobB], "12:00")).toBeNull();
+    expect(jobProblems([job, jobB], "11:30")).toBe(
+      "Lunch overlaps Job A. Leave lunch out of job hours: end a part before it.",
+    );
+    expect(jobProblems([job, jobB], "")).toBeNull();
+  });
+});
+
+describe("a job day in parts (split shift)", () => {
+  const split: JobAnswer = {
+    areaId: "joba",
+    name: "Job A",
+    days: [1, 2, 3, 4, 5],
+    parts: [
+      { start: "08:00", end: "10:00" },
+      { start: "13:00", end: "15:00" },
+    ],
+  };
+  const monday = (answers: Partial<typeof DEFAULT_ANSWERS>) =>
+    defaultRoutine({
+      ...DEFAULT_ANSWERS,
+      jobs: [split],
+      activeAreas: ["joba", "admin"],
+      ...answers,
+    })
+      .filter((block) => block.weekday === 1)
+      .map(
+        (block) => `${toHhmm(block.startMin)} ${block.durationMin} ${block.kind} ${block.title}`,
+      );
+
+  it("makes one fixed block per part, both named after the job", () => {
+    expect(monday({}).filter((line) => line.includes("fixed"))).toEqual([
+      "08:00 120 fixed Job A",
+      "13:00 120 fixed Job A",
+    ]);
+  });
+
+  it("plans a focus block in a long gap between parts when there is no lunch", () => {
+    // 10:00–13:00 is free: with the 15-minute buffers a 90-minute block fits.
+    expect(monday({})).toContain("10:15 90 area Focus block");
+  });
+
+  it("keeps lunch free of focus blocks", () => {
+    const day = monday({ lunch: "11:30" });
+    expect(day).toContain("11:30 60 routine Lunch");
+    const focus = day.filter((line) => line.includes("Focus block"));
+    for (const line of focus) {
+      const [time = "", minutes = "0"] = line.split(" ");
+      const start = toMinutes(time);
+      const end = start + Number(minutes);
+      expect(start < 12 * 60 + 30 && 11 * 60 + 30 < end, line).toBe(false);
+    }
+  });
+
+  it("puts lunch on workdays only", () => {
+    const blocks = defaultRoutine({
+      ...DEFAULT_ANSWERS,
+      jobs: [split],
+      activeAreas: ["joba"],
+      lunch: "11:30",
+    });
+    expect(blocks.filter((block) => block.title === "Lunch").map((block) => block.weekday)).toEqual(
+      [1, 2, 3, 4, 5],
+    );
+    expect(blocks.find((block) => block.title === "Lunch")?.areaId).toBeNull();
+  });
+
+  it("treats an email check at a part's end as part of it, not a free-time anchor", () => {
+    // Checks at 10:00 and 15:00, the ends of the two parts: the gap after each
+    // still starts at the part's end, so the focus block keeps its place.
+    const day = monday({ emailChecks: ["10:00", "15:00"] });
+    expect(day).toContain("10:00 10 routine Check email");
+    expect(day).toContain("10:15 90 area Focus block");
+  });
+
+  it("still reads an answer saved before parts as one part", () => {
+    const old: SavedJob = {
+      areaId: "joba",
+      name: "Kifiya",
+      days: [2],
+      start: "09:30",
+      end: "18:00",
+    };
+    expect(jobParts(old)).toEqual([{ start: "09:30", end: "18:00" }]);
+    const blocks = defaultRoutine({
+      ...DEFAULT_ANSWERS,
+      // Old saves reach defaultRoutine as they were stored.
+      jobs: [old as JobAnswer],
+    });
+    expect(blocks).toContainEqual(
+      expect.objectContaining({ weekday: 2, startMin: 570, durationMin: 510, title: "Kifiya" }),
+    );
   });
 });

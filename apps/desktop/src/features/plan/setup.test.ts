@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_ANSWERS } from "./routine";
+import { DEFAULT_ANSWERS, type JobAnswer } from "./routine";
 import { newJob, SETUP_DONE_KEY, setupOps, type SetupChoices } from "./setup";
 
 const choices: SetupChoices = {
@@ -135,11 +135,36 @@ describe("newJob", () => {
       areaId: "job-c",
       name: "Job C",
       days: [1, 2, 3, 4, 5],
-      start: "09:00",
-      end: "17:00",
+      parts: [{ start: "09:00", end: "17:00" }],
     });
     expect(newJob([...areas, "job-c"], ["job a", "Job B"]).areaId).toBe("job-c-2");
     // A renamed job frees its letter.
     expect(newJob(areas, ["Kifiya", "Job B"]).name).toBe("Job A");
+  });
+});
+
+describe("setup answers with job parts and lunch", () => {
+  it("saves parts and lunch, and makes a block per part", () => {
+    const jobs: JobAnswer[] = [
+      {
+        areaId: "joba",
+        name: "Job A",
+        days: [1],
+        parts: [
+          { start: "08:00", end: "10:00" },
+          { start: "13:00", end: "15:00" },
+        ],
+      },
+    ];
+    const ops = setupOps({ ...choices, jobs, lunch: "11:30" }, [], areas, newId);
+    const saved = ops.find((op) => op.id === "setup.answers");
+    expect(saved?.op === "upsert" && JSON.parse(String(saved.values.value_json))).toMatchObject({
+      jobs,
+      lunch: "11:30",
+    });
+    const jobBlocks = ops.filter(
+      (op) => op.op === "insert" && op.table === "routine_blocks" && op.values.area_id === "joba",
+    );
+    expect(jobBlocks).toHaveLength(2);
   });
 });

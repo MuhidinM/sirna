@@ -824,3 +824,47 @@ describe("a project that ends this week (paceUntil)", () => {
     expect(late).toBe(goMin(generateDay(day("2026-11-12", GO))));
   });
 });
+
+describe("a job day in parts (T-079)", () => {
+  const splitWeek = defaultRoutine({
+    ...DEFAULT_ANSWERS,
+    jobs: [
+      {
+        areaId: "joba",
+        name: "Job A",
+        days: [3],
+        parts: [
+          { start: "08:00", end: "10:00" },
+          { start: "13:00", end: "15:00" },
+        ],
+      },
+    ],
+    activeAreas: ["joba", "jobhunt", "coding"],
+    lunch: "11:30",
+  });
+  const template = splitWeek
+    .filter((block) => block.weekday === 3)
+    .map(({ weekday: _w, ...block }) => block);
+  const jobA = (plan: ReturnType<typeof generateDay>) =>
+    plan.blocks.filter((b) => b.title === "Job A").map((b) => [b.startMin, b.durationMin]);
+
+  it("keeps both parts of the job on the day", () => {
+    expect(jobA(generateDay(input({ template })))).toEqual([
+      [480, 120],
+      [780, 120],
+    ]);
+  });
+
+  it("pairs a moved part with the nearest one, so the other part stays", () => {
+    const moved = { startMin: 840, durationMin: 120, title: "Job A", kind: "fixed" as const };
+    // The afternoon part moved an hour later; the morning part is still planned.
+    expect(jobA(generateDay(input({ template, kept: [moved] })))).toEqual([[480, 120]]);
+  });
+
+  it("plans no focus block over lunch", () => {
+    const plan = generateDay(input({ template }));
+    expect(plan.blocks.some((b) => b.title === "Lunch")).toBe(true);
+    for (const block of areaBlocks(plan))
+      expect(block.startMin < 750 && 690 < block.startMin + block.durationMin).toBe(false);
+  });
+});
