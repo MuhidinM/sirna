@@ -16,3 +16,4 @@ The planning-stage decisions (D1–D49) are logged in [plan §15](../plan.md#15-
 | [0008](0008-ai-gate.md)                    | The AI gate: one Rust command, ureq, key in a header     | accepted |
 | [0009](0009-own-schema-module.md)          | Our own small schema module instead of zod               | accepted |
 | [0010](0010-job-parts-and-lunch.md)        | Job parts, and lunch stays outside job hours             | accepted |
+| [0011](0011-effort-insight-thresholds.md)  | When an effort insight is worth saying                   | accepted |
