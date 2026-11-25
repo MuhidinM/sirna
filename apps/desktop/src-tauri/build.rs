@@ -62,6 +62,7 @@ fn main() {
         "open_main",
         "open_capture",
         "widget_apply",
+        "title_bar",
         "brief_ready",
         "capture_commit",
         "capture_undo",

@@ -225,6 +225,7 @@ export async function install(): Promise<void> {
     },
     close_window: () => windowEvent("close_window", pageOf(label()), {}),
     widget_apply: (a) => windowEvent("widget_apply", "widget.html", a),
+    title_bar: () => null,
     capture_ready: () => null,
     brief_ready: () => null,
 

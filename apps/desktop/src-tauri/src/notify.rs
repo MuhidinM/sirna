@@ -66,7 +66,16 @@ fn dismissal_label(reason: Option<ToastDismissalReason>) -> &'static str {
 /// The M0 check toast (tray → Test notification): proves both buttons reach
 /// Rust with no window open, in the installed build. T-017 replaces it with
 /// real reminders.
+///
+/// Shown off the calling thread, like every other toast: called on the main
+/// (window) thread, from the tray menu or a second launch, Windows refuses it
+/// with 0x8000FFFF.
 pub fn show_check(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || show_check_now(&app));
+}
+
+fn show_check_now(app: &AppHandle) {
     let handle = app.clone();
     let buttons = [
         Button {

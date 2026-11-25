@@ -32,7 +32,7 @@ log = "0.4.35"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Registry", "Win32_System_StationsAndDesktops", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Com", "Win32_System_Registry", "Win32_System_StationsAndDesktops", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # Plan §10: keep the build cache small on a disk with little free space.
 [profile.dev]

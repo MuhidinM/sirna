@@ -7,7 +7,7 @@ import { ulid } from "./kernel/ulid";
 import { healPlans } from "./features/plan/dayplan";
 import { systemClock } from "./kernel/clock";
 import { logicalDate } from "./kernel/dates";
-import { applyTheme, LOOK_SQL, themeFromSetting } from "./theme/theme";
+import { applyTheme, LOOK_SQL, THEME_EVENT, themeFromSetting } from "./theme/theme";
 import { SETUP_DONE_KEY } from "./features/plan/setup";
 import { useCalendarSync } from "./shell/Calendar";
 import { Kits } from "./shell/Kits";
@@ -98,6 +98,16 @@ export function App() {
   const [day, setDay] = useState(() => logicalDate(systemClock.now()));
   useCalendarSync();
   usePlanHealing(screen !== "loading" && screen !== "setup");
+
+  // The native title bar follows the theme (Rust paints it on open too).
+  useEffect(() => {
+    const paint = () =>
+      void invoke("title_bar", { theme: document.documentElement.dataset.theme ?? "night" }).catch(
+        () => undefined,
+      );
+    window.addEventListener(THEME_EVENT, paint);
+    return () => window.removeEventListener(THEME_EVENT, paint);
+  }, []);
 
   // The cached look is applied before the first paint; the settings confirm it.
   useEffect(() => {
