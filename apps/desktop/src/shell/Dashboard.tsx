@@ -372,9 +372,9 @@ export function Dashboard() {
           id="insights"
           icon={<IconBolt size={18} />}
           title="Insights"
-          sub="Last 4 weeks"
+          sub="Last 4 weeks · jobs: last full month"
         />
-        <InsightList today={today} />
+        <InsightList today={today} effort />
       </section>
     ),
     areas: (
