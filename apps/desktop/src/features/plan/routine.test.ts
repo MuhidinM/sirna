@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ANSWERS,
   defaultRoutine,
+  jobFromBlocks,
+  jobProblems,
   parseTimes,
   toHhmm,
   toMinutes,
@@ -146,5 +148,48 @@ describe("email checks outside work hours", () => {
       const overlaps = block.startMin < 18 * 60 + 40 && 18 * 60 + 30 < end;
       expect(overlaps, `${toHhmm(block.startMin)} focus overlaps the 18:30 check`).toBe(false);
     }
+  });
+});
+
+describe("jobs made in My week", () => {
+  it("read back their days and hours from fixed blocks", () => {
+    const rows = [3, 1, 5].map((weekday) => ({ weekday, start_min: 540, duration_min: 300 }));
+    expect(jobFromBlocks("job-c", "Shop", rows)).toEqual({
+      areaId: "job-c",
+      name: "Shop",
+      days: [1, 3, 5],
+      start: "09:00",
+      end: "14:00",
+    });
+  });
+
+  it("have no days when they have no blocks yet", () => {
+    expect(jobFromBlocks("job-c", "Shop", []).days).toEqual([]);
+  });
+});
+
+describe("jobProblems", () => {
+  const job = {
+    areaId: "joba",
+    name: "Job A",
+    days: [1, 2] as Weekday[],
+    start: "08:00",
+    end: "12:00",
+  };
+
+  it("passes the default jobs", () => {
+    expect(jobProblems(DEFAULT_ANSWERS.jobs)).toBeNull();
+  });
+
+  it("needs a name, a different one for each job", () => {
+    expect(jobProblems([{ ...job, name: "  " }])).toBe("Every job needs a name.");
+    expect(jobProblems([job, { ...job, areaId: "job-c", name: "job a " }])).toMatch(
+      /Two jobs are called/,
+    );
+  });
+
+  it("needs a day for a job that is on, not for one ticked off", () => {
+    expect(jobProblems([{ ...job, days: [] }])).toBe("Job A: pick its days, or untick it.");
+    expect(jobProblems([{ ...job, days: [], enabled: false }])).toBeNull();
   });
 });
