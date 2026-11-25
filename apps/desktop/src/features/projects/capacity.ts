@@ -151,7 +151,68 @@ export interface WeekLoad {
   activeProjects: number;
 }
 
+/** Its last day: the forecast finish, else the deadline; null when it runs on. */
+export function projectEnd(project: PlannedProject): string | null {
+  return project.forecast_finish ?? project.deadline ?? null;
+}
+
+/**
+ * Whether it takes time in the week starting `monday` (runsIn), unless it is
+ * set to start after it ends: such a project gets no time.
+ */
+export function runsThisWeek(project: PlannedProject, monday: string): boolean {
+  if (!runsIn(project, monday)) return false;
+  const end = projectEnd(project);
+  return !(project.start_date && end && project.start_date > end);
+}
+
+/**
+ * Its minutes in the week starting `monday`, the one amount the planner and
+ * the week's load both use:
+ * - not running that week: 0;
+ * - it ends inside the week: all its weekly hours (they were sized to finish by then);
+ * - it starts inside the week after Monday: its share of the days from its
+ *   start to Sunday, up to the quarter hour, at least MIN_SLOT_MIN, never
+ *   more than its weekly hours;
+ * - else its weekly hours.
+ */
+export function weekMinutes(project: PlannedProject, monday: string): number {
+  const weekly = project.weekly_min ?? 0;
+  if (weekly <= 0 || !runsThisWeek(project, monday)) return 0;
+  const sunday = shiftDate(monday, 6);
+  const end = projectEnd(project);
+  if (end && end <= sunday) return weekly;
+  const start = project.start_date;
+  if (start && start > monday && start <= sunday) {
+    const days = daysBetween(start, sunday) + 1;
+    const share = Math.ceil((weekly * days) / 7 / QUARTER) * QUARTER;
+    return Math.min(weekly, Math.max(MIN_SLOT_MIN, share));
+  }
+  return weekly;
+}
+
+const QUARTER = 15;
+
+/** The week's load as the Projects header and the week card show it (weekMinutes). */
 export function weekLoad(week: WeekModel, projects: PlannedProject[], monday: string): WeekLoad {
+  const running = projects.filter((project) => runsThisWeek(project, monday));
+  const committed =
+    week.areaCommitted + running.reduce((sum, project) => sum + weekMinutes(project, monday), 0);
+  return {
+    monday,
+    committed,
+    capacity: week.capacity,
+    ratio: ratio(committed, week.capacity),
+    activeProjects: running.length,
+  };
+}
+
+/**
+ * The load the slot finder and the date check size weekly hours by: every
+ * running project counts its whole weekly hours (kept as it was, so saved
+ * plans come out the same).
+ */
+function capacityLoad(week: WeekModel, projects: PlannedProject[], monday: string): WeekLoad {
   const running = projects.filter((project) => runsIn(project, monday));
   const committed =
     week.areaCommitted + running.reduce((sum, project) => sum + (project.weekly_min ?? 0), 0);
@@ -202,7 +263,7 @@ export function findSlot(
   let start: string | null = null;
   const weeks: number[] = [];
   for (let i = 0; i < HORIZON_WEEKS && remaining > 0; i++, monday = shiftDate(monday, 7)) {
-    const load = weekLoad(week, projects, monday);
+    const load = capacityLoad(week, projects, monday);
     const room = Math.floor(week.capacity * LOAD_LIMIT) - load.committed;
     const blocked = load.activeProjects >= MAX_ACTIVE;
     let give = blocked ? 0 : Math.min(remaining, room, weeklyMin ?? room);
@@ -239,12 +300,12 @@ export interface NoRoom {
 export function noRoom(today: string, week: WeekModel, projects: PlannedProject[]): NoRoom {
   let monday = firstMonday(today);
   const first = monday;
-  const running = weekLoad(week, projects, monday).activeProjects;
+  const running = capacityLoad(week, projects, monday).activeProjects;
   const names = projects
     .filter((project) => runsIn(project, first) && project.title)
     .map((project) => project.title as string);
   for (let i = 0; i < HORIZON_WEEKS; i++, monday = shiftDate(monday, 7))
-    if (weekLoad(week, projects, monday).activeProjects < MAX_ACTIVE)
+    if (capacityLoad(week, projects, monday).activeProjects < MAX_ACTIVE)
       return { kind: "load", running, names };
   return { kind: "limit", running, names };
 }
@@ -301,7 +362,7 @@ export function checkWithDate(
   projects: PlannedProject[],
 ): DateCheck {
   const days = daysBetween(today, deadline) + 1;
-  const now = weekLoad(week, projects, weekStart(today));
+  const now = capacityLoad(week, projects, weekStart(today));
   const limitBroken = now.activeProjects >= MAX_ACTIVE;
   const suggestion = findSlot(estimateMin, today, week, projects);
   if (days <= 0) {
@@ -323,7 +384,7 @@ export function checkWithDate(
   let worst = now;
   let mostActive = now.activeProjects;
   for (let monday = now.monday; monday <= deadline; monday = shiftDate(monday, 7)) {
-    const load = weekLoad(week, projects, monday);
+    const load = capacityLoad(week, projects, monday);
     if (load.committed > worst.committed) worst = load;
     mostActive = Math.max(mostActive, load.activeProjects);
   }
