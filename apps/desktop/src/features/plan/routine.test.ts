@@ -4,9 +4,12 @@ import {
   DEFAULT_ANSWERS,
   defaultRoutine,
   type JobAnswer,
+  blockHoursDiffer,
   jobFromBlocks,
   jobParts,
   jobProblems,
+  jobsFromMyWeek,
+  nextPart,
   type SavedJob,
   parseTimes,
   toHhmm,
@@ -185,6 +188,41 @@ describe("jobs made in My week", () => {
   it("have no days when they have no blocks yet", () => {
     expect(jobFromBlocks("job-c", "Shop", []).days).toEqual([]);
   });
+
+  it("say when the days have different hours, or a day has more than 3 blocks", () => {
+    const monday = { weekday: 1, start_min: 480, duration_min: 240 };
+    expect(blockHoursDiffer([monday, { ...monday, weekday: 4 }])).toBe(false);
+    expect(blockHoursDiffer([])).toBe(false);
+    // Mon 08:00–12:00, Thu 14:00–18:00.
+    expect(blockHoursDiffer([monday, { weekday: 4, start_min: 840, duration_min: 240 }])).toBe(
+      true,
+    );
+    const four = [480, 600, 720, 840].map((start_min) => ({
+      weekday: 1,
+      start_min,
+      duration_min: 60,
+    }));
+    expect(blockHoursDiffer(four)).toBe(true);
+  });
+
+  it("join setup only when they have set hours", () => {
+    const areas = [
+      { id: "shop", name: "Shop", kind: "work", active: 1 },
+      { id: "freelance", name: "Freelance", kind: "work", active: 1 },
+      { id: "joba", name: "Job A", kind: "work", active: 1 },
+      { id: "old", name: "Old job", kind: "work", active: 0 },
+      { id: "coding", name: "Coding", kind: "growth", active: 1 },
+    ];
+    const rows = ["shop", "joba", "old", "coding"].map((area_id) => ({
+      area_id,
+      weekday: 2,
+      start_min: 540,
+      duration_min: 120,
+    }));
+    const jobs = jobsFromMyWeek(areas, rows, ["joba"]);
+    expect(jobs.map((job) => job.areaId)).toEqual(["shop"]);
+    expect(jobs[0]).toMatchObject({ days: [2], hoursDiffer: false });
+  });
 });
 
 describe("jobProblems", () => {
@@ -258,6 +296,33 @@ describe("jobProblems", () => {
     );
     expect(jobProblems([job, jobB], "")).toBeNull();
   });
+
+  it("keeps lunch inside the day", () => {
+    expect(jobProblems([job, jobB], "23:00")).toBeNull();
+    expect(jobProblems([job, jobB], "23:30")).toBe("Lunch must end by midnight.");
+  });
+});
+
+describe("nextPart", () => {
+  it("starts an hour after the last part and runs 2 hours", () => {
+    expect(nextPart([{ start: "08:00", end: "12:00" }])).toEqual({ start: "13:00", end: "15:00" });
+    expect(nextPart([{ start: "08:00", end: "20:30" }])).toEqual({ start: "21:30", end: "23:30" });
+  });
+
+  it("starts at 13:00 when the last end is not a time yet", () => {
+    expect(nextPart([{ start: "08:00", end: "" }])).toEqual({ start: "13:00", end: "15:00" });
+  });
+
+  it("adds none when it would not fit or there are 3 parts", () => {
+    expect(nextPart([{ start: "18:00", end: "23:00" }])).toBeNull();
+    expect(
+      nextPart([
+        { start: "06:00", end: "07:00" },
+        { start: "08:00", end: "09:00" },
+        { start: "10:00", end: "11:00" },
+      ]),
+    ).toBeNull();
+  });
 });
 
 describe("a job day in parts (split shift)", () => {
@@ -325,6 +390,23 @@ describe("a job day in parts (split shift)", () => {
     const day = monday({ emailChecks: ["10:00", "15:00"] });
     expect(day).toContain("10:00 10 routine Check email");
     expect(day).toContain("10:15 90 area Focus block");
+  });
+
+  it("keeps a check that touches the night review out of focus blocks", () => {
+    // The day's window ends at the 21:00 review with no buffer, so a check at
+    // 20:50 must still split the gap.
+    const blocks = defaultRoutine({
+      ...DEFAULT_ANSWERS,
+      wake: "18:00",
+      jobs: [{ ...split, days: [1], parts: [{ start: "06:00", end: "07:00" }] }],
+      activeAreas: ["joba", "admin"],
+      emailChecks: ["20:50"],
+    }).filter((block) => block.weekday === 1);
+    const check = 20 * 60 + 50;
+    const focus = blocks.filter((block) => block.kind === "area");
+    expect(focus.length).toBeGreaterThan(0);
+    for (const block of focus)
+      expect(block.startMin + block.durationMin, toHhmm(block.startMin)).toBeLessThanOrEqual(check);
   });
 
   it("still reads an answer saved before parts as one part", () => {

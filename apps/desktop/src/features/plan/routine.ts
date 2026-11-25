@@ -147,6 +147,61 @@ export function jobFromBlocks(areaId: string, name: string, rows: FixedRow[]): J
   };
 }
 
+/**
+ * True when `jobFromBlocks` can't keep these blocks as they are: the days have
+ * different hours, or a day has more than 3 blocks. Saving setup then uses the
+ * first day's hours for every day.
+ */
+export function blockHoursDiffer(rows: FixedRow[]): boolean {
+  const byDay = new Map<number, string[]>();
+  for (const row of [...rows].sort((a, b) => a.start_min - b.start_min)) {
+    byDay.set(row.weekday, [
+      ...(byDay.get(row.weekday) ?? []),
+      `${row.start_min}+${row.duration_min}`,
+    ]);
+  }
+  const days = [...byDay.values()].map((hours) => hours.join(","));
+  return (
+    [...byDay.values()].some((hours) => hours.length > MAX_JOB_PARTS) ||
+    days.some((hours) => hours !== days[0])
+  );
+}
+
+/**
+ * Work areas made in My week that setup does not know yet, as jobs. Only
+ * areas with fixed blocks join: one with no set hours has nothing to rebuild,
+ * so setup leaves it alone.
+ */
+export function jobsFromMyWeek(
+  areas: { id: string; name: string; kind: string; active: number }[],
+  rows: (FixedRow & { area_id: string })[],
+  knownIds: Iterable<string>,
+): (JobAnswer & { hoursDiffer: boolean })[] {
+  const known = new Set(knownIds);
+  return areas
+    .filter((area) => area.kind === "work" && area.active === 1 && !known.has(area.id))
+    .map((area) => ({ area, blocks: rows.filter((row) => row.area_id === area.id) }))
+    .filter(({ blocks }) => blocks.length > 0)
+    .map(({ area, blocks }) => ({
+      ...jobFromBlocks(area.id, area.name, blocks),
+      hoursDiffer: blockHoursDiffer(blocks),
+    }));
+}
+
+/**
+ * The part "+ Part" adds: it starts an hour after the last part ends (after
+ * lunch) and runs 2 hours, up to 23:59. Null when there is no room: 3 parts
+ * already, or the last part ends after 21:00.
+ */
+export function nextPart(parts: TimeRange[]): TimeRange | null {
+  if (parts.length >= MAX_JOB_PARTS) return null;
+  // An unfinished time: start from noon.
+  const lastEnd = minutesOf(parts.at(-1)?.end) ?? 12 * 60;
+  const from = lastEnd + 60;
+  if (from > 22 * 60) return null;
+  return { start: toHhmm(from), end: toHhmm(Math.min(from + 120, 23 * 60 + 59)) };
+}
+
 /** Minutes of a time, or null when it is not one ("" included). */
 function minutesOf(hhmm: string | undefined): number | null {
   try {
@@ -210,6 +265,7 @@ export function jobProblems(
   if (lunch) {
     const from = minutesOf(lunch);
     if (from === null) return "Lunch: use a time like 12:00, or leave it empty.";
+    if (from + LUNCH_MIN > 24 * 60) return "Lunch must end by midnight.";
     const inside = ranges.find((range) => from < range.to && range.from < from + LUNCH_MIN);
     if (inside)
       return `Lunch overlaps ${inside.name}. Leave lunch out of job hours: end a part before it.`;
@@ -328,18 +384,22 @@ export function defaultRoutine(answers: SetupAnswers): BlockDraft[] {
       const limit = Math.min(review, stop);
       const maxBlocks = isWorkday ? 2 : 3;
       let placed = 0;
-      // A short routine (an email check) inside or touching a longer block
-      // doesn't split gaps (a check at 10:00 after a part ending at 10:00 is
-      // covered by the 15-minute buffer); one at a free time does, so no focus
-      // block lands on it.
-      const inside = (block: BlockDraft) =>
-        today.some(
-          (other) =>
-            other !== block &&
-            other.durationMin > block.durationMin &&
-            other.startMin <= block.startMin + block.durationMin &&
-            block.startMin <= other.startMin + other.durationMin,
-        );
+      // A short routine (an email check) inside a longer block doesn't split
+      // gaps; one at a free time does, so no focus block lands on it. Touching
+      // a longer block counts as inside only where that block's edge gets the
+      // 15-minute buffer (a check at 10:00 after a part ending at 10:00); at
+      // the window's edges there is no buffer, so the check splits the gap.
+      const inside = (block: BlockDraft) => {
+        const end = block.startMin + block.durationMin;
+        return today.some((other) => {
+          const otherEnd = other.startMin + other.durationMin;
+          if (other === block || other.durationMin <= block.durationMin) return false;
+          if (other.startMin <= block.startMin && end <= otherEnd) return true;
+          if (otherEnd === block.startMin) return otherEnd > from;
+          if (end === other.startMin) return other.startMin < limit;
+          return false;
+        });
+      };
       const anchors = today.filter((block) => block.durationMin > 15 || !inside(block));
       for (const [start, end] of gaps(anchors, from, limit)) {
         let cursor = start === from ? start : start + 15;
