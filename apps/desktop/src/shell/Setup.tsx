@@ -1,7 +1,7 @@
 import "../theme/pages/plan-routine.css";
 
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { type ClockStyle } from "../capture/when";
 import { systemClock } from "../kernel/clock";
@@ -10,12 +10,19 @@ import { query, transact } from "../kernel/db";
 import { ulid } from "../kernel/ulid";
 import {
   DEFAULT_ANSWERS,
+  type FixedRow,
   type JobAnswer,
+  jobParts,
+  jobProblems,
+  jobsFromMyWeek,
+  nextPart,
   parseTimes,
+  type SavedJob,
+  type TimeRange,
   type Weekday,
 } from "../features/plan/routine";
-import { setupOps, type SetupChoices } from "../features/plan/setup";
-import { IconArrowLeft, IconArrowRight, IconCheck } from "./icons";
+import { newJob, setupOps, type SetupChoices } from "../features/plan/setup";
+import { IconArrowLeft, IconArrowRight, IconCheck, IconPlus } from "./icons";
 import { Button } from "./ui";
 
 const DAYS: [Weekday, string][] = [
@@ -38,6 +45,12 @@ const AREAS: { id: string; name: string; hours: number; note?: string }[] = [
 ];
 
 const STEPS = ["Your day", "Your jobs", "Your week", "Two small things"];
+
+/**
+ * A job row on the form. A removed saved job stays here, hidden, so it switches
+ * off. `hoursDiffer`: a My-week job whose days have different hours.
+ */
+type JobRow = JobAnswer & { enabled: boolean; removed?: boolean; hoursDiffer?: boolean };
 
 function DayPicker({
   value,
@@ -73,33 +86,66 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [wake, setWake] = useState(DEFAULT_ANSWERS.wake);
   const [hardStop, setHardStop] = useState(DEFAULT_ANSWERS.hardStop);
   const [review, setReview] = useState(DEFAULT_ANSWERS.review);
-  const [jobs, setJobs] = useState<(JobAnswer & { enabled: boolean })[]>(
+  const [jobs, setJobs] = useState<JobRow[]>(
     DEFAULT_ANSWERS.jobs.map((job) => ({ ...job, enabled: true })),
   );
+  // Every area id ever used (deleted ones too), and the ones saved now.
+  const [takenIds, setTakenIds] = useState<string[]>([]);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
   const [areas, setAreas] = useState(() =>
     Object.fromEntries(AREAS.map((area) => [area.id, { on: true, hours: area.hours }])),
   );
   const [gymDays, setGymDays] = useState<Weekday[]>(DEFAULT_ANSWERS.gymDays);
   const [gymTime, setGymTime] = useState(DEFAULT_ANSWERS.gymTime);
   const [emailText, setEmailText] = useState(DEFAULT_ANSWERS.emailChecks.join(", "));
+  const [lunch, setLunch] = useState("");
   const [restDay, setRestDay] = useState<Weekday>(DEFAULT_ANSWERS.restDay);
   const [clockStyle, setClockStyle] = useState<ClockStyle>("western");
   const [startWithWindows, setStartWithWindows] = useState(true);
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(0);
+  // After a remove, the button that had focus is gone: the first of these that exists gets it.
+  const focusNext = useRef<string[]>(undefined);
+
+  useEffect(() => {
+    const selectors = focusNext.current;
+    if (!selectors) return;
+    focusNext.current = undefined;
+    for (const selector of selectors) {
+      const target = document.querySelector<HTMLElement>(selector);
+      if (target) {
+        target.focus();
+        break;
+      }
+    }
+  }, [jobs]);
 
   // Running setup again starts from what you chose last time.
   useEffect(() => {
+    // StrictMode runs this twice in dev; only the last run may set state.
+    let cancelled = false;
     void Promise.all([
       query<{ key: string; value_json: string }>(
         "SELECT key, value_json FROM core_settings WHERE key IN ('day.wake', 'day.hard_stop', 'day.review', 'capture.clock_style', 'setup.answers')",
       ),
-      query<{ id: string; name: string; weekly_target_min: number; active: number }>(
-        "SELECT id, name, weekly_target_min, active FROM area_items WHERE deleted_at IS NULL",
+      query<{
+        id: string;
+        name: string;
+        kind: string;
+        weekly_target_min: number;
+        active: number;
+        deleted_at: number | null;
+      }>("SELECT id, name, kind, weekly_target_min, active, deleted_at FROM area_items"),
+      query<FixedRow & { area_id: string }>(
+        "SELECT area_id, weekday, start_min, duration_min FROM routine_blocks WHERE deleted_at IS NULL AND kind = 'fixed' AND area_id IS NOT NULL",
       ),
       invoke<boolean>("autostart_status").catch(() => true),
-    ]).then(([settings, savedAreas, autostart]) => {
+    ]).then(([settings, areaRows, fixedRows, autostart]) => {
+      if (cancelled) return;
+      const savedAreas = areaRows.filter((area) => area.deleted_at === null);
+      setTakenIds(areaRows.map((area) => area.id));
+      setSavedIds(savedAreas.map((area) => area.id));
       const value = (key: string): unknown => {
         const row = settings.find((setting) => setting.key === key);
         try {
@@ -110,8 +156,20 @@ export function Setup({ onDone }: { onDone: () => void }) {
       };
       const text = (key: string) =>
         typeof value(key) === "string" ? (value(key) as string) : undefined;
-      const answers = value("setup.answers") as Partial<SetupChoices> | undefined;
-      if (!answers) return; // first run: keep the defaults
+      const answers = value("setup.answers") as
+        (Partial<Omit<SetupChoices, "jobs">> & { jobs?: SavedJob[] }) | undefined;
+      // Jobs added in My week with set hours join the list, so setup rebuilds their blocks too.
+      const defaultJobs: JobRow[] = DEFAULT_ANSWERS.jobs.map((job) => ({ ...job, enabled: true }));
+      const weekJobs: JobRow[] = jobsFromMyWeek(
+        savedAreas,
+        fixedRows,
+        (answers?.jobs ?? DEFAULT_ANSWERS.jobs).map((job) => job.areaId),
+      ).map((job) => ({ ...job, enabled: true }));
+      if (!answers) {
+        // First run: keep the defaults.
+        setJobs([...defaultJobs, ...weekJobs]);
+        return;
+      }
       setWake(text("day.wake") ?? DEFAULT_ANSWERS.wake);
       setHardStop(text("day.hard_stop") ?? DEFAULT_ANSWERS.hardStop);
       setReview(text("day.review") ?? DEFAULT_ANSWERS.review);
@@ -122,18 +180,23 @@ export function Setup({ onDone }: { onDone: () => void }) {
         );
         // Names as they are now (My week can rename a job), not as first answered.
         const nameOf = new Map(savedAreas.map((area) => [area.id, area.name]));
-        setJobs(
-          answers.jobs.map((job) => ({
-            ...job,
-            name: nameOf.get(job.areaId) ?? job.name,
-            enabled: activeIds.has(job.areaId),
+        setJobs([
+          // Saves from before job parts hold one start and end: that is one part.
+          ...answers.jobs.map((saved) => ({
+            areaId: saved.areaId,
+            name: nameOf.get(saved.areaId) ?? saved.name,
+            days: saved.days,
+            parts: jobParts(saved),
+            enabled: activeIds.has(saved.areaId),
           })),
-        );
-      }
+          ...weekJobs,
+        ]);
+      } else setJobs([...defaultJobs, ...weekJobs]);
       if (answers.gymDays) setGymDays(answers.gymDays);
       if (answers.gymTime) setGymTime(answers.gymTime);
       if (answers.emailChecks) setEmailText(answers.emailChecks.join(", "));
       if (answers.restDay) setRestDay(answers.restDay);
+      if (answers.lunch) setLunch(answers.lunch);
       setAreas(
         Object.fromEntries(
           AREAS.map((area) => {
@@ -149,12 +212,82 @@ export function Setup({ onDone }: { onDone: () => void }) {
       );
       setStartWithWindows(autostart);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const updateJob = (index: number, change: Partial<JobAnswer & { enabled: boolean }>) =>
+  const updateJob = (index: number, change: Partial<JobRow>) =>
     setJobs((current) => current.map((job, i) => (i === index ? { ...job, ...change } : job)));
 
+  const addJob = () =>
+    setJobs((current) => [
+      ...current,
+      {
+        ...newJob(
+          [...takenIds, ...current.map((job) => job.areaId)],
+          current.filter((job) => !job.removed).map((job) => job.name),
+        ),
+        enabled: true,
+      },
+    ]);
+
+  // A saved job only switches off: its history, pay and tasks stay.
+  const removeJob = (index: number) => {
+    // Focus moves to the next job's name, else the one before, else "Add a job".
+    const after = jobs.slice(index + 1).find((job) => !job.removed);
+    const before = jobs
+      .slice(0, index)
+      .reverse()
+      .find((job) => !job.removed);
+    focusNext.current = [
+      ...[after, before].flatMap((job) => (job ? [`[data-job-name="${job.areaId}"]`] : [])),
+      "[data-add-job]",
+    ];
+    setJobs((current) =>
+      savedIds.includes(current[index]?.areaId ?? "")
+        ? current.map((job, i) => (i === index ? { ...job, enabled: false, removed: true } : job))
+        : current.filter((_, i) => i !== index),
+    );
+  };
+
+  const updatePart = (index: number, part: number, change: Partial<TimeRange>) =>
+    setJobs((current) =>
+      current.map((job, i) =>
+        i === index
+          ? { ...job, parts: job.parts.map((p, n) => (n === part ? { ...p, ...change } : p)) }
+          : job,
+      ),
+    );
+
+  const addPart = (index: number) =>
+    setJobs((current) =>
+      current.map((job, i) => {
+        const part = i === index ? nextPart(job.parts) : null;
+        return part ? { ...job, parts: [...job.parts, part] } : job;
+      }),
+    );
+
+  const removePart = (index: number, part: number) => {
+    const id = jobs[index]?.areaId ?? "";
+    // Focus moves to "+ Part", or to the job's name when no part fits.
+    focusNext.current = [`[data-part-add="${id}"]`, `[data-job-name="${id}"]`];
+    setJobs((current) =>
+      current.map((job, i) =>
+        i === index ? { ...job, parts: job.parts.filter((_, n) => n !== part) } : job,
+      ),
+    );
+  };
+
+  const shownJobs = jobs.filter((job) => !job.removed);
+
   async function save() {
+    const problem = jobProblems(shownJobs, lunch);
+    if (problem) {
+      setError(problem);
+      setStep(1);
+      return;
+    }
     const emailChecks = parseTimes(emailText);
     if (!emailChecks) {
       setError('Email check times: use times like "10:00, 15:00", or leave it empty for none.');
@@ -165,7 +298,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     setError(undefined);
     try {
       const activeAreas = [
-        ...jobs.filter((job) => job.enabled).map((job) => job.areaId),
+        ...shownJobs.filter((job) => job.enabled).map((job) => job.areaId),
         ...Object.entries(areas)
           .filter(([, area]) => area.on)
           .map(([id]) => id),
@@ -174,7 +307,14 @@ export function Setup({ onDone }: { onDone: () => void }) {
         wake,
         hardStop,
         review,
-        jobs: jobs.map(({ enabled: _enabled, ...job }) => job),
+        // Parts only: the old single start and end are not written again.
+        jobs: shownJobs.map(({ areaId, name, days, parts }) => ({
+          areaId,
+          name: name.trim(),
+          days,
+          parts,
+        })),
+        lunch,
         activeAreas,
         restDay,
         gymDays,
@@ -188,11 +328,13 @@ export function Setup({ onDone }: { onDone: () => void }) {
       const existing = await query<{ id: string }>(
         "SELECT id FROM routine_blocks WHERE deleted_at IS NULL",
       );
-      // Only the areas these questions ask about; ones added in My week stay as they are.
+      // Only the areas these questions ask about (removed jobs too, so they switch off);
+      // other areas added in My week stay as they are.
       const managed = new Set([...jobs.map((job) => job.areaId), ...AREAS.map((area) => area.id)]);
-      const allAreas = (
-        await query<{ id: string }>("SELECT id FROM area_items WHERE deleted_at IS NULL")
-      ).filter((area) => managed.has(area.id));
+      const areaRows = await query<{ id: string; deleted_at: number | null }>(
+        "SELECT id, deleted_at FROM area_items",
+      );
+      const allAreas = areaRows.filter((area) => area.deleted_at === null && managed.has(area.id));
       // Today's generated blocks follow the old routine; drop them so Today replans.
       const today = logicalDate(systemClock.now());
       const generated = await query<{ id: string }>(
@@ -207,6 +349,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
             existing.map((row) => row.id),
             allAreas.map((row) => row.id),
             () => ulid(),
+            areaRows.map((row) => row.id),
           ),
           ...generated.map((row) => ({
             op: "delete" as const,
@@ -226,9 +369,16 @@ export function Setup({ onDone }: { onDone: () => void }) {
 
   const last = STEPS.length - 1;
 
+  // Enter in a field takes the primary button: Next, or save on the last step.
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (step < last) setStep(step + 1);
+    else if (!saving) void save();
+  }
+
   return (
     <main className="setup su-page">
-      <section className="canvas su-canvas" aria-labelledby="su-title">
+      <form className="canvas su-canvas" aria-labelledby="su-title" onSubmit={submit}>
         <header className="su-head">
           <h1 id="su-title" className="page-title">
             Set up <span className="soft">your week</span>
@@ -283,51 +433,115 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <section aria-labelledby="jobs" className="su-section">
             <h2 id="jobs">Your jobs</h2>
             <p className="meta">
-              Untick a job you don&apos;t have. Sirna plans around these hours.
+              Untick a job you don&apos;t have this week, or remove it. Sirna plans around these
+              hours.
             </p>
             <div className="su-jobs">
-              {jobs.map((job, index) => (
-                <div
-                  className={job.enabled ? "card job su-job" : "card job su-job off"}
-                  key={job.areaId}
-                >
-                  <label className="su-job-name">
-                    <input
-                      type="checkbox"
-                      checked={job.enabled}
-                      onChange={(e) => updateJob(index, { enabled: e.target.checked })}
+              {jobs.map((job, index) =>
+                job.removed ? null : (
+                  <div
+                    className={job.enabled ? "card job su-job" : "card job su-job off"}
+                    key={job.areaId}
+                  >
+                    <div className="su-job-head">
+                      <label className="su-job-name">
+                        <input
+                          type="checkbox"
+                          checked={job.enabled}
+                          onChange={(e) => updateJob(index, { enabled: e.target.checked })}
+                        />
+                        <input
+                          aria-label="Job name"
+                          data-job-name={job.areaId}
+                          value={job.name}
+                          onChange={(e) => updateJob(index, { name: e.target.value })}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="link-btn su-remove"
+                        aria-label={`Remove ${job.name || "this job"}`}
+                        onClick={() => removeJob(index)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <DayPicker
+                      value={job.days}
+                      onChange={(days) => updateJob(index, { days })}
+                      label={`${job.name} days`}
                     />
-                    <input
-                      aria-label="Job name"
-                      value={job.name}
-                      onChange={(e) => updateJob(index, { name: e.target.value })}
-                    />
-                  </label>
-                  <DayPicker
-                    value={job.days}
-                    onChange={(days) => updateJob(index, { days })}
-                    label={`${job.name} days`}
-                  />
-                  <div className="su-pair">
-                    <label className="su-field">
-                      <span>From</span>
-                      <input
-                        type="time"
-                        value={job.start}
-                        onChange={(e) => updateJob(index, { start: e.target.value })}
-                      />
-                    </label>
-                    <label className="su-field">
-                      <span>To</span>
-                      <input
-                        type="time"
-                        value={job.end}
-                        onChange={(e) => updateJob(index, { end: e.target.value })}
-                      />
-                    </label>
+                    {job.hoursDiffer && (
+                      <p className="meta su-job-note">
+                        Hours differ by day in My week. Saving uses these hours on every day.
+                      </p>
+                    )}
+                    {job.parts.map((part, n) => (
+                      <div className="su-pair su-part" key={n}>
+                        <label className="su-field">
+                          <span>From</span>
+                          <input
+                            type="time"
+                            value={part.start}
+                            onChange={(e) => updatePart(index, n, { start: e.target.value })}
+                          />
+                        </label>
+                        <label className="su-field">
+                          <span>To</span>
+                          <input
+                            type="time"
+                            value={part.end}
+                            onChange={(e) => updatePart(index, n, { end: e.target.value })}
+                          />
+                        </label>
+                        {n > 0 ? (
+                          <button
+                            type="button"
+                            className="icon-btn plain su-part-x"
+                            aria-label={`Remove part ${n + 1} of ${job.name}`}
+                            onClick={() => removePart(index, n)}
+                          >
+                            ×
+                          </button>
+                        ) : (
+                          <span aria-hidden="true" />
+                        )}
+                      </div>
+                    ))}
+                    {nextPart(job.parts) && (
+                      <button
+                        type="button"
+                        className="link-btn su-part-add"
+                        data-part-add={job.areaId}
+                        onClick={() => addPart(index)}
+                      >
+                        + Part
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))}
+                ),
+              )}
+            </div>
+            <p className="meta su-hint">
+              Leave lunch out: add a second part after it. Hours inside parts count as work.
+            </p>
+            <Button className="su-add" data-add-job onClick={addJob}>
+              <IconPlus size={16} /> Add a job
+            </Button>
+            <div className="card su-extra su-lunch">
+              <label className="su-field">
+                <span className="su-extra-title">Lunch time</span>
+                <input
+                  type="time"
+                  value={lunch}
+                  aria-describedby="su-lunch-note"
+                  onChange={(e) => setLunch(e.target.value)}
+                />
+              </label>
+              <span className="meta" id="su-lunch-note">
+                1 hour on workdays; leave empty for none. Without it, a focus block may be planned
+                in the gap between parts.
+              </span>
             </div>
           </section>
         )}
@@ -468,16 +682,16 @@ export function Setup({ onDone }: { onDone: () => void }) {
             Step {step + 1} of {STEPS.length}
           </span>
           {step < last ? (
-            <Button primary onClick={() => setStep(step + 1)}>
+            <Button primary type="submit">
               Next <IconArrowRight size={16} />
             </Button>
           ) : (
-            <Button primary disabled={saving} onClick={() => void save()}>
+            <Button primary type="submit" disabled={saving}>
               {saving ? "Saving…" : "Start my week"}
             </Button>
           )}
         </footer>
-      </section>
+      </form>
     </main>
   );
 }
