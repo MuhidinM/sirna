@@ -187,8 +187,8 @@ The smaller items of [docs/proposals/money-and-planning.md](proposals/money-and-
 
 Setup handles any number of jobs, and a job day can be split around lunch, so hours and birr per hour match the time you work ([ADR 0010](decisions/0010-job-parts-and-lunch.md)).
 
-| ID | Issue | Task | Reqs | Size | Status |
-| --- | --- | --- | --- | --- | --- |
-| T-078 | [#178](https://github.com/MuhidinM/sirna/issues/178) | Add and remove jobs in setup | R-PLAN-11 | M | done |
-| T-079 | [#179](https://github.com/MuhidinM/sirna/issues/179) | A job day in 2-3 parts (split shift), with an optional lunch | R-PLAN-12 | M | done |
-| T-080 | [#180](https://github.com/MuhidinM/sirna/issues/180) | Effort-vs-return insights | R-PRG-06, R-MON-15 | L | todo |
+| ID    | Issue                                                | Task                                                         | Reqs               | Size | Status |
+| ----- | ---------------------------------------------------- | ------------------------------------------------------------ | ------------------ | ---- | ------ |
+| T-078 | [#178](https://github.com/MuhidinM/sirna/issues/178) | Add and remove jobs in setup                                 | R-PLAN-11          | M    | done   |
+| T-079 | [#179](https://github.com/MuhidinM/sirna/issues/179) | A job day in 2-3 parts (split shift), with an optional lunch | R-PLAN-12          | M    | done   |
+| T-080 | [#180](https://github.com/MuhidinM/sirna/issues/180) | Effort-vs-return insights                                    | R-PRG-06, R-MON-15 | L    | todo   |
