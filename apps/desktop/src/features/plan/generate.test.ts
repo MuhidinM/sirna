@@ -8,6 +8,7 @@ import {
   type PlanInput,
   type TaskInput,
 } from "./generate";
+import { runChain } from "./carry";
 import { DEFAULT_ANSWERS, defaultRoutine, type Weekday } from "./routine";
 
 const AREAS: AreaInput[] = [
@@ -772,5 +773,54 @@ describe("the steps of a split task (r2-15)", () => {
       input({ template: [slot(9 * 60, 180)], tasks: steps, doneThisWeekMin: metWeek }),
     );
     expect(plan.top).toEqual(["test 1"]);
+  });
+});
+
+describe("a project that ends this week (paceUntil)", () => {
+  const GO: AreaInput = {
+    id: "project:go",
+    name: "learn Go",
+    weeklyTargetMin: 600,
+    capped: true,
+    protected: false,
+    priorityRank: 4.5,
+    active: true,
+    kind: "growth",
+    projectId: "go",
+    areaId: "coding",
+  };
+  const day = (date: string, go: AreaInput): PlanInput =>
+    input({
+      date,
+      // One long free slot: free time is not the limit here.
+      template: [{ startMin: 8 * 60, durationMin: 13 * 60, kind: "area", areaId: null, title: "" }],
+      areas: [...AREAS, go],
+    });
+  const goMin = (plan: ReturnType<typeof generateDay>) =>
+    areaBlocks(plan)
+      .filter((block) => block.projectId === "go")
+      .reduce((sum, block) => sum + block.durationMin, 0);
+
+  it("spreads its weekly hours over the days up to its end, not up to Sunday", () => {
+    // Wednesday, ending Friday: a third of 600 today, not a fifth.
+    const toSunday = goMin(generateDay(day("2026-11-11", GO)));
+    const toFriday = goMin(generateDay(day("2026-11-11", { ...GO, paceUntil: "2026-11-13" })));
+    expect(toSunday).toBe(120);
+    expect(toFriday).toBeGreaterThanOrEqual(200);
+  });
+
+  it("gets all 600 by Friday when there is free time", () => {
+    const go = { ...GO, paceUntil: "2026-11-13" };
+    const chain = runChain(["2026-11-11", "2026-11-12", "2026-11-13"].map((d) => day(d, go)));
+    const total = chain.days
+      .flatMap((d) => d.blocks)
+      .filter((block) => block.projectId === "go")
+      .reduce((sum, block) => sum + block.durationMin, 0);
+    expect(total).toBe(600);
+  });
+
+  it("paces to Sunday as before once its end day has passed (overdue)", () => {
+    const late = goMin(generateDay(day("2026-11-12", { ...GO, paceUntil: "2026-11-11" })));
+    expect(late).toBe(goMin(generateDay(day("2026-11-12", GO))));
   });
 });

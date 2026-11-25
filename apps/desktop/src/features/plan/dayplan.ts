@@ -5,7 +5,13 @@
 import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { logicalDate } from "../../kernel/dates";
 import { localToEpoch } from "../../capture/when";
-import { type PlannedProject, runsIn } from "../projects/capacity";
+import {
+  liveDeadline,
+  type PlannedProject,
+  projectEnd,
+  runsThisWeek,
+  weekMinutes,
+} from "../projects/capacity";
 import { AWAY_SQL, awayUntil } from "./away";
 import {
   carriedInput,
@@ -50,7 +56,7 @@ export const TEMPLATE_SQL = `
 
 /** Projects with weekly hours and an area: they get blocks of their own (plan §3.8, F50). */
 export const PROJECT_TIME_SQL = `
-  SELECT id, title, status, weekly_min, start_date, forecast_finish, area_id FROM project_items
+  SELECT id, title, status, weekly_min, start_date, forecast_finish, deadline, area_id FROM project_items
   WHERE deleted_at IS NULL AND area_id IS NOT NULL AND weekly_min > 0`;
 
 export const AREAS_SQL = `
@@ -297,7 +303,15 @@ export async function loadPlanInput(
     await query<PlannedProject & { id: string; title: string; area_id: string } & Row>(
       PROJECT_TIME_SQL,
     )
-  ).filter((project) => runsIn(project, weekStart(date)));
+  )
+    // A deadline that ended before this week doesn't stop an overdue project.
+    .map((project) => ({ ...project, deadline: liveDeadline(project, date).deadline ?? null }))
+    // Not before its start date: until then it is not running yet.
+    .filter(
+      (project) =>
+        runsThisWeek(project, weekStart(date)) &&
+        !(project.start_date && project.start_date > date),
+    );
   const removed = await query<{ task_id: string }>(REMOVED_TASK_BLOCKS_SQL, [date]);
   const removedBlocks = await query<{
     start_at: number;
@@ -369,7 +383,7 @@ export async function loadPlanInput(
             id: projectKey(project.id),
             name: project.title,
             kind: "growth",
-            weeklyTargetMin: project.weekly_min ?? 0,
+            weeklyTargetMin: weekMinutes(project, weekStart(date)),
             capped: true,
             protected: false,
             // Ahead of its own area on a tie: you started it for this week.
@@ -377,6 +391,7 @@ export async function loadPlanInput(
             active: true,
             projectId: project.id,
             areaId: area.id,
+            ...paceUntil(project, date),
           },
         ];
       }),
@@ -394,6 +409,15 @@ export async function loadPlanInput(
       return { startMin: start, durationMin: Math.max(0, end - start), title: event.summary };
     }),
   };
+}
+
+/**
+ * A project that ends later this week (before Sunday) is paced to its end
+ * day, not to Sunday; one already past its end paces to Sunday as before.
+ */
+function paceUntil(project: PlannedProject, date: string): { paceUntil?: string } {
+  const end = projectEnd(project);
+  return end && end >= date && end < shiftDate(weekStart(date), 6) ? { paceUntil: end } : {};
 }
 
 /** The writes for a generated day: block inserts and the default top 3. */

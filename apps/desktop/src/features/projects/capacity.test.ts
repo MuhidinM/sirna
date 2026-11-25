@@ -18,6 +18,7 @@ import {
   type Verdict,
   weeklyCapacity,
   weekLoad,
+  weekMinutes,
 } from "./capacity";
 import { weekStart } from "../plan/dayplan";
 
@@ -458,5 +459,64 @@ describe("user-test fixes", () => {
     expect(checkWithDate(360, "2026-12-05", TODAY, WEEK, three).reasons[2]).toBe(
       "3 active projects already (limit 2); this would be number 4.",
     );
+  });
+});
+
+describe("weekMinutes: one amount for the planner and the week's load", () => {
+  const MON = "2026-11-09";
+  const p = (change: Partial<PlannedProject>) => project({ weekly_min: 600, ...change });
+
+  it("a whole week gets its weekly hours, as before", () => {
+    expect(weekMinutes(p({ start_date: "2026-11-02", forecast_finish: "2026-11-29" }), MON)).toBe(
+      600,
+    );
+    expect(weekMinutes(p({ start_date: MON, forecast_finish: "2026-11-29" }), MON)).toBe(600);
+    expect(weekMinutes(p({}), MON)).toBe(600);
+  });
+
+  it("a start inside the week gets its share of the days to Sunday, up to the quarter hour", () => {
+    // Thursday to Sunday: 600 × 4/7 = 342.9 → 345.
+    expect(weekMinutes(p({ start_date: "2026-11-12", forecast_finish: "2026-11-29" }), MON)).toBe(
+      345,
+    );
+    // At least 30, never above the weekly hours.
+    expect(weekMinutes(p({ weekly_min: 60, start_date: "2026-11-15" }), MON)).toBe(30);
+    expect(weekMinutes(p({ weekly_min: 10, start_date: "2026-11-14" }), MON)).toBe(10);
+  });
+
+  it("an end inside the week keeps the whole weekly hours (they were sized for it)", () => {
+    expect(weekMinutes(p({ start_date: "2026-11-11", forecast_finish: "2026-11-13" }), MON)).toBe(
+      600,
+    );
+    expect(weekMinutes(p({ start_date: "2026-11-11", deadline: "2026-11-13" }), MON)).toBe(600);
+  });
+
+  it("a start after the end gets nothing and doesn't run", () => {
+    const odd = p({ start_date: "2026-11-12", forecast_finish: "2026-11-11" });
+    expect(weekMinutes(odd, MON)).toBe(0);
+    expect(weekLoad(WEEK, [odd], MON)).toMatchObject({ committed: 500, activeProjects: 0 });
+  });
+
+  it("not running that week: 0", () => {
+    expect(weekMinutes(p({ status: "next_up", start_date: "2026-11-16" }), MON)).toBe(0);
+    expect(weekMinutes(p({ forecast_finish: "2026-11-01" }), MON)).toBe(0);
+    expect(weekMinutes(p({ weekly_min: null }), MON)).toBe(0);
+  });
+
+  it("weekLoad counts it; a project with no weekly hours still runs", () => {
+    const load = weekLoad(
+      WEEK,
+      [p({ start_date: "2026-11-12" }), p({ id: "q", weekly_min: null })],
+      MON,
+    );
+    expect(load).toMatchObject({ committed: 500 + 345, activeProjects: 2 });
+  });
+
+  it("the slot finder and the date check still size by whole weekly hours", () => {
+    // Starts Thursday of the first full week: the finder still counts 600.
+    const later = p({ id: "t", weekly_min: 300, start_date: "2026-11-19" });
+    expect(findSlot(1000, TODAY, WEEK, [later])?.weeks[0]).toBe(350 - 300);
+    const check = checkWithDate(600, "2026-11-22", TODAY, WEEK, [later]);
+    expect(check.after).toBeCloseTo((800 + check.weeklyNeeded) / 1000);
   });
 });
