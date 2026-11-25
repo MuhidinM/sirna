@@ -200,6 +200,7 @@ const WINDOW_WORD = new RegExp(
   String.raw`\s(?:(this|in\s+the|${TOMORROW}|today)\s+)?(morning|afternoon|evening|tonight)(?=\s)`,
   "i",
 );
+const NOON_WORD = /\s(?:noon|midday)(?=\s)/i;
 const IS_TOMORROW = new RegExp(String.raw`^(?:${TOMORROW})$`, "i");
 const ENDS_WITH_WEEKDAY =
   /(?:^|\s)(?:sun|sunday|mon|monday|tue|tues|tuesday|wed|weds|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday)\s*$/i;
@@ -258,6 +259,8 @@ export interface ReadOptions {
   past?: boolean;
   /** The line starts with a task verb, so a bare "morning" at its end is when to do it. */
   taskLine?: boolean;
+  /** The line starts with a task verb that isn't money, so "call mom tonight 8" is 20:00. */
+  tonightHour?: boolean;
 }
 
 /** A day named anywhere in the text: today, tomorrow, a weekday, `in 3 days`, `20 dec`, `20/12`. */
@@ -268,6 +271,25 @@ export const MONTH_NAMES = Object.keys(MONTHS).join("|");
  */
 const DAY_HOUR =
   /^\s+(\d{1,2})(?=\s*$|\s+(?!(?:am|pm|h|hrs?|hours?|m|mins?|minutes?|days?|weeks?|times?|x)\b)[a-z])/i;
+/**
+ * After a day word, a number before one of these is a count, not the hour:
+ * "tomorrow 12 eggs" is twelve eggs, due tomorrow at no set time.
+ */
+const COUNT_WORD =
+  /^\s+\d{1,2}\s+(?:kg|g|l|litre|litres|liter|liters|pcs|piece|pieces|pack|packs|bottle|bottles|dozen|eggs|bread|milk|sugar|flour|apples|bananas|onions|tomatoes)(?=\s)/i;
+/**
+ * "tonight 8" / "this evening 8" with no "at": the number right after. Only
+ * the hour on a task-verb line (`tonightHour`), and never before a length,
+ * a count, a plural or a currency ("tonight 2 hours", "tonight 2 episodes").
+ */
+const TONIGHT_HOUR =
+  /(?<=\s(?:tonight|this\s+evening))\s+([1-9]|1[0-2])(?=\s)(?!\s+(?:hour|hours|hr|hrs|h|min|mins|minute|minutes|episode|episodes|x|times|birr|br|etb|usd|eur|gbp|k|\S*s)(?:\s|$))/i;
+
+/** Whether `text` has an hour right after "tonight" / "this evening" (see `TONIGHT_HOUR`). */
+export function hasTonightHour(text: string): boolean {
+  return TONIGHT_HOUR.test(` ${text} `);
+}
+
 const NAMES_A_DAY = new RegExp(
   String.raw`\b\d{4}-\d{2}-\d{2}\b|\b(?:today|tdy|${TOMORROW}|yesterday|yday|${Object.keys(WEEKDAY_WORDS).join("|")})\b|\bin\s+\d{1,3}\s+(?:days?|weeks?)\b|\b\d{1,2}\/\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:${MONTH_NAMES})\b|\b(?:${MONTH_NAMES})\s+\d{1,2}\b`,
   "i",
@@ -277,7 +299,7 @@ export function readWhen(
   text: string,
   nowMs: number,
   style: ClockStyle = "western",
-  { past = false, taskLine = false }: ReadOptions = {},
+  { past = false, taskLine = false, tonightHour = false }: ReadOptions = {},
 ): When {
   // Day words follow the logical day (it starts at 03:00), so "tomorrow" said
   // at 01:00 is the coming day, not the one after (plan §5.1 rule 4).
@@ -314,6 +336,8 @@ export function readWhen(
   let calendarEvening = false;
   /** The time was a bare "at 8" (no am/pm, no minutes), so "tonight" can make it the evening. */
   let bareHour = false;
+  /** That bare hour was written 12, so "tonight at 12" can be midnight. */
+  let twelve = false;
 
   // A range first, so its end isn't left behind in the title (time-first §2).
   take(RANGE, (m) => {
@@ -341,6 +365,7 @@ export function readWhen(
       minutes = hour * 60 + minute;
       // "tonight at 8:30" is 20:30; "08:30" is the 24-hour clock and stays.
       bareHour = !m[3] && !/^0\d/.test(m[1] ?? "");
+      twelve = bareHour && m[1] === "12";
       return true;
     });
   if (minutes === undefined) {
@@ -357,6 +382,7 @@ export function readWhen(
         if (hour === undefined || minute > 59) return false;
         minutes = hour * 60 + minute;
         bareHour = !ampm;
+        twelve = bareHour && hourText === "12";
         return true;
       },
     );
@@ -385,6 +411,18 @@ export function readWhen(
       if (hour === undefined) return false;
       minutes = hour * 60;
       bareHour = true;
+      twelve = m[1] === "12";
+      return true;
+    });
+  }
+  if (minutes === undefined && tonightHour && !past) {
+    // "call mom tonight 8": read as "tonight at 8" would be.
+    take(TONIGHT_HOUR, (m) => {
+      const hour = readHour(Number(m[1]), undefined, style);
+      if (hour === undefined) return false;
+      minutes = hour * 60;
+      bareHour = true;
+      twelve = m[1] === "12";
       return true;
     });
   }
@@ -417,6 +455,8 @@ export function readWhen(
     });
   }
 
+  /** "tonight at 12 noon": the noon comes out of the title once the time is read. */
+  let dropNoon = false;
   // A part of the day: `tomorrow morning`, `this evening`, `fri afternoon`,
   // `tonight`. A bare "morning" mid-line ("morning run") stays a word.
   take(WINDOW_WORD, (m) => {
@@ -440,6 +480,15 @@ export function readWhen(
       calendarEvening = true;
     } else if (word === "tonight" || lead === "this" || lead === "today") date = today;
     else if (lead && IS_TOMORROW.test(lead)) date = addDays(today, 1);
+    // "tonight at 12" is midnight, the end of today (00:00 the next calendar
+    // day, still today's task); "tonight at 12 noon" stays noon. Only when 12
+    // was read as noon: on the Ethiopian clock "at 12" is already 18:00.
+    if (evening && twelve && minutes !== undefined) {
+      if (NOON_WORD.test(rest)) {
+        minutes = 12 * 60 + (minutes % 60);
+        dropNoon = true;
+      } else if (minutes >= 12 * 60 && minutes < 13 * 60) minutes += 12 * 60;
+    }
     // "tonight at 8" is 20:00: a bare morning hour moves to the evening (#174).
     const night = word === "tonight" || word === "evening";
     if (night && bareHour && minutes !== undefined && minutes < 12 * 60) minutes += 12 * 60;
@@ -447,6 +496,7 @@ export function readWhen(
     if (minutes === undefined) window = word === "tonight" ? "evening" : (word as DayWindow);
     return true;
   });
+  if (dropNoon) rest = rest.replace(NOON_WORD, " ");
 
   if (!date)
     take(/\s(today|tdy)(?=\s)/i, (m) => {
@@ -564,7 +614,9 @@ export function readWhen(
 
   // "tomorrow 9", "fri 4", "tomorrow 9 call abel": a bare hour right after the day.
   if (date && dayAt !== undefined && minutes === undefined && !past) {
-    const hour = DAY_HOUR.exec(rest.slice(dayAt));
+    const after = rest.slice(dayAt);
+    // "tomorrow 12 eggs": a count stays in the title, with no time.
+    const hour = COUNT_WORD.test(after) ? null : DAY_HOUR.exec(after);
     // With words after the hour, only a day that opens the line: "tomorrow 9
     // call abel" is a time, "buy eggs tomorrow 12 pieces" is a count.
     const opens = rest.slice(0, dayAt).trim() === "";

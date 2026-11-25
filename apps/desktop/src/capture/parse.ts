@@ -5,7 +5,14 @@
  */
 import { logicalDate } from "../kernel/dates";
 import { formatAmount, formatNumber, parseAmount, type Santim } from "../kernel/money";
-import { type ClockStyle, type DayWindow, localToEpoch, MONTH_NAMES, readWhen } from "./when";
+import {
+  type ClockStyle,
+  type DayWindow,
+  hasTonightHour,
+  localToEpoch,
+  MONTH_NAMES,
+  readWhen,
+} from "./when";
 import { parseRule, type Rule } from "../features/money/regulars";
 import { onOrAfter } from "../features/tasks/repeat";
 import { transferAmounts } from "../features/money/accounts";
@@ -576,6 +583,12 @@ const TASK_VERBS = new Set([
   "install",
   "upload",
 ]);
+
+/** A task verb opens the line, and it isn't "pay": "pay abel tonight 8" stays money. */
+function startsWithTaskVerb(text: string): boolean {
+  const first = text.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return first !== "pay" && TASK_VERBS.has(first);
+}
 
 const SPENT_WORDS = /^(?:paid|spent|bought|spend)\s+/i;
 const PAY_WORD = /^pay\s+/i;
@@ -1374,7 +1387,8 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   }
 
   // "pay EEU 600 fri" is something to do; "paid rent 12000" happened.
-  if (!PAY_WORD.test(untagged)) {
+  // "call mom tonight 8" is a time, not 800 spent on a call.
+  if (!PAY_WORD.test(untagged) && !(startsWithTaskVerb(plain) && hasTonightHour(plain))) {
     const spent = SPENT_WORDS.test(untagged);
     const spentText = untagged.replace(SPENT_WORDS, "");
     // Spending happened, so its day words point back: "lunch 120 mon" is last Monday.
@@ -1547,9 +1561,13 @@ function readTask(
   const text =
     minutes > 0 && estimate ? ` ${raw}`.replace(estimate[0], " ").replace(/\s+/g, " ").trim() : raw;
   const taskLine = TASK_VERBS.has(text.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
+  const tonightHour = startsWithTaskVerb(text);
   // "fix bug fri for job b": the area comes off first, so "fri" ends the line.
   const early = readForArea(text, areas);
-  const when = readWhen(early.area ? early.rest : text, nowMs, clockStyle, { taskLine });
+  const when = readWhen(early.area ? early.rest : text, nowMs, clockStyle, {
+    taskLine,
+    tonightHour,
+  });
   // "build CLI tool by 20 dec" → "build CLI tool".
   let title = when.date ? when.rest.replace(CONNECTOR_TAIL, "") : when.rest;
   const named = early.area ? { rest: title, area: early.area } : readForArea(title, areas);
