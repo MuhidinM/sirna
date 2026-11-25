@@ -6,11 +6,13 @@
  * "Worked job hours" are the job's blocks that were not skipped or moved, the
  * same base as rate.ts. Pure.
  */
+import { type InsightFacts } from "../ai/touchpoints";
 import { hoursLabel } from "../projects/capacity";
 import { type Rates, rowCurrencySql } from "../money/currency";
 import { type JobRate, jobRates } from "../money/rate";
+import { type Op } from "../../kernel/db";
 import { formatAmount, type Santim } from "../../kernel/money";
-import { HOME_UTC_OFFSET_MIN } from "../../kernel/dates";
+import { HOME_UTC_OFFSET_MIN, logicalDate } from "../../kernel/dates";
 
 export type EffortKey = "jobRate" | "jobDrift" | "jobSkips" | "areaGap" | "useGap";
 
@@ -19,16 +21,18 @@ export interface EffortInsight {
   /** Unique within a list (one per job or area where there can be several). */
   id: string;
   text: string;
+  /** Set when the AI may reword it: the template text and the facts it may use. */
+  reword?: { template: string; facts: InsightFacts };
 }
 
 // --- SQL ------------------------------------------------------------------------
 
-/** Minutes of each job's blocks per month between ?1 and ?2; skipped or moved ones left out. */
+/** Minutes of each job's blocks per month between ?1 and ?2; skipped or moved ones and deleted jobs left out. */
 export const JOB_MONTH_MINUTES_SQL = `
   SELECT b.area_id, a.name, substr(b.logical_date, 1, 7) AS month,
          sum((b.end_at - b.start_at) / 60000) AS minutes
   FROM day_blocks b
-  JOIN area_items a ON a.id = b.area_id AND a.kind = 'work'
+  JOIN area_items a ON a.id = b.area_id AND a.kind = 'work' AND a.deleted_at IS NULL
   WHERE b.deleted_at IS NULL AND b.status NOT IN ('skipped', 'moved')
     AND b.logical_date >= ?1 AND b.logical_date <= ?2
   GROUP BY b.area_id, month`;
@@ -47,7 +51,7 @@ export const JOB_DAYS_SQL = `
   SELECT b.area_id, a.name, b.logical_date AS date, b.status,
          (b.end_at - b.start_at) / 60000 AS minutes
   FROM day_blocks b
-  JOIN area_items a ON a.id = b.area_id AND a.kind = 'work'
+  JOIN area_items a ON a.id = b.area_id AND a.kind = 'work' AND a.deleted_at IS NULL
   WHERE b.deleted_at IS NULL AND b.status != 'moved'
     AND b.logical_date >= ?1 AND b.logical_date <= ?2
   ORDER BY b.area_id, b.logical_date`;
@@ -55,7 +59,7 @@ export const JOB_DAYS_SQL = `
 /** Blocks of the days ?1..?2 that were kept (not skipped or moved), with whether they are a job's. */
 export const GAP_BLOCKS_SQL = `
   SELECT b.logical_date AS date, b.start_at, b.end_at, b.area_id,
-         CASE WHEN a.kind = 'work' THEN a.name END AS job
+         CASE WHEN a.kind = 'work' AND a.deleted_at IS NULL THEN a.name END AS job
   FROM day_blocks b
   LEFT JOIN area_items a ON a.id = b.area_id
   WHERE b.deleted_at IS NULL AND b.status NOT IN ('skipped', 'moved')
@@ -162,6 +166,41 @@ export function compareRates(month: JobRate[]): RateCompare | null {
 /** The Dashboard line: ratio only, no amounts. */
 export function compareText(compare: RateCompare): string {
   return `${compare.best.name} pays ${compare.ratio}× ${compare.other.name} per hour worked.`;
+}
+
+// --- The AI's wording of the Dashboard line ---------------------------------------
+
+/** The AI's wording of the compare line, kept with the template text it rewords. */
+export const INSIGHT_AI_KEY = "insight.ai";
+export const INSIGHT_AI_SQL = `SELECT value_json FROM core_settings WHERE key = '${INSIGHT_AI_KEY}'`;
+
+/** What the AI may see: the two names and the ratio, never an amount. */
+export function insightFacts(compare: RateCompare): InsightFacts {
+  return { best: compare.best.name, other: compare.other.name, ratio: compare.ratio };
+}
+
+/** The saved wording while it rewords this same template; otherwise (AI off, numbers moved) the template. */
+export function insightWording(template: string, valueJson: string | null | undefined): string {
+  try {
+    const saved = JSON.parse(valueJson ?? "null") as { source?: unknown; text?: unknown } | null;
+    if (saved?.source === template && typeof saved.text === "string" && saved.text.trim())
+      return saved.text;
+  } catch {
+    return template;
+  }
+  return template;
+}
+
+/** Saves a wording of `template` (one setting, so undo puts the last one back). */
+export function insightWordingOps(template: string, text: string): Op[] {
+  return [
+    {
+      op: "upsert",
+      table: "core_settings",
+      id: INSIGHT_AI_KEY,
+      values: { value_json: JSON.stringify({ source: template, text }) },
+    },
+  ];
 }
 
 /** The Money line: the ratio with each job's birr per hour (rounded down to whole birr). */
@@ -293,6 +332,11 @@ export function skipInsights(skips: JobSkips[], monthName: string): EffortInsigh
 export const GAP_MIN_WEEKS = 3;
 /** Under target means under 80% of it (a few minutes short is not a pattern). */
 export const UNDER_SHARE = 0.8;
+/** A week with this many away days is not judged (as on the week card). */
+export const AWAY_SKIP_DAYS = 4;
+
+/** When each area was made (ms); the seeded ones have 0. */
+export const AREA_CREATED_SQL = "SELECT id, created_at FROM area_items";
 
 export interface AreaWeekRow {
   id: string;
@@ -302,22 +346,50 @@ export interface AreaWeekRow {
   capped?: number | boolean;
 }
 
-const under = (row: AreaWeekRow) => row.done_min < row.target_min * UNDER_SHARE;
+export interface TargetWeek {
+  /** The week's Monday (logical date). */
+  monday: string;
+  rows: AreaWeekRow[];
+  /** Days of the week spent away (away mode). */
+  awayDays?: number;
+}
+
+/** Days of the week you were here; away days never count against you. */
+const hereDays = (week: TargetWeek) => 7 - Math.min(7, Math.max(0, week.awayDays ?? 0));
+
+const mostlyAway = (week: TargetWeek) => 7 - hereDays(week) >= AWAY_SKIP_DAYS;
+
+const under = (row: AreaWeekRow, here: number) =>
+  row.done_min < ((row.target_min * here) / 7) * UNDER_SHARE;
 
 /**
  * Areas under 80% of their weekly target for 3+ full weeks running, counted
- * back from the latest. `weeks` runs oldest to newest. Capped areas are left
- * out: their target is a ceiling, so under it is fine.
+ * back from the latest. `weeks` runs oldest to newest. A week only counts
+ * once Sirna was in use from its Monday (`firstDay`, the first day with a
+ * block or a session) and the area existed by then (`createdAt`, ms), so
+ * weeks with no data are never "under". A week mostly away (4+ days) is
+ * skipped; a partly away one is judged on the days you were here. Capped
+ * areas are left out: their target is a ceiling, so under it is fine.
  */
-export function areaGaps(weeks: AreaWeekRow[][]): EffortInsight[] {
-  const latest = weeks[weeks.length - 1] ?? [];
+export function areaGaps(
+  weeks: TargetWeek[],
+  firstDay: string | null,
+  createdAt: Record<string, number> = {},
+): EffortInsight[] {
+  const latest = weeks[weeks.length - 1];
+  // The line speaks of last week, so last week must be judged.
+  if (!latest || firstDay === null || mostlyAway(latest)) return [];
   const found: { row: AreaWeekRow; run: number }[] = [];
-  for (const row of latest) {
+  for (const row of latest.rows) {
     if (row.target_min <= 0 || row.capped) continue;
+    const since = logicalDate(createdAt[row.id] ?? 0);
     let run = 0;
     for (let i = weeks.length - 1; i >= 0; i--) {
-      const week = weeks[i]?.find((r) => r.id === row.id);
-      if (!week || week.target_min <= 0 || !under(week)) break;
+      const week = weeks[i];
+      if (!week || week.monday < firstDay || week.monday < since) break;
+      if (mostlyAway(week)) continue;
+      const same = week.rows.find((r) => r.id === row.id);
+      if (!same || same.target_min <= 0 || !under(same, hereDays(week))) break;
       run++;
     }
     if (run >= GAP_MIN_WEEKS) found.push({ row, run });
@@ -383,10 +455,12 @@ function dayGaps(date: string, blocks: GapBlock[], sessions: GapSession[]): DayG
   const jobs = blocks.filter((b) => b.job !== null).sort((a, b) => a.start_at - b.start_at);
   const others = blocks.filter((b) => b.job === null);
   const out: DayGap[] = [];
-  for (let i = 0; i + 1 < jobs.length; i++) {
-    const before = jobs[i];
-    const after = jobs[i + 1];
-    if (!before || !after) continue;
+  // The job block that ends latest so far: overlapping blocks never make a gap.
+  let busy = jobs[0];
+  for (const after of jobs.slice(1)) {
+    if (!busy) break;
+    const before = busy;
+    if (after.end_at > busy.end_at) busy = after;
     if (after.start_at - before.end_at < GAP_MIN_MINUTES * 60000) continue;
     // The free stretches of the gap, other blocks (lunch, a focus block) taken out.
     let stretches: [number, number][] = [[before.end_at + GAP_BUFFER * 60000, after.start_at]];

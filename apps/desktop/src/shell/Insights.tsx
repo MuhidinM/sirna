@@ -1,5 +1,16 @@
+import { useEffect, useRef } from "react";
+
+import { ask } from "../features/ai/ask";
+import { INSIGHT, type InsightFacts } from "../features/ai/touchpoints";
+import {
+  AWAY_HISTORY_SQL,
+  type AwayChange,
+  awayDays,
+  FIRST_DAY_SQL,
+} from "../features/dashboard/streak";
 import { systemClock } from "../kernel/clock";
 import { logicalDate } from "../kernel/dates";
+import { transact } from "../kernel/db";
 import {
   insightRange,
   insights,
@@ -9,6 +20,7 @@ import {
 import { RATES_SQL, readRates } from "../features/money/currency";
 import { monthLabel } from "../features/money/money";
 import {
+  AREA_CREATED_SQL,
   areaGaps,
   type AreaWeekRow,
   compareRates,
@@ -20,6 +32,10 @@ import {
   type GapSession,
   GAP_SESSIONS_SQL,
   GAP_WEEKS,
+  INSIGHT_AI_SQL,
+  insightFacts,
+  insightWording,
+  insightWordingOps,
   JOB_DAYS_SQL,
   JOB_MONTH_MINUTES_SQL,
   JOB_MONTH_PAY_SQL,
@@ -49,10 +65,11 @@ export function useInsights(today: string) {
 /** One full week's minutes per area, `weeksBack` weeks before this one. */
 function useAreaWeek(today: string, weeksBack: number) {
   const monday = shiftDate(weekStart(today), -7 * weeksBack);
-  return useLiveQuery<Row<AreaWeekRow>>(AREA_WEEK_SQL, [
+  const rows = useLiveQuery<Row<AreaWeekRow>>(AREA_WEEK_SQL, [
     logicalDayStart(monday),
     logicalDayStart(shiftDate(monday, 7)),
   ]);
+  return { monday, ...rows };
 }
 
 /**
@@ -66,6 +83,7 @@ export function useEffortInsights(today: string): EffortInsight[] | null {
   const minutes = useLiveQuery<Row<MonthMinutes>>(JOB_MONTH_MINUTES_SQL, [from, to]);
   const pay = useLiveQuery<Row<MonthPay>>(JOB_MONTH_PAY_SQL, [from, to]);
   const rates = useLiveQuery<{ value_json: string }>(RATES_SQL);
+  const wording = useLiveQuery<{ value_json: string }>(INSIGHT_AI_SQL);
   const days = useLiveQuery<Row<JobBlockRow>>(JOB_DAYS_SQL, [from, to]);
   const weeks = [
     useAreaWeek(today, 4),
@@ -73,6 +91,9 @@ export function useEffortInsights(today: string): EffortInsight[] | null {
     useAreaWeek(today, 2),
     useAreaWeek(today, 1),
   ];
+  const firstDay = useLiveQuery<{ first: string | null }>(FIRST_DAY_SQL);
+  const created = useLiveQuery<{ id: string; created_at: number }>(AREA_CREATED_SQL);
+  const awayHistory = useLiveQuery<Row<AwayChange>>(AWAY_HISTORY_SQL);
   const gapFrom = shiftDate(today, -7 * GAP_WEEKS);
   const gapTo = shiftDate(today, -1);
   const blocks = useLiveQuery<Row<GapBlock>>(GAP_BLOCKS_SQL, [gapFrom, gapTo]);
@@ -80,16 +101,67 @@ export function useEffortInsights(today: string): EffortInsight[] | null {
     logicalDayStart(gapFrom),
     logicalDayStart(today),
   ]);
-  const all = [minutes, pay, rates, days, blocks, sessions, ...weeks];
+  const all = [
+    minutes,
+    pay,
+    rates,
+    wording,
+    days,
+    firstDay,
+    created,
+    awayHistory,
+    blocks,
+    sessions,
+    ...weeks,
+  ];
   if (all.some((q) => q.loading)) return null;
   const out: EffortInsight[] = [];
   const byMonth = ratesByMonth(minutes.rows, pay.rows, readRates(rates.rows[0]?.value_json));
   const compare = compareRates(byMonth.get(month) ?? []);
-  if (compare) out.push({ key: "jobRate", id: "jobRate", text: compareText(compare) });
+  if (compare) {
+    const template = compareText(compare);
+    out.push({
+      key: "jobRate",
+      id: "jobRate",
+      text: insightWording(template, wording.rows[0]?.value_json),
+      reword: { template, facts: insightFacts(compare) },
+    });
+  }
   out.push(...skipInsights(jobSkips(days.rows), monthLabel(month).split(" ")[0] ?? month));
-  out.push(...areaGaps(weeks.map((w) => w.rows)));
+  out.push(
+    ...areaGaps(
+      weeks.map((w) => ({
+        monday: w.monday,
+        rows: w.rows,
+        awayDays: awayDays(awayHistory.rows, w.monday, shiftDate(w.monday, 6)).size,
+      })),
+      firstDay.rows[0]?.first ?? null,
+      Object.fromEntries(created.rows.map((r) => [r.id, r.created_at])),
+    ),
+  );
   out.push(...gapInsights(blocks.rows, sessions.rows));
   return out;
+}
+
+/**
+ * Asks the AI once per template to reword an insight; the reply is saved
+ * through the activity log (actor ai:insight), so it can be undone. With the
+ * AI off or a bad reply nothing is saved and the template text stays.
+ */
+function useReword(insight: EffortInsight | undefined) {
+  const asked = useRef<string | null>(null);
+  const template = insight?.reword?.template ?? null;
+  const facts = insight?.reword ? JSON.stringify(insight.reword.facts) : null;
+  const shown = insight?.text ?? null;
+  useEffect(() => {
+    if (template === null || facts === null || shown !== template || asked.current === template)
+      return;
+    asked.current = template;
+    void ask(INSIGHT, JSON.parse(facts) as InsightFacts).then((result) => {
+      if (result.ok)
+        void transact("ai:insight", insightWordingOps(template, result.value.line), "insight");
+    });
+  }, [template, facts, shown]);
 }
 
 export function InsightList({
@@ -108,6 +180,7 @@ export function InsightList({
 
 function WithEffort({ today, found }: { today: string; found: { key: string; text: string }[] }) {
   const effort = useEffortInsights(today);
+  useReword(effort?.find((e) => e.reword));
   if (!effort) return null;
   return (
     <Insights found={[...found, ...effort.map((e) => ({ key: e.id, text: e.text }))]} effort />
@@ -125,7 +198,7 @@ function Insights({
     return (
       <p className="empty">
         {effort
-          ? "Insights appear after a couple of weeks of focus sessions, or a full month of job hours."
+          ? "Insights appear after a couple of weeks of focus sessions, or a month of hours and tagged pay for two jobs."
           : "Insights appear after a couple of weeks of focus sessions."}
       </p>
     );
