@@ -699,8 +699,31 @@
 
 .su-job-name {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: var(--space-3);
+}
+
+.su-job-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.su-remove {
+  flex: none;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.su-remove:hover {
+  color: var(--danger);
+}
+
+.su-section > .su-add {
+  justify-self: start;
+  margin-top: var(--space-2);
 }
 
 .su-canvas .job input[aria-label="Job name"] {

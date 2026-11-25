@@ -85,6 +85,53 @@ export function parseTimes(text: string): string[] | null {
 
 const ALL_DAYS: Weekday[] = [1, 2, 3, 4, 5, 6, 7];
 
+export type FixedRow = {
+  weekday: number;
+  start_min: number;
+  duration_min: number;
+};
+
+/**
+ * A job made in My week, read back as a setup answer from its fixed routine
+ * blocks: the days it has a block, and the hours of its first one. With no
+ * blocks it has no days yet.
+ */
+export function jobFromBlocks(areaId: string, name: string, rows: FixedRow[]): JobAnswer {
+  const sorted = [...rows].sort((a, b) => a.weekday - b.weekday || a.start_min - b.start_min);
+  const days = [...new Set(sorted.map((row) => row.weekday))].filter(
+    (day): day is Weekday => day >= 1 && day <= 7,
+  );
+  const first = sorted[0];
+  return {
+    areaId,
+    name,
+    days,
+    start: first ? toHhmm(first.start_min) : "09:00",
+    end: first ? toHhmm(Math.min(first.start_min + first.duration_min, 1439)) : "17:00",
+  };
+}
+
+/**
+ * What stops the jobs from being saved, in words; null when they are fine.
+ * Names must be filled in and differ; a job that is on needs a day.
+ * `enabled: false` marks a job that is ticked off.
+ */
+export function jobProblems(jobs: (JobAnswer & { enabled?: boolean })[]): string | null {
+  const seen = new Set<string>();
+  for (const job of jobs) {
+    const name = job.name.trim();
+    if (!name) return "Every job needs a name.";
+    if (seen.has(name.toLowerCase()))
+      return `Two jobs are called "${name}". Give each its own name.`;
+    seen.add(name.toLowerCase());
+  }
+  for (const job of jobs) {
+    if (job.enabled === false) continue;
+    if (job.days.length === 0) return `${job.name.trim()}: pick its days, or untick it.`;
+  }
+  return null;
+}
+
 /** Free gaps of a day, given the blocks already placed and the waking window. */
 function gaps(blocks: BlockDraft[], from: number, to: number): [number, number][] {
   const busy = blocks
