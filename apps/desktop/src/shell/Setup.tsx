@@ -13,8 +13,14 @@ import {
   type FixedRow,
   type JobAnswer,
   jobFromBlocks,
+  jobParts,
   jobProblems,
+  MAX_JOB_PARTS,
   parseTimes,
+  type SavedJob,
+  type TimeRange,
+  toHhmm,
+  toMinutes,
   type Weekday,
 } from "../features/plan/routine";
 import { newJob, setupOps, type SetupChoices } from "../features/plan/setup";
@@ -91,6 +97,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [gymDays, setGymDays] = useState<Weekday[]>(DEFAULT_ANSWERS.gymDays);
   const [gymTime, setGymTime] = useState(DEFAULT_ANSWERS.gymTime);
   const [emailText, setEmailText] = useState(DEFAULT_ANSWERS.emailChecks.join(", "));
+  const [lunch, setLunch] = useState("");
   const [restDay, setRestDay] = useState<Weekday>(DEFAULT_ANSWERS.restDay);
   const [clockStyle, setClockStyle] = useState<ClockStyle>("western");
   const [startWithWindows, setStartWithWindows] = useState(true);
@@ -130,7 +137,8 @@ export function Setup({ onDone }: { onDone: () => void }) {
       };
       const text = (key: string) =>
         typeof value(key) === "string" ? (value(key) as string) : undefined;
-      const answers = value("setup.answers") as Partial<SetupChoices> | undefined;
+      const answers = value("setup.answers") as
+        (Partial<Omit<SetupChoices, "jobs">> & { jobs?: SavedJob[] }) | undefined;
       // Jobs added in My week join the list, so setup rebuilds their blocks too.
       const known = new Set((answers?.jobs ?? DEFAULT_ANSWERS.jobs).map((job) => job.areaId));
       const weekJobs: JobRow[] = savedAreas
@@ -159,10 +167,13 @@ export function Setup({ onDone }: { onDone: () => void }) {
         // Names as they are now (My week can rename a job), not as first answered.
         const nameOf = new Map(savedAreas.map((area) => [area.id, area.name]));
         setJobs([
-          ...answers.jobs.map((job) => ({
-            ...job,
-            name: nameOf.get(job.areaId) ?? job.name,
-            enabled: activeIds.has(job.areaId),
+          // Saves from before job parts hold one start and end: that is one part.
+          ...answers.jobs.map((saved) => ({
+            areaId: saved.areaId,
+            name: nameOf.get(saved.areaId) ?? saved.name,
+            days: saved.days,
+            parts: jobParts(saved),
+            enabled: activeIds.has(saved.areaId),
           })),
           ...weekJobs,
         ]);
@@ -171,6 +182,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       if (answers.gymTime) setGymTime(answers.gymTime);
       if (answers.emailChecks) setEmailText(answers.emailChecks.join(", "));
       if (answers.restDay) setRestDay(answers.restDay);
+      if (answers.lunch) setLunch(answers.lunch);
       setAreas(
         Object.fromEntries(
           AREAS.map((area) => {
@@ -211,10 +223,48 @@ export function Setup({ onDone }: { onDone: () => void }) {
         : current.filter((_, i) => i !== index),
     );
 
+  const updatePart = (index: number, part: number, change: Partial<TimeRange>) =>
+    setJobs((current) =>
+      current.map((job, i) =>
+        i === index
+          ? { ...job, parts: job.parts.map((p, n) => (n === part ? { ...p, ...change } : p)) }
+          : job,
+      ),
+    );
+
+  const addPart = (index: number) =>
+    setJobs((current) =>
+      current.map((job, i) => {
+        if (i !== index || job.parts.length >= MAX_JOB_PARTS) return job;
+        // The next part starts an hour after the last one ends (after lunch).
+        let lastEnd = 12 * 60;
+        try {
+          lastEnd = toMinutes(job.parts.at(-1)?.end ?? "12:00");
+        } catch {
+          // An unfinished time: start from noon.
+        }
+        const from = Math.min(lastEnd + 60, 22 * 60);
+        return {
+          ...job,
+          parts: [
+            ...job.parts,
+            { start: toHhmm(from), end: toHhmm(Math.min(from + 120, 23 * 60 + 59)) },
+          ],
+        };
+      }),
+    );
+
+  const removePart = (index: number, part: number) =>
+    setJobs((current) =>
+      current.map((job, i) =>
+        i === index ? { ...job, parts: job.parts.filter((_, n) => n !== part) } : job,
+      ),
+    );
+
   const shownJobs = jobs.filter((job) => !job.removed);
 
   async function save() {
-    const problem = jobProblems(shownJobs);
+    const problem = jobProblems(shownJobs, lunch);
     if (problem) {
       setError(problem);
       setStep(1);
@@ -239,10 +289,14 @@ export function Setup({ onDone }: { onDone: () => void }) {
         wake,
         hardStop,
         review,
-        jobs: shownJobs.map(({ enabled: _enabled, removed: _removed, ...job }) => ({
-          ...job,
-          name: job.name.trim(),
+        // Parts only: the old single start and end are not written again.
+        jobs: shownJobs.map(({ areaId, name, days, parts }) => ({
+          areaId,
+          name: name.trim(),
+          days,
+          parts,
         })),
+        lunch,
         activeAreas,
         restDay,
         gymDays,
@@ -391,31 +445,70 @@ export function Setup({ onDone }: { onDone: () => void }) {
                       onChange={(days) => updateJob(index, { days })}
                       label={`${job.name} days`}
                     />
-                    <div className="su-pair">
-                      <label className="su-field">
-                        <span>From</span>
-                        <input
-                          type="time"
-                          value={job.start}
-                          onChange={(e) => updateJob(index, { start: e.target.value })}
-                        />
-                      </label>
-                      <label className="su-field">
-                        <span>To</span>
-                        <input
-                          type="time"
-                          value={job.end}
-                          onChange={(e) => updateJob(index, { end: e.target.value })}
-                        />
-                      </label>
-                    </div>
+                    {job.parts.map((part, n) => (
+                      <div className="su-pair su-part" key={n}>
+                        <label className="su-field">
+                          <span>From</span>
+                          <input
+                            type="time"
+                            value={part.start}
+                            onChange={(e) => updatePart(index, n, { start: e.target.value })}
+                          />
+                        </label>
+                        <label className="su-field">
+                          <span>To</span>
+                          <input
+                            type="time"
+                            value={part.end}
+                            onChange={(e) => updatePart(index, n, { end: e.target.value })}
+                          />
+                        </label>
+                        {n > 0 ? (
+                          <button
+                            type="button"
+                            className="icon-btn plain su-part-x"
+                            aria-label={`Remove part ${n + 1} of ${job.name}`}
+                            onClick={() => removePart(index, n)}
+                          >
+                            ×
+                          </button>
+                        ) : (
+                          <span aria-hidden="true" />
+                        )}
+                      </div>
+                    ))}
+                    {job.parts.length < MAX_JOB_PARTS && (
+                      <button
+                        type="button"
+                        className="link-btn su-part-add"
+                        onClick={() => addPart(index)}
+                      >
+                        + Part
+                      </button>
+                    )}
                   </div>
                 ),
               )}
             </div>
+            <p className="meta su-hint">Leave lunch out: add a second part after it.</p>
             <Button className="su-add" onClick={addJob}>
               <IconPlus size={16} /> Add a job
             </Button>
+            <div className="card su-extra su-lunch">
+              <label className="su-field">
+                <span className="su-extra-title">Lunch time</span>
+                <input
+                  type="time"
+                  value={lunch}
+                  aria-describedby="su-lunch-note"
+                  onChange={(e) => setLunch(e.target.value)}
+                />
+              </label>
+              <span className="meta" id="su-lunch-note">
+                1 hour on workdays; leave empty for none. Without it, a focus block may be planned
+                in the gap between parts.
+              </span>
+            </div>
           </section>
         )}
 

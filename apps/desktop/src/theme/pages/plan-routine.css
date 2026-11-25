@@ -750,6 +750,49 @@
   gap: var(--space-3);
 }
 
+/* A job day in parts: From/To rows, a × on extra rows, "+ Part" below. */
+.su-pair.su-part {
+  grid-template-columns: 1fr 1fr 36px;
+  align-items: end;
+}
+
+.su-part + .su-part {
+  margin-top: var(--space-2);
+}
+
+.su-part-x {
+  color: var(--ink-2);
+  font-size: var(--text-lg);
+}
+
+.su-part-x:hover {
+  color: var(--danger);
+}
+
+.su-part-add {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: var(--space-1) 0;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.su-part-add:hover {
+  color: var(--ink);
+}
+
+.su-job.off .su-part-add {
+  opacity: 0.45;
+}
+
+.su-section > .su-hint {
+  margin: 0;
+}
+
+.su-canvas .su-lunch {
+  max-width: 360px;
+}
+
 .su-canvas .su-job input[type="time"] {
   background: var(--canvas);
   font-weight: 700;

@@ -5,13 +5,32 @@
 
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7; // Monday = 1 … Sunday = 7
 
+export interface TimeRange {
+  start: string; // "08:00"
+  end: string; // "12:00"
+}
+
+/** A job day has 1 to 3 parts; the gaps between them (lunch) are not job time. */
+export const MAX_JOB_PARTS = 3;
+
 export interface JobAnswer {
   /** Any work area: Job A, Job B, a third job… */
   areaId: string;
   name: string;
   days: Weekday[];
-  start: string; // "08:00"
-  end: string; // "12:00"
+  parts: TimeRange[];
+  /** @deprecated Saves before job parts had one range; read them with `jobParts`. */
+  start?: string;
+  /** @deprecated See `start`. */
+  end?: string;
+}
+
+/** A job as it may be saved: answers from before job parts have no `parts`. */
+export type SavedJob = Omit<JobAnswer, "parts"> & { parts?: TimeRange[] };
+
+/** The job's parts; an old save's single start and end is one part. */
+export function jobParts(job: SavedJob): TimeRange[] {
+  return job.parts ?? [{ start: job.start ?? "", end: job.end ?? "" }];
 }
 
 export interface SetupAnswers {
@@ -25,7 +44,11 @@ export interface SetupAnswers {
   gymTime: string; // "17:30"
   /** 10-minute "Check email" reminders on workdays; empty for none. */
   emailChecks: string[]; // ["10:00", "15:00"]
+  /** A 1-hour lunch on workdays, kept free of focus blocks; none when missing or "". */
+  lunch?: string; // "12:00"
 }
+
+export const LUNCH_MIN = 60;
 
 export interface BlockDraft {
   weekday: Weekday;
@@ -41,8 +64,18 @@ export const DEFAULT_ANSWERS: SetupAnswers = {
   hardStop: "22:30",
   review: "21:00",
   jobs: [
-    { areaId: "joba", name: "Job A", days: [1, 2, 3, 4, 5], start: "08:00", end: "12:00" },
-    { areaId: "jobb", name: "Job B", days: [1, 2, 3, 4, 5], start: "13:00", end: "17:00" },
+    {
+      areaId: "joba",
+      name: "Job A",
+      days: [1, 2, 3, 4, 5],
+      parts: [{ start: "08:00", end: "12:00" }],
+    },
+    {
+      areaId: "jobb",
+      name: "Job B",
+      days: [1, 2, 3, 4, 5],
+      parts: [{ start: "13:00", end: "17:00" }],
+    },
   ],
   activeAreas: ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
   restDay: 7,
@@ -93,30 +126,47 @@ export type FixedRow = {
 
 /**
  * A job made in My week, read back as a setup answer from its fixed routine
- * blocks: the days it has a block, and the hours of its first one. With no
- * blocks it has no days yet.
+ * blocks: the days it has a block, and the parts of its first day (up to 3).
+ * With no blocks it has no days yet.
  */
 export function jobFromBlocks(areaId: string, name: string, rows: FixedRow[]): JobAnswer {
   const sorted = [...rows].sort((a, b) => a.weekday - b.weekday || a.start_min - b.start_min);
   const days = [...new Set(sorted.map((row) => row.weekday))].filter(
     (day): day is Weekday => day >= 1 && day <= 7,
   );
-  const first = sorted[0];
+  const firstDay = sorted.filter((row) => row.weekday === sorted[0]?.weekday);
+  const parts = firstDay.slice(0, MAX_JOB_PARTS).map((row) => ({
+    start: toHhmm(row.start_min),
+    end: toHhmm(Math.min(row.start_min + row.duration_min, 1439)),
+  }));
   return {
     areaId,
     name,
     days,
-    start: first ? toHhmm(first.start_min) : "09:00",
-    end: first ? toHhmm(Math.min(first.start_min + first.duration_min, 1439)) : "17:00",
+    parts: parts.length > 0 ? parts : [{ start: "09:00", end: "17:00" }],
   };
+}
+
+/** Minutes of a time, or null when it is not one ("" included). */
+function minutesOf(hhmm: string | undefined): number | null {
+  try {
+    return toMinutes(hhmm ?? "");
+  } catch {
+    return null;
+  }
 }
 
 /**
  * What stops the jobs from being saved, in words; null when they are fine.
- * Names must be filled in and differ; a job that is on needs a day.
+ * Names must be filled in and differ; a job that is on needs a day and 1 to
+ * 3 parts that end after they start and don't overlap, within the job or
+ * with another job on the same day. Lunch must not sit inside job hours.
  * `enabled: false` marks a job that is ticked off.
  */
-export function jobProblems(jobs: (JobAnswer & { enabled?: boolean })[]): string | null {
+export function jobProblems(
+  jobs: (JobAnswer & { enabled?: boolean })[],
+  lunch?: string,
+): string | null {
   const seen = new Set<string>();
   for (const job of jobs) {
     const name = job.name.trim();
@@ -128,6 +178,41 @@ export function jobProblems(jobs: (JobAnswer & { enabled?: boolean })[]): string
   for (const job of jobs) {
     if (job.enabled === false) continue;
     if (job.days.length === 0) return `${job.name.trim()}: pick its days, or untick it.`;
+  }
+
+  const ranges: { name: string; days: Weekday[]; from: number; to: number }[] = [];
+  for (const job of jobs) {
+    if (job.enabled === false) continue;
+    const name = job.name.trim();
+    if (job.parts.length === 0) return `${name}: give it its hours.`;
+    if (job.parts.length > MAX_JOB_PARTS) return `${name}: at most ${MAX_JOB_PARTS} parts a day.`;
+    for (const part of job.parts) {
+      const from = minutesOf(part.start);
+      const to = minutesOf(part.end);
+      if (from === null || to === null) return `${name}: fill in each From and To time.`;
+      if (to <= from)
+        return `${name}: ${part.start}–${part.end} must end after it starts, on the same day.`;
+      ranges.push({ name, days: job.days, from, to });
+    }
+  }
+  for (let i = 0; i < ranges.length; i++) {
+    for (let j = i + 1; j < ranges.length; j++) {
+      const a = ranges[i];
+      const b = ranges[j];
+      if (!a || !b || !a.days.some((day) => b.days.includes(day))) continue;
+      if (a.from < b.to && b.from < a.to)
+        return a.name === b.name
+          ? `${a.name}: two parts overlap.`
+          : `${a.name} and ${b.name} overlap on the same day.`;
+    }
+  }
+
+  if (lunch) {
+    const from = minutesOf(lunch);
+    if (from === null) return "Lunch: use a time like 12:00, or leave it empty.";
+    const inside = ranges.find((range) => from < range.to && range.from < from + LUNCH_MIN);
+    if (inside)
+      return `Lunch overlaps ${inside.name}. Leave lunch out of job hours: end a part before it.`;
   }
   return null;
 }
@@ -173,17 +258,30 @@ export function defaultRoutine(answers: SetupAnswers): BlockDraft[] {
 
     for (const job of answers.jobs) {
       if (!active.has(job.areaId) || !job.days.includes(day)) continue;
-      const start = toMinutes(job.start);
-      const end = toMinutes(job.end);
-      if (end > start)
-        add({
-          startMin: start,
-          durationMin: end - start,
-          kind: "fixed",
-          areaId: job.areaId,
-          title: job.name,
-        });
+      // One fixed block per part, all with the job's name (setup checks the parts).
+      for (const part of jobParts(job)) {
+        const start = toMinutes(part.start);
+        const end = toMinutes(part.end);
+        if (end > start)
+          add({
+            startMin: start,
+            durationMin: end - start,
+            kind: "fixed",
+            areaId: job.areaId,
+            title: job.name,
+          });
+      }
     }
+
+    // Lunch keeps the gap between job parts out of the focus-block filler.
+    if (isWorkday && answers.lunch)
+      add({
+        startMin: toMinutes(answers.lunch),
+        durationMin: LUNCH_MIN,
+        kind: "routine",
+        areaId: null,
+        title: "Lunch",
+      });
 
     if (isWorkday && active.has("admin")) {
       // Older saved answers have no list: they keep the two default checks.
@@ -230,15 +328,17 @@ export function defaultRoutine(answers: SetupAnswers): BlockDraft[] {
       const limit = Math.min(review, stop);
       const maxBlocks = isWorkday ? 2 : 3;
       let placed = 0;
-      // A short routine (an email check) inside a longer block doesn't split
-      // gaps; one at a free time does, so no focus block lands on it.
+      // A short routine (an email check) inside or touching a longer block
+      // doesn't split gaps (a check at 10:00 after a part ending at 10:00 is
+      // covered by the 15-minute buffer); one at a free time does, so no focus
+      // block lands on it.
       const inside = (block: BlockDraft) =>
         today.some(
           (other) =>
             other !== block &&
             other.durationMin > block.durationMin &&
-            other.startMin <= block.startMin &&
-            block.startMin + block.durationMin <= other.startMin + other.durationMin,
+            other.startMin <= block.startMin + block.durationMin &&
+            block.startMin <= other.startMin + other.durationMin,
         );
       const anchors = today.filter((block) => block.durationMin > 15 || !inside(block));
       for (const [start, end] of gaps(anchors, from, limit)) {

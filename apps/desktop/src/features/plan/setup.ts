@@ -28,8 +28,7 @@ export function newJob(takenIds: Iterable<string>, takenNames: Iterable<string>)
     areaId: areaId(name, takenIds),
     name,
     days: [1, 2, 3, 4, 5],
-    start: "09:00",
-    end: "17:00",
+    parts: [{ start: "09:00", end: "17:00" }],
   };
 }
 
@@ -65,6 +64,7 @@ export function setupOps(
     gymDays: choices.gymDays,
     gymTime: choices.gymTime,
     emailChecks: choices.emailChecks,
+    lunch: choices.lunch ?? "",
   });
 
   const active = new Set(choices.activeAreas);
