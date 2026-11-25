@@ -13,6 +13,7 @@
     "allow-secret-status",
     "allow-autostart-set",
     "allow-autostart-status",
+    "allow-title-bar",
     "allow-capture-replace",
     "allow-focus-start",
     "allow-focus-control",

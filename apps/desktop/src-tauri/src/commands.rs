@@ -859,6 +859,12 @@ pub fn open_main(app: AppHandle) {
     crate::windows::spawn_open_main(app);
 }
 
+/// Paints the calling window's title bar in the theme's colours (theme switch).
+#[tauri::command]
+pub fn title_bar(window: tauri::WebviewWindow, theme: String) {
+    crate::windows::paint_title_bar(&window, &theme);
+}
+
 /// Opens or closes the desktop widget to match its setting (Settings switch).
 #[tauri::command]
 pub fn widget_apply(app: AppHandle) {

@@ -78,7 +78,7 @@ fn open_main(app: &AppHandle) -> tauri::Result<()> {
         window.show()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(app, MAIN_LABEL, WebviewUrl::App("index.html".into()))
         .title("Sirna")
         // Tauri's own file-drop handler would swallow HTML drag and drop
         // (the project board), and Sirna takes no dropped files.
@@ -87,7 +87,52 @@ fn open_main(app: &AppHandle) -> tauri::Result<()> {
         .min_inner_size(720.0, 480.0)
         .background_color(BACKGROUND)
         .build()?;
+    let theme = {
+        let db = app.state::<crate::db::Db>();
+        let conn = db.read.lock();
+        crate::db::setting_string(&conn, "ui.theme")
+    };
+    paint_title_bar(&window, theme.as_deref().unwrap_or("night"));
     Ok(())
+}
+
+/// The title bar's colours for a theme, as Windows COLORREFs (0x00BBGGRR):
+/// the frame colour and its ink (src/theme/tokens.css), so the bar reads as
+/// part of the app.
+pub fn title_bar_colors(theme: &str) -> (u32, u32) {
+    let colorref = |r: u32, g: u32, b: u32| r | (g << 8) | (b << 16);
+    match theme {
+        "forest" => (colorref(0x0f, 0x2a, 0x17), colorref(0xfe, 0xf4, 0xdc)),
+        _ => (colorref(0x0e, 0x0e, 0x0e), colorref(0xf4, 0xf2, 0xec)),
+    }
+}
+
+/// Paints the native title bar (min, max, close stay native) in the theme's
+/// colours. Windows 11 only; older Windows ignores the colour attributes.
+pub fn paint_title_bar(window: &tauri::WebviewWindow, theme: &str) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+            DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+        };
+        let Ok(hwnd) = window.hwnd() else {
+            return;
+        };
+        let hwnd = hwnd.0 as _;
+        let (frame, ink) = title_bar_colors(theme);
+        let dark: i32 = 1;
+        let set = |attribute: i32, value: *const u32| {
+            // SAFETY: a live window handle and a pointer to a 4-byte value.
+            unsafe { DwmSetWindowAttribute(hwnd, attribute as u32, value.cast(), 4) };
+        };
+        set(DWMWA_USE_IMMERSIVE_DARK_MODE, (&dark as *const i32).cast());
+        set(DWMWA_CAPTION_COLOR, &frame);
+        set(DWMWA_BORDER_COLOR, &frame);
+        set(DWMWA_TEXT_COLOR, &ink);
+    }
+    #[cfg(not(windows))]
+    let _ = (window, theme);
 }
 
 /// The capture bar's size: thin and long (src/capture/capture.css matches it).

@@ -137,6 +137,7 @@ pub fn run() {
             commands::open_main,
             commands::open_capture,
             commands::widget_apply,
+            commands::title_bar,
             commands::ai_models,
             commands::ai_usage,
             commands::hotkey_current,
