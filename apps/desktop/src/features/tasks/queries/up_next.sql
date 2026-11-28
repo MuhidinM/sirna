@@ -20,7 +20,8 @@ WITH hand AS (
   SELECT r.task_id, MAX(s.started_at) AS run_at, MIN(r.position) AS lane
   FROM focus_run_tasks AS r
   JOIN focus_sessions AS s ON s.id = r.session_id
-  WHERE s.kind = 'focus' AND s.started_at >= ?2 AND r.result IS NOT 'done'
+  -- Done tasks drop out below (status = 'todo'); a lane's done undone since is in hand again.
+  WHERE s.kind = 'focus' AND s.started_at >= ?2
   GROUP BY r.task_id
 ),
 candidates AS (

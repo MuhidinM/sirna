@@ -28,7 +28,7 @@ import {
   setAway,
   settingString,
 } from "./commands";
-import { emptyMachine, restore, setupInfo, status, type SetupTarget } from "./focus";
+import { emptyMachine, refreshDone, restore, setupInfo, status, type SetupTarget } from "./focus";
 import {
   focusControl,
   focusStart,
@@ -187,6 +187,7 @@ export async function install(): Promise<void> {
     // The focus timer.
     focus_status: async () => {
       await store.sync();
+      refreshDone(store.conn, machine());
       return status(machine(), now());
     },
     focus_start: (a) => store.write((state, emit) => focusStart(world(state, emit), a, now())),

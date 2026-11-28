@@ -185,15 +185,34 @@ export function handle(machine: Machine, event: Event, now: number): Effect[] {
   }
 }
 
-/** Session::follow_first_lane: the row keeps the first task; the run's name follows its lanes. */
+/**
+ * Session::follow_first_lane: a run of tasks keeps its first task on the row;
+ * a block or area session keeps its own area. With no lanes left the row
+ * names no task. The run's name follows its lanes.
+ */
 function followFirstLane(session: Session, titleBefore: string) {
-  if (session.block_id !== null) return;
+  const follows = session.block_id === null && session.task_id !== null;
   const first = [...session.lanes].sort((a, b) => a.position - b.position)[0];
   if (first) {
-    session.task_id = first.task_id;
-    session.area_id = first.area_id;
+    if (follows) {
+      session.task_id = first.task_id;
+      session.area_id = first.area_id;
+    }
+  } else {
+    if (follows) session.area_id = null;
+    session.task_id = null;
   }
-  if (session.title === titleBefore) session.title = runTitle(session.lanes);
+  if (session.block_id === null && session.title === titleBefore)
+    session.title = runTitle(session.lanes);
+}
+
+/** focus::refresh_done: lanes whose task was reopened since (an undone done) are open again. */
+export function refreshDone(conn: Conn, machine: Machine) {
+  for (const lane of machine.current?.lanes ?? []) {
+    if (!lane.done) continue;
+    const row = first(conn, "SELECT status FROM task_items WHERE id = ?", [lane.task_id]);
+    if (row && row.status !== "done") lane.done = false;
+  }
 }
 
 function lane(
@@ -467,12 +486,13 @@ export function applyDb(conn: Conn, effects: readonly Effect[]) {
           effect.task_id,
         ]);
     } else if (effect.type === "task_done") {
-      conn.run("UPDATE focus_run_tasks SET result = 'done' WHERE session_id = ? AND task_id = ?", [
-        effect.session_id,
-        effect.task_id,
-      ]);
+      // The run records done only once the task really is done.
       try {
         markDoneIn(conn, effect.task_id, laneContext(effect.session_id), effect.at);
+        conn.run(
+          "UPDATE focus_run_tasks SET result = 'done' WHERE session_id = ? AND task_id = ?",
+          [effect.session_id, effect.task_id],
+        );
       } catch (error) {
         console.error("could not mark the lane's task done:", error);
       }
@@ -535,6 +555,13 @@ export function soloMs(
 
 /** finish_run: each task's effort, wall minutes and clean flag when a run closes. */
 export function finishRun(conn: Conn, sessionId: string) {
+  // A lane's done that was undone since is not a result.
+  conn.run(
+    `UPDATE focus_run_tasks SET result = NULL
+     WHERE session_id = ? AND result = 'done'
+       AND task_id NOT IN (SELECT id FROM task_items WHERE status = 'done')`,
+    [sessionId],
+  );
   const tasks = conn.all("SELECT task_id, result FROM focus_run_tasks WHERE session_id = ?", [
     sessionId,
   ]);
@@ -609,6 +636,12 @@ export function contextFor(conn: Conn, blockId: string | null): Context {
   if (!row) return plain();
   const taskId = row.task_id as string | null;
   const taskLane = taskId === null ? undefined : laneFor(conn, taskId, 1);
+  // A task with no area counts for the block's area, as before runs.
+  if (taskLane && taskLane.area_id === null && row.area_id !== null) {
+    taskLane.area_id = row.area_id as string;
+    taskLane.area = (first(conn, "SELECT name FROM area_items WHERE id = ?", [taskLane.area_id])
+      ?.name ?? null) as string | null;
+  }
   return {
     block_id: blockId,
     area_id: row.area_id as string | null,
@@ -808,8 +841,8 @@ export function restore(conn: Conn, now: number): Machine {
     current.lanes =
       current.kind === "focus"
         ? loadLanes(conn, current.id, true)
-        : current.run_of !== null
-          ? loadLanes(conn, current.run_of, false)
+        : current.id.endsWith("-break")
+          ? loadLanes(conn, current.id.slice(0, -"-break".length), false)
           : [];
     if (open?.named !== null && open?.named !== undefined) current.title = String(open.named);
     else if (current.lanes.length > 0) current.title = runTitle(current.lanes);
@@ -833,12 +866,12 @@ export function restore(conn: Conn, now: number): Machine {
   };
 }
 
-/** load_lanes: a run's lanes in order; `live` with their open span and time run. */
+/** load_lanes: a run's lanes in order with their time run; `live` with their open span too. */
 export function loadLanes(conn: Conn, sessionId: string, live: boolean): Lane[] {
   return conn
     .all(
       `SELECT r.task_id, t.title, r.area_id, a.name, r.position,
-              COALESCE(r.result = 'done', 0) OR t.status = 'done' AS done,
+              t.status = 'done' AS done,
               (SELECT MIN(p.start_at) FROM focus_lane_spans AS p
                WHERE p.session_id = r.session_id AND p.task_id = r.task_id AND p.end_at IS NULL) AS running_since,
               (SELECT COALESCE(SUM(p.end_at - p.start_at), 0) FROM focus_lane_spans AS p
@@ -858,7 +891,7 @@ export function loadLanes(conn: Conn, sessionId: string, live: boolean): Lane[] 
       position: Number(row.position),
       done: Number(row.done) === 1,
       running_since: live && row.running_since !== null ? Number(row.running_since) : null,
-      closed_ms: live ? Number(row.closed_ms) : 0,
+      closed_ms: Number(row.closed_ms),
     }));
 }
 

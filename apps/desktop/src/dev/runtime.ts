@@ -24,6 +24,7 @@ import {
   type Machine,
   newId,
   otherName,
+  refreshDone,
   removeOtherBlock,
   resolveTarget,
   setIntent,
@@ -104,6 +105,7 @@ function toastFor(world: World, effect: Effect, now: number): Toast | undefined 
 
 /** focus::dispatch: runs an event, saves, and reports what Rust would emit. */
 export function dispatch(world: World, event: Event, now: number): Effect[] {
+  refreshDone(world.conn, world.machine);
   const effects = handle(world.machine, event, now);
   try {
     applyDb(world.conn, effects);

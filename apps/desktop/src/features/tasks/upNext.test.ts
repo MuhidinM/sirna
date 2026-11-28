@@ -60,17 +60,20 @@ describe("Up next", () => {
     expect(order(db, 3)).toEqual(EXPECTED.slice(0, 3));
   });
 
-  it("drops a task from in hand once its lane is done, and offers a timed task once its time passes", () => {
+  it("keeps a task in hand when its lane's done was undone, and offers a timed task once its time passes", () => {
     const db = openTestDb();
     db.exec(fixture);
+    // The lane said done, then the task was reopened (undo): it is open work again.
     db.exec("UPDATE focus_run_tasks SET result = 'done' WHERE task_id = 'hand'");
     vi.setSystemTime(Date.parse("2026-11-11T15:30:00+03:00"));
     const ids = order(db);
-    expect(ids[0]).toBe("due-past");
+    expect(ids[0]).toBe("hand");
     // Now past 15:00 and 14:00: both are offered.
     expect(ids).toContain("timed-later");
     expect(ids).toContain("remind-later");
-    expect(ids).toContain("hand");
+    // A task done in its lane is not offered at all.
+    db.exec("UPDATE task_items SET status = 'done' WHERE id = 'hand'");
+    expect(order(db)[0]).toBe("due-past");
   });
 
   it("gives every job a turn before any job gets a second", () => {

@@ -1585,8 +1585,15 @@ pub fn lane_remove(task_id: String, app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn focus_status(focus: State<'_, crate::focus::FocusState>) -> crate::focus::Status {
-    let machine = focus.machine.lock();
+pub fn focus_status(
+    focus: State<'_, crate::focus::FocusState>,
+    db: State<'_, Db>,
+) -> crate::focus::Status {
+    // The machine first, then the database: the order dispatch locks them in.
+    let mut machine = focus.machine.lock();
+    if let Err(error) = crate::focus::refresh_done(&db.write.lock(), &mut machine) {
+        log::warn!("could not read which lanes are done: {error}");
+    }
     crate::focus::status(&machine, clock::now_ms())
 }
 
