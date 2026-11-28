@@ -39,6 +39,8 @@ import {
 } from "./runtime";
 import { type Emitted, moveClock, now, setNow, type SharedState, Store } from "./store";
 import { applyOps, TABLES } from "./tx";
+import { previewPrayerTimes } from "./prayer";
+import { PRAYER_SETTINGS_SQL, readPrayerSettings } from "../features/prayer/prayer";
 
 type Args = Record<string, unknown>;
 type Callback = (payload: unknown) => void;
@@ -163,6 +165,19 @@ export async function install(): Promise<void> {
     hotkey_current: async () => {
       await store.sync();
       return settingString(store.conn, "capture.hotkey") || "Ctrl+Alt+J";
+    },
+
+    prayer_times: async (a) => {
+      await store.sync();
+      const rows = dbQuery(store.conn, PRAYER_SETTINGS_SQL) as {
+        key: string;
+        value_json: string | null;
+      }[];
+      return previewPrayerTimes(
+        typeof a.date === "string" ? a.date : null,
+        readPrayerSettings(rows),
+        now(),
+      );
     },
 
     // The focus timer.

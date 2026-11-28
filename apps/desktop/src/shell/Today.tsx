@@ -39,6 +39,8 @@ import { PanelHead } from "./kit";
 import { MonthPanel } from "./MonthPanel";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
+import { usePrayerTimes } from "./usePrayerTimes";
+import { prayerLine, ramadanLine } from "../features/prayer/prayer";
 
 interface TaskRow extends Record<string, string | number | null> {
   id: string;
@@ -53,6 +55,10 @@ interface TaskRow extends Record<string, string | number | null> {
   step_no: number | null;
   step_total: number | null;
 }
+
+/** Whether prayer times are on, and Ramadan's start (T-092). */
+const PRAYER_TODAY_SQL =
+  "SELECT key, value_json FROM core_settings WHERE key IN ('prayer.enabled', 'ramadan.start')";
 
 /** What the split needs that today's rows don't carry: part of the day and step place. */
 const SPLIT_FACTS_SQL = "SELECT planned_window, parent_id, step_no FROM task_items WHERE id = ?";
@@ -280,6 +286,21 @@ export function Today({
   const away = useLiveQuery<{ value_json: string }>(AWAY_SQL);
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
+  // Prayer times (T-092): one small line under the date, and Ramadan's when set.
+  const prayer = usePrayerTimes(today);
+  const prayerOn = useLiveQuery<{ key: string; value_json: string | null }>(PRAYER_TODAY_SQL);
+  const prayerSetting = (key: string) =>
+    prayerOn.rows.find((row) => row.key === key)?.value_json ?? null;
+  const ramadanStart = (() => {
+    try {
+      const value: unknown = JSON.parse(prayerSetting("ramadan.start") ?? '""');
+      return typeof value === "string" ? value : "";
+    } catch {
+      return "";
+    }
+  })();
+  const showPrayer = prayer !== null && prayerSetting("prayer.enabled") !== "false";
+  const ramadan = showPrayer ? ramadanLine(ramadanStart, today, prayer) : null;
 
   // A light day keeps one task in Top 3 (F53); the rest stay under Also due.
   const light = lightDayTop(top.rows, blocks.rows);
@@ -322,6 +343,17 @@ export function Today({
                 <IconPlus size={16} /> Capture
               </Button>
             </header>
+            {showPrayer && (
+              <p className="meta today-prayer" aria-label="Prayer times today">
+                {prayerLine(prayer)}
+                {ramadan && (
+                  <>
+                    <br />
+                    {ramadan}
+                  </>
+                )}
+              </p>
+            )}
             <p className="meta today-hint">
               Capture anything with your capture key; it shows up here.
             </p>
