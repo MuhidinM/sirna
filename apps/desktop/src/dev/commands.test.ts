@@ -55,6 +55,19 @@ describe("captures", () => {
     expect(captureOpsAllowed([block({ title: "x" })])).toBe(false);
   });
 
+  it("may set the prayer city and nothing else in settings (T-092)", () => {
+    const city = (id: string, json: string): Op => ({
+      op: "upsert",
+      table: "core_settings",
+      id,
+      values: { value_json: json },
+    });
+    expect(captureOpsAllowed([city("prayer.city", '"adama"')])).toBe(true);
+    expect(captureOpsAllowed([city("prayer.city", '"addis"')])).toBe(true);
+    expect(captureOpsAllowed([city("prayer.city", '"custom"')])).toBe(false);
+    expect(captureOpsAllowed([city("ui.theme", '"dark"')])).toBe(false);
+  });
+
   it("stores the line, its records and the parser, and reports the tables", () => {
     const c = conn();
     const done = captureCommit(
