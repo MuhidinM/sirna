@@ -823,6 +823,8 @@ mod tests {
         "core_notifications",
         "core_usage",
         "focus_sessions",
+        "focus_run_tasks",
+        "focus_lane_spans",
     ];
 
     #[test]
