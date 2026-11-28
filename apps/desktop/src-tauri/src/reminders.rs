@@ -456,12 +456,13 @@ pub fn tick(app: &AppHandle, now_ms: i64) {
             Action::Expire(_) => {}
         }
     }
-    prayer_tick(app, now_ms);
 }
 
 /// Prayer toasts (T-092): `Asr · 15:34`, a few minutes after adhan, once a
 /// day each (recorded in core_notifications before showing, so a restart
 /// never repeats one). Away doesn't pause them: they aren't Sirna's plan.
+/// Runs on its own in the minute loop, so a reminder that can't be read
+/// doesn't take the prayer toasts down with it.
 fn prayer_tick(app: &AppHandle, now_ms: i64) {
     let toasts = {
         let db = app.state::<Db>();
@@ -498,6 +499,12 @@ pub fn start(app: AppHandle) {
                 }));
                 if result.is_err() {
                     log::error!("the reminder tick panicked; it will run again next minute");
+                }
+                let prayed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    prayer_tick(&app, clock::now_ms());
+                }));
+                if prayed.is_err() {
+                    log::error!("the prayer tick panicked; it will run again next minute");
                 }
                 // The daily backup rides on the same minute (a no-op once done today).
                 let backed_up = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

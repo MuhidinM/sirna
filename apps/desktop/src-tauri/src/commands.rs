@@ -1557,6 +1557,6 @@ pub fn prayer_times(
         Some(text) => crate::prayer::parse_date(text).ok_or("Use a date like 2026-11-28")?,
         None => crate::prayer::local_date(clock::now_ms()),
     };
-    let config = crate::prayer::config(&db.write.lock());
+    let config = crate::prayer::config(&db.read.lock());
     Ok(crate::prayer::times(day, &config))
 }
