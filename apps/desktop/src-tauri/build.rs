@@ -79,6 +79,7 @@ fn main() {
         "hotkey_set",
         "notes_undo",
         "open_notes",
+        "prayer_times",
         "secret_set",
         "secret_status",
         "set_away",

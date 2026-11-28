@@ -1454,3 +1454,18 @@ pub fn focus_status(focus: State<'_, crate::focus::FocusState>) -> crate::focus:
     let machine = focus.machine.lock();
     crate::focus::status(&machine, clock::now_ms())
 }
+
+/// One day's prayer times (T-092), in local minutes from midnight.
+/// `date` is YYYY-MM-DD; without one, today (Addis Ababa).
+#[tauri::command]
+pub fn prayer_times(
+    date: Option<String>,
+    db: State<'_, Db>,
+) -> Result<crate::prayer::Times, String> {
+    let day = match date.as_deref() {
+        Some(text) => crate::prayer::parse_date(text).ok_or("Use a date like 2026-11-28")?,
+        None => crate::prayer::local_date(clock::now_ms()),
+    };
+    let config = crate::prayer::config(&db.write.lock());
+    Ok(crate::prayer::times(day, &config))
+}

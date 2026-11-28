@@ -456,6 +456,30 @@ pub fn tick(app: &AppHandle, now_ms: i64) {
             Action::Expire(_) => {}
         }
     }
+    prayer_tick(app, now_ms);
+}
+
+/// Prayer toasts (T-092): `Asr · 15:34`, a few minutes after adhan, once a
+/// day each (recorded in core_notifications before showing, so a restart
+/// never repeats one). Away doesn't pause them: they aren't Sirna's plan.
+fn prayer_tick(app: &AppHandle, now_ms: i64) {
+    let toasts = {
+        let db = app.state::<Db>();
+        let conn = db.write.lock();
+        let config = crate::prayer::config(&conn);
+        let toasts = crate::prayer::due(&conn, &config, now_ms);
+        for toast in &toasts {
+            if let Err(error) = crate::prayer::record(&conn, toast, now_ms) {
+                log::error!("could not record a prayer toast: {error}");
+            }
+        }
+        toasts
+    };
+    for toast in toasts {
+        if let Err(error) = notify::show(app, &toast.title, "Time for salah.", &[], |_| {}) {
+            log::error!("could not show a prayer toast: {error}");
+        }
+    }
 }
 
 /// Starts the minute tick on its own thread. Wall-clock based: after sleep the
