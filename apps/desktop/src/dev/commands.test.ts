@@ -182,7 +182,10 @@ describe("notes undo", () => {
       [{ op: "insert", table: "note_items", id: "n1", values: { kind: "cheat", body: "x" } }],
       1,
     );
-    expect(notesUndo(c, { context: "notes:1" }, 2)).toEqual({ result: 1, changed: ["note_items"] });
+    expect(notesUndo(c, { context: "notes:1" }, 2)).toEqual({
+      result: { changes: 1, kept: 0 },
+      changed: ["note_items"],
+    });
   });
 });
 

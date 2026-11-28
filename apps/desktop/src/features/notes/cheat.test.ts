@@ -13,6 +13,7 @@ import {
   FIND_SQL,
   type FoundRow,
   groupCards,
+  keptNote,
   NOTES_SQL,
   search,
   tokens,
@@ -169,5 +170,16 @@ describe("tokens", () => {
     ]);
     expect(tokens("plain")).toEqual([{ kind: "text", text: "plain" }]);
     expect(tokens("unclosed `tick")).toEqual([{ kind: "text", text: "unclosed `tick" }]);
+  });
+});
+
+describe("keptNote", () => {
+  it("says nothing when undo kept nothing", () => {
+    expect(keptNote(0)).toBe("");
+  });
+
+  it("names the newer changes undo kept", () => {
+    expect(keptNote(1)).toBe("; kept 1 newer change");
+    expect(keptNote(3)).toBe("; kept 3 newer changes");
   });
 });
