@@ -3,6 +3,7 @@
  * from Rust (`prayer_times`, the `salah` crate); this file reads the settings,
  * writes them back, and words the lines Today shows. Pure and tested.
  */
+import { localDate } from "../../kernel/dates";
 import { type Op } from "../../kernel/db";
 
 /** commands::prayer_times: local minutes from midnight, Addis Ababa. */
@@ -223,6 +224,15 @@ export function ramadanDay(start: string, today: string): number | null {
     (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000,
   );
   return days >= 0 && days < RAMADAN_DAYS ? days + 1 : null;
+}
+
+/**
+ * The date whose prayer times are shown at `nowMs`: the Addis calendar date,
+ * not logicalDate(). A prayer day turns at midnight (Rust's toasts use the
+ * same date, prayer::local_date), so at 02:30 Suhoor ends at today's Fajr.
+ */
+export function prayerDate(nowMs: number): string {
+  return localDate(nowMs);
 }
 
 /** `Ramadan day 3 · Suhoor ends 05:10 · Iftar 18:04`, or null outside Ramadan. */

@@ -4,6 +4,7 @@ import {
   checkPrayerSettings,
   hhmm,
   parseHhmm,
+  prayerDate,
   prayerLine,
   prayerSettingsOps,
   type PrayerTimes,
@@ -111,6 +112,15 @@ describe("checkPrayerSettings and prayerSettingsOps", () => {
       "prayer.city",
       "prayer.jumuah",
     ]);
+  });
+});
+
+describe("prayerDate", () => {
+  it("turns at midnight, not at the 03:00 logical day", () => {
+    // Suhoor at 02:30 on 1 Mar: logicalDate says 28 Feb, prayer times are 1 Mar's.
+    expect(prayerDate(Date.parse("2027-03-01T02:30:00+03:00"))).toBe("2027-03-01");
+    expect(prayerDate(Date.parse("2027-02-28T23:59:00+03:00"))).toBe("2027-02-28");
+    expect(ramadanDay("2027-02-08", prayerDate(Date.parse("2027-02-09T02:30:00+03:00")))).toBe(2);
   });
 });
 

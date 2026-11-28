@@ -40,7 +40,13 @@ import { MonthPanel } from "./MonthPanel";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
 import { usePrayerTimes } from "./usePrayerTimes";
-import { prayerLine, ramadanLine } from "../features/prayer/prayer";
+import {
+  PRAYER_SETTINGS_SQL,
+  prayerDate,
+  prayerLine,
+  ramadanLine,
+  readPrayerSettings,
+} from "../features/prayer/prayer";
 
 interface TaskRow extends Record<string, string | number | null> {
   id: string;
@@ -55,10 +61,6 @@ interface TaskRow extends Record<string, string | number | null> {
   step_no: number | null;
   step_total: number | null;
 }
-
-/** Whether prayer times are on, and Ramadan's start (T-092). */
-const PRAYER_TODAY_SQL =
-  "SELECT key, value_json FROM core_settings WHERE key IN ('prayer.enabled', 'ramadan.start')";
 
 /** What the split needs that today's rows don't carry: part of the day and step place. */
 const SPLIT_FACTS_SQL = "SELECT planned_window, parent_id, step_no FROM task_items WHERE id = ?";
@@ -287,20 +289,13 @@ export function Today({
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
   // Prayer times (T-092): one small line under the date, and Ramadan's when set.
-  const prayer = usePrayerTimes(today);
-  const prayerOn = useLiveQuery<{ key: string; value_json: string | null }>(PRAYER_TODAY_SQL);
-  const prayerSetting = (key: string) =>
-    prayerOn.rows.find((row) => row.key === key)?.value_json ?? null;
-  const ramadanStart = (() => {
-    try {
-      const value: unknown = JSON.parse(prayerSetting("ramadan.start") ?? '""');
-      return typeof value === "string" ? value : "";
-    } catch {
-      return "";
-    }
-  })();
-  const showPrayer = prayer !== null && prayerSetting("prayer.enabled") !== "false";
-  const ramadan = showPrayer ? ramadanLine(ramadanStart, today, prayer) : null;
+  // Prayer days follow the calendar, not the 03:00 day: suhoor at 02:30 is the new day's.
+  const prayerDay = prayerDate(minuteNow);
+  const prayer = usePrayerTimes(prayerDay);
+  const prayerRows = useLiveQuery<{ key: string; value_json: string | null }>(PRAYER_SETTINGS_SQL);
+  const prayerSettings = readPrayerSettings(prayerRows.rows);
+  const showPrayer = prayer !== null && prayerSettings.enabled;
+  const ramadan = showPrayer ? ramadanLine(prayerSettings.ramadanStart, prayerDay, prayer) : null;
 
   // A light day keeps one task in Top 3 (F53); the rest stay under Also due.
   const light = lightDayTop(top.rows, blocks.rows);
