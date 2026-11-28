@@ -156,7 +156,7 @@ pub fn capture_replace(
 /// project). The links are read before the undo, since undoing an earlier fix
 /// takes back the links it carried. They are logged under the new capture
 /// with only the carried columns as "before", so undoing it puts back the
-/// links and nothing else: later edits to the steps stay.
+/// links and not `user_edited_at`; undo already skips columns edited since.
 fn replace_in(
     txn: &rusqlite::Transaction<'_>,
     raw_id: i64,
@@ -194,7 +194,7 @@ fn replace_in(
 }
 
 /// Trims the "before" of each carried update to the columns it set, so undo
-/// restores those columns only (undo restores whatever a snapshot holds).
+/// puts back only the carried columns, not `user_edited_at`.
 fn keep_only_carried_columns(
     conn: &rusqlite::Connection,
     context: &str,
@@ -406,7 +406,7 @@ pub(crate) fn undo_capture_in(
     let undone = tx::undo_context(txn, "user", &format!("capture:{raw_id}"), now)
         .map_err(|error| error.to_string())?;
     db::mark_ignored(txn, raw_id).map_err(|error| error.to_string())?;
-    Ok(undone)
+    Ok(undone.changes)
 }
 
 /// Undoes everything a capture created or changed, and marks it ignored.
@@ -1178,9 +1178,14 @@ pub fn setup_start(
 }
 
 /// Undoes one Notes save (plan §3.15: an overwrite can be undone). Only
-/// `notes:` contexts, so the webview can't undo other people's work.
+/// `notes:` contexts, so the webview can't undo other people's work. Returns
+/// the changes undone and the fields kept because they were edited since.
 #[tauri::command]
-pub fn notes_undo(context: String, app: AppHandle, db: State<'_, Db>) -> Result<usize, String> {
+pub fn notes_undo(
+    context: String,
+    app: AppHandle,
+    db: State<'_, Db>,
+) -> Result<tx::Undone, String> {
     if !context.starts_with("notes:") || context.len() > 64 {
         return Err("only a Notes edit can be undone here".into());
     }

@@ -410,8 +410,26 @@ export function applyOps(
   return ids;
 }
 
-/** restore: puts the writable columns of a row back to an earlier snapshot. */
-function restore(conn: Conn, table: TableSpec, id: string, snapshot: Record<string, unknown>) {
+/** tx::Undone: changes reversed, and columns kept because they were edited since. */
+export interface Undone {
+  changes: number;
+  kept: number;
+}
+
+/**
+ * restore: puts back the columns one logged change set, to their `before`
+ * values. With an `after` snapshot, only columns that differ between the two
+ * are restored, and only while the row still holds the `after` value; a column
+ * edited since is kept and counted (never `user_edited_at`). Returns the kept count.
+ */
+function restore(
+  conn: Conn,
+  table: TableSpec,
+  id: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown> | undefined,
+  current: Record<string, unknown> | undefined,
+): number {
   const names = [
     ...table.columns,
     ...(table.softDelete ? ["deleted_at"] : []),
@@ -419,31 +437,60 @@ function restore(conn: Conn, table: TableSpec, id: string, snapshot: Record<stri
   ];
   const sets: string[] = [];
   const values: SqlScalar[] = [];
+  let kept = 0;
   for (const name of names) {
-    if (Object.hasOwn(snapshot, name)) {
-      sets.push(`${name} = ?`);
-      values.push(toSql(name, snapshot[name]));
+    if (!Object.hasOwn(before, name)) continue;
+    const value = before[name];
+    if (after && Object.hasOwn(after, name)) {
+      const changedTo = after[name];
+      if (sameValue(changedTo, value)) continue;
+      if (!sameValue(current?.[name] ?? null, changedTo)) {
+        if (name !== "user_edited_at") kept += 1;
+        continue;
+      }
     }
+    sets.push(`${name} = ?`);
+    values.push(toSql(name, value));
   }
-  if (sets.length === 0) return;
-  conn.run(`UPDATE ${table.name} SET ${sets.join(", ")} WHERE ${table.idColumn} = ?`, [
-    ...values,
-    id,
-  ]);
+  if (sets.length > 0)
+    conn.run(`UPDATE ${table.name} SET ${sets.join(", ")} WHERE ${table.idColumn} = ?`, [
+      ...values,
+      id,
+    ]);
+  return kept;
+}
+
+/** serde_json Value equality for the scalars a row holds. */
+function sameValue(a: unknown, b: unknown): boolean {
+  return (a ?? null) === (b ?? null);
+}
+
+function snapshot(json: unknown): Record<string, unknown> | undefined {
+  if (typeof json !== "string") return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 /**
  * undo_context: reverses every change logged under `context`, newest first.
- * Inserts become soft deletes; updates and deletes are restored to their
- * "before" snapshot. Returns how many changes were undone.
+ * Inserts become soft deletes; updates and deletes put back only the columns
+ * they changed, keeping any edited again since.
  */
-export function undoContext(conn: Conn, actor: string, context: string, nowMs: number): number {
+export function undoContext(conn: Conn, actor: string, context: string, nowMs: number): Undone {
   const rows = conn.all(
-    `SELECT entity_type, entity_id, action, before_json FROM core_activity
+    `SELECT entity_type, entity_id, action, before_json, after_json FROM core_activity
      WHERE context = ? AND action != 'undo' ORDER BY id DESC`,
     [context],
   );
   const undo = `undo:${context}`;
+  let kept = 0;
   for (const row of rows) {
     const table = spec(String(row.entity_type));
     const id = String(row.entity_id);
@@ -455,20 +502,14 @@ export function undoContext(conn: Conn, actor: string, context: string, nowMs: n
           [nowMs, nowMs, id],
         );
       else conn.run(`DELETE FROM ${table.name} WHERE ${table.idColumn} = ?`, [id]);
-    } else if (typeof row.before_json === "string") {
-      let snapshot: unknown;
-      try {
-        snapshot = JSON.parse(row.before_json);
-      } catch {
-        snapshot = undefined;
-      }
-      if (typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot))
-        restore(conn, table, id, snapshot as Record<string, unknown>);
+    } else {
+      const before = snapshot(row.before_json);
+      if (before) kept += restore(conn, table, id, before, snapshot(row.after_json), current);
     }
-    const after = rowJson(conn, table, id);
-    logActivity(conn, nowMs, actor, undo, table.name, id, "undo", current, after);
+    const restored = rowJson(conn, table, id);
+    logActivity(conn, nowMs, actor, undo, table.name, id, "undo", current, restored);
   }
-  return rows.length;
+  return { changes: rows.length, kept };
 }
 
 /** tables_of in commands.rs: the tables ops touch, sorted, once each. */

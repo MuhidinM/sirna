@@ -654,28 +654,60 @@ pub fn apply_ops(
     Ok(ids)
 }
 
-/// Restores the writable columns of a row to an earlier JSON snapshot.
+/// What one undo did: how many logged changes it reversed, and how many
+/// columns it left alone because they were edited again since.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Undone {
+    pub changes: usize,
+    pub kept: usize,
+}
+
+/// Puts back the columns one logged change set, to their `before` values.
+///
+/// With an `after` snapshot, only columns whose value differs between
+/// `before` and `after` are restored, and only while the row still holds the
+/// `after` value: a column edited again since keeps its newer value and is
+/// counted as kept (`user_edited_at` moves with every edit, so it is never
+/// counted). Without `after`, every snapshot column is restored.
 fn restore(
     conn: &Connection,
     spec: &TableSpec,
     id: &str,
-    snapshot: &Map<String, Value>,
-) -> Result<(), TxError> {
+    before: &Map<String, Value>,
+    after: Option<&Map<String, Value>>,
+    current: Option<&Value>,
+) -> Result<usize, TxError> {
     let mut sets = Vec::new();
     let mut sql_values = Vec::new();
+    let mut kept = 0;
     for name in spec.columns.iter().copied().chain(
         ["deleted_at", "user_edited_at"]
             .into_iter()
             .filter(|name| *name != "user_edited_at" || spec.has_user_edited_at)
             .filter(|name| *name != "deleted_at" || spec.soft_delete),
     ) {
-        if let Some(value) = snapshot.get(name) {
-            sets.push(format!("{name} = ?{}", sets.len() + 1));
-            sql_values.push(to_sql(name, value)?);
+        let Some(value) = before.get(name) else {
+            continue;
+        };
+        if let Some(changed_to) = after.and_then(|after| after.get(name)) {
+            if changed_to == value {
+                continue;
+            }
+            let now = current
+                .and_then(|row| row.get(name))
+                .unwrap_or(&Value::Null);
+            if now != changed_to {
+                if name != "user_edited_at" {
+                    kept += 1;
+                }
+                continue;
+            }
         }
+        sets.push(format!("{name} = ?{}", sets.len() + 1));
+        sql_values.push(to_sql(name, value)?);
     }
     if sets.is_empty() {
-        return Ok(());
+        return Ok(kept);
     }
     sql_values.push(SqlValue::Text(id.to_string()));
     let sql = format!(
@@ -686,53 +718,68 @@ fn restore(
         sql_values.len()
     );
     conn.execute(&sql, params_from_iter(sql_values))?;
-    Ok(())
+    Ok(kept)
+}
+
+fn snapshot(json: Option<&String>) -> Option<Map<String, Value>> {
+    match serde_json::from_str::<Value>(json?) {
+        Ok(Value::Object(map)) => Some(map),
+        _ => None,
+    }
 }
 
 /// Reverses every change logged under `context`, newest first, inside the
-/// caller's transaction. Inserts become soft deletes; updates and deletes are
-/// restored to their "before" snapshot. Returns how many changes were undone.
+/// caller's transaction. Inserts become soft deletes; updates and deletes put
+/// back only the columns they changed, keeping any edited again since.
 pub fn undo_context(
     conn: &Connection,
     actor: &str,
     context: &str,
     now_ms: i64,
-) -> Result<usize, TxError> {
-    let entries: Vec<(String, String, String, Option<String>)> = {
+) -> Result<Undone, TxError> {
+    type Entry = (String, String, String, Option<String>, Option<String>);
+    let entries: Vec<Entry> = {
         let mut statement = conn.prepare(
-            "SELECT entity_type, entity_id, action, before_json FROM core_activity
+            "SELECT entity_type, entity_id, action, before_json, after_json FROM core_activity
              WHERE context = ?1 AND action != 'undo' ORDER BY id DESC",
         )?;
         statement
             .query_map([context], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })?
             .collect::<Result<_, _>>()?
     };
     let undo_context = format!("undo:{context}");
-    for (table, id, action, before) in &entries {
+    let mut kept = 0;
+    for (table, id, action, before, after) in &entries {
         let spec = spec(table)?;
         let current = row_json(conn, spec, id)?;
-        match (action.as_str(), before) {
-            ("insert", _) if spec.soft_delete => {
+        match action.as_str() {
+            "insert" if spec.soft_delete => {
                 let sql = format!(
                     "UPDATE {} SET deleted_at = ?1, updated_at = ?1 WHERE {} = ?2",
                     spec.name, spec.id_column
                 );
                 conn.execute(&sql, rusqlite::params![now_ms, id])?;
             }
-            ("insert", _) => {
+            "insert" => {
                 let sql = format!("DELETE FROM {} WHERE {} = ?1", spec.name, spec.id_column);
                 conn.execute(&sql, [id])?;
             }
-            (_, Some(before)) => {
-                if let Ok(Value::Object(snapshot)) = serde_json::from_str::<Value>(before) {
-                    restore(conn, spec, id, &snapshot)?;
+            _ => {
+                if let Some(before) = snapshot(before.as_ref()) {
+                    let after = snapshot(after.as_ref());
+                    kept += restore(conn, spec, id, &before, after.as_ref(), current.as_ref())?;
                 }
             }
-            (_, None) => {}
         }
-        let after = row_json(conn, spec, id)?;
+        let restored = row_json(conn, spec, id)?;
         log_activity(
             conn,
             now_ms,
@@ -742,10 +789,13 @@ pub fn undo_context(
             id,
             "undo",
             current.as_ref(),
-            after.as_ref(),
+            restored.as_ref(),
         )?;
     }
-    Ok(entries.len())
+    Ok(Undone {
+        changes: entries.len(),
+        kept,
+    })
 }
 
 #[cfg(test)]
@@ -991,7 +1041,13 @@ mod tests {
         let conn = conn();
         insert_task(&conn, "t1", "Call bank");
         let undone = undo_context(&conn, "user", "capture:1", 500).expect("undo");
-        assert_eq!(undone, 1);
+        assert_eq!(
+            undone,
+            Undone {
+                changes: 1,
+                kept: 0
+            }
+        );
         assert_eq!(task(&conn, "t1")["deleted_at"], 500);
     }
 
@@ -1009,6 +1065,72 @@ mod tests {
         let row = task(&conn, "t1");
         assert_eq!(row["title"], "Call bank");
         assert_eq!(row["deleted_at"], Value::Null);
+    }
+
+    fn update_task(conn: &Connection, context: &str, values_json: Value, at: i64) {
+        let op = Op::Update {
+            table: "task_items".into(),
+            id: "t1".into(),
+            values: values(values_json),
+        };
+        apply_ops(conn, "user", Some(context), &[op], at).expect("update");
+    }
+
+    #[test]
+    fn undoing_an_old_update_keeps_a_newer_edit_to_another_column() {
+        let conn = conn();
+        insert_task(&conn, "t1", "Call bank");
+        update_task(&conn, "edit:1", json!({ "title": "Call the bank" }), 200);
+        update_task(&conn, "edit:2", json!({ "status": "done" }), 300);
+        let undone = undo_context(&conn, "user", "edit:1", 400).expect("undo");
+        assert_eq!(
+            undone,
+            Undone {
+                changes: 1,
+                kept: 0
+            }
+        );
+        let row = task(&conn, "t1");
+        assert_eq!(row["title"], "Call bank");
+        assert_eq!(row["status"], "done");
+    }
+
+    #[test]
+    fn undo_keeps_a_column_edited_again_since() {
+        let conn = conn();
+        insert_task(&conn, "t1", "Call bank");
+        update_task(
+            &conn,
+            "edit:1",
+            json!({ "title": "Wrong", "status": "done" }),
+            200,
+        );
+        update_task(&conn, "edit:2", json!({ "title": "Call bank today" }), 300);
+        let undone = undo_context(&conn, "user", "edit:1", 400).expect("undo");
+        assert_eq!(
+            undone,
+            Undone {
+                changes: 1,
+                kept: 1
+            }
+        );
+        let row = task(&conn, "t1");
+        assert_eq!(row["title"], "Call bank today");
+        assert_ne!(row["status"], "done");
+    }
+
+    #[test]
+    fn undo_restores_a_delete() {
+        let conn = conn();
+        insert_task(&conn, "t1", "Call bank");
+        let op = Op::Delete {
+            table: "task_items".into(),
+            id: "t1".into(),
+        };
+        apply_ops(&conn, "user", Some("edit:1"), &[op], 200).expect("delete");
+        assert_eq!(task(&conn, "t1")["deleted_at"], 200);
+        undo_context(&conn, "user", "edit:1", 300).expect("undo");
+        assert_eq!(task(&conn, "t1")["deleted_at"], Value::Null);
     }
 
     #[test]

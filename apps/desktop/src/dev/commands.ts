@@ -6,7 +6,7 @@
  */
 import { type Conn, inTransaction, type SqlScalar } from "./conn";
 import { type BlockRow, UNDO_BLOCKED_SQL, undoBlocked } from "../capture/fix";
-import { applyOps, type Op, parseOps, rowText, tablesOf, undoContext } from "./tx";
+import { applyOps, type Op, parseOps, rowText, tablesOf, type Undone, undoContext } from "./tx";
 
 export interface Done<T> {
   result: T;
@@ -380,14 +380,14 @@ export function captureUndo(conn: Conn, args: { rawId?: unknown }, now: number):
   const rawId = Number(args.rawId);
   const undone = command(conn, () => {
     refuseChanged(conn, rawId, "undo");
-    const count = undoContext(conn, "user", `capture:${rawId}`, now);
+    const count = undoContext(conn, "user", `capture:${rawId}`, now).changes;
     markIgnored(conn, rawId);
     return count;
   });
   return { result: undone, changed: CAPTURE_TABLES };
 }
 
-export function notesUndo(conn: Conn, args: { context?: unknown }, now: number): Done<number> {
+export function notesUndo(conn: Conn, args: { context?: unknown }, now: number): Done<Undone> {
   const context = String(args.context ?? "");
   if (!context.startsWith("notes:") || new TextEncoder().encode(context).length > 64)
     throw "only a Notes edit can be undone here";

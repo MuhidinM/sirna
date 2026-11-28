@@ -237,3 +237,9 @@ export function tokens(line: string): Token[] {
   if (last < line.length) out.push({ kind: "text", text: line.slice(last) });
   return out;
 }
+
+/** The tail of an undo message when undo kept fields edited since (tx::Undone.kept). */
+export function keptNote(kept: number): string {
+  if (kept <= 0) return "";
+  return kept === 1 ? "; kept 1 newer change" : `; kept ${kept} newer changes`;
+}
