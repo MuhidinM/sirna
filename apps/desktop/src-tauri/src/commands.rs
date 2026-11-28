@@ -64,12 +64,16 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
                     key == "status" && matches!(value.as_str(), Some("done" | "skipped"))
                 })
         }
-        // Smart capture (ADR-0014): `move` and `finish by` change a task's day, nothing else.
+        // Smart capture (ADR-0014): `move` and `finish by` change a task's day, nothing
+        // else. A timed task's due and reminder instants move with it.
         Op::Update { table, values, .. } if table == "task_items" => {
             !values.is_empty()
-                && values.iter().all(|(key, value)| {
-                    matches!(key.as_str(), "due_date" | "planned_date")
-                        && (value.is_null() || value.as_str().is_some_and(is_iso_date))
+                && values.iter().all(|(key, value)| match key.as_str() {
+                    "due_date" | "planned_date" => {
+                        value.is_null() || value.as_str().is_some_and(is_iso_date)
+                    }
+                    "due_at" | "remind_at" => value.is_null() || value.is_i64(),
+                    _ => false,
                 })
         }
         _ => false,
@@ -626,6 +630,21 @@ mod tests {
             "task_items",
             "due_date",
             "fri".into()
+        )]));
+        assert!(capture_ops_allowed(&[update(
+            "task_items",
+            "due_at",
+            1_764_900_000_000_i64.into()
+        )]));
+        assert!(capture_ops_allowed(&[update(
+            "task_items",
+            "remind_at",
+            Value::Null
+        )]));
+        assert!(!capture_ops_allowed(&[update(
+            "task_items",
+            "due_at",
+            "10:00".into()
         )]));
         assert!(!capture_ops_allowed(&[update(
             "task_items",

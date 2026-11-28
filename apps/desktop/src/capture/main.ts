@@ -180,9 +180,17 @@ function loadContext() {
     })
     .catch(() => undefined);
 
-  void query<OpenItem & Record<string, string>>(OPEN_ITEMS_SQL)
+  void query<
+    Pick<OpenItem, "id" | "title" | "kind"> & { due_at: number | null; remind_at: number | null }
+  >(OPEN_ITEMS_SQL)
     .then((rows) => {
-      openItems = rows.map(({ id, title, kind }) => ({ id, title, kind }));
+      openItems = rows.map(({ id, title, kind, due_at, remind_at }) => ({
+        id,
+        title,
+        kind,
+        dueAt: due_at,
+        remindAt: remind_at,
+      }));
     })
     .catch(() => undefined);
 
@@ -345,9 +353,12 @@ form.addEventListener("submit", (event) => {
     output.textContent = parsed.why;
     return;
   }
-  // Unsure, or Shift+Enter: saved as a note now, read by the AI next. Never while fixing.
+  // Unsure, or Shift+Enter: saved as a note now, read by the AI next. Never while
+  // fixing, and never over a reading picked with Tab: that choice is the user's.
   const smart =
-    !editing && !strict && (forceAi || needsAi(parsed, rawText, { plain: nowMs < plain.until }));
+    !editing &&
+    !strict &&
+    (forceAi || (picked === 0 && needsAi(parsed, rawText, { plain: nowMs < plain.until })));
   forceAi = false;
   if (smart) {
     readSmart(rawText, parsed, nowMs);
@@ -535,31 +546,40 @@ function readSmart(rawText: string, parsed: Parsed, nowMs: number) {
     open: openItems,
     parse: { clockStyle, goals: goalNames, blocks: todayBlocks, ...moneyContext },
   };
-  void commitCapture(rawText, toOps(note, { nowMs, newId: () => ulid() }), PARSER_ID)
-    .then(async (rawId) => {
-      output.textContent = "Reading…";
-      const facts = commandFacts(rawText, nowMs, context.areas, openItems);
-      aiProvider ??= gemini();
-      const result = await withTimeout(runTask(COMMAND, facts, aiProvider));
-      const items: CommandItem[] = result.ok
-        ? result.value.items.map((item) => restore(item, facts.amounts))
-        : [];
-      const rows = rowsFor(items, context);
-      if (!rows.length) {
+  void commitCapture(rawText, toOps(note, { nowMs, newId: () => ulid() }), PARSER_ID).then(
+    async (rawId) => {
+      // Saved: from here on a failure keeps the note, never asks to save again.
+      try {
+        output.textContent = "Reading…";
+        const facts = commandFacts(rawText, nowMs, context.areas, openItems);
+        aiProvider ??= gemini();
+        const result = await withTimeout(runTask(COMMAND, facts, aiProvider));
+        const items: CommandItem[] = result.ok
+          ? result.value.items.map((item) => restore(item, facts.amounts))
+          : [];
+        const rows = rowsFor(items, context);
+        if (!rows.length) {
+          finish(KEPT);
+          return;
+        }
+        review = { rawId, text: rawText, state: { rows, cursor: 0 }, context };
+        showRows();
+        output.textContent = "Enter: save all";
+        void invoke("capture_rows", { rows: rows.length }).catch(() => undefined);
+      } catch {
+        review = undefined;
+        rowList.hidden = true;
         finish(KEPT);
-        return;
       }
-      review = { rawId, text: rawText, state: { rows, cursor: 0 }, context };
-      showRows();
-      output.textContent = "Enter: save all";
-      void invoke("capture_rows", { rows: rows.length }).catch(() => undefined);
-    })
-    .catch(() => {
+    },
+    // Only a failed save keeps the line in the box to try again.
+    () => {
       busy = false;
       input.disabled = false;
       output.textContent = "Couldn't save. Try again.";
       input.focus();
-    });
+    },
+  );
 }
 
 /** Enter on the rows: the note is replaced by what the rows that are on make. */
@@ -578,7 +598,12 @@ function acceptRows() {
       // A day off today: away until tomorrow, logged under this capture so undo puts it back.
       for (const effect of effects)
         if (effect.kind === "away")
-          await invoke("set_away", { until: effect.until, rawId: newId }).catch(() => undefined);
+          try {
+            await invoke("set_away", { until: effect.until, rawId: newId });
+          } catch {
+            finish(`Saved ${count}, but couldn't set away. Set it on Today.`, ANSWER_MS);
+            return;
+          }
       const search = effects.find((effect) => effect.kind === "search");
       if (search) {
         void invoke("open_notes", { query: search.query }).finally(() => void close());

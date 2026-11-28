@@ -132,7 +132,8 @@ export function dbTx(
 /**
  * capture_ops_allowed: a capture may only insert tasks, notes, money and
  * ideas, set a block's status to done or skipped (`gym done`), move a
- * task's due or planned day (ADR-0014), and set the prayer city (T-092).
+ * task's day and its due and reminder instants (ADR-0014), and set the
+ * prayer city (T-092).
  */
 export function captureOpsAllowed(ops: readonly Op[]): boolean {
   return ops.every((op) => {
@@ -168,8 +169,11 @@ export function captureOpsAllowed(ops: readonly Op[]): boolean {
         entries.length > 0 &&
         entries.every(
           ([key, value]) =>
-            (key === "due_date" || key === "planned_date") &&
-            (value === null || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))),
+            ((key === "due_date" || key === "planned_date") &&
+              (value === null ||
+                (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)))) ||
+            ((key === "due_at" || key === "remind_at") &&
+              (value === null || Number.isInteger(value))),
         )
       );
     }

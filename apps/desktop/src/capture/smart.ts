@@ -6,7 +6,7 @@
  * decides nothing: every write, date and amount below is the app's.
  */
 import { type Op } from "../kernel/db";
-import { logicalDate } from "../kernel/dates";
+import { localDate, logicalDate } from "../kernel/dates";
 import { formatEstimate } from "../features/plan/now";
 import { maskAmounts, unmask } from "../features/ai/mask";
 import {
@@ -88,15 +88,18 @@ export interface OpenItem {
   id: string;
   title: string;
   kind: "task" | "project";
+  /** A timed task's due and reminder instants, moved with its day. Never sent. */
+  dueAt?: number | null;
+  remindAt?: number | null;
 }
 
 /** Open tasks first, then projects: about 30, newest first. */
-export const OPEN_ITEMS_SQL = `SELECT id, title, kind FROM (
-    SELECT id, title, 'task' AS kind, updated_at FROM task_items
+export const OPEN_ITEMS_SQL = `SELECT id, title, kind, due_at, remind_at FROM (
+    SELECT id, title, 'task' AS kind, due_at, remind_at, updated_at FROM task_items
     WHERE deleted_at IS NULL AND parent_id IS NULL
       AND status NOT IN ('done', 'dropped', 'archived')
     ORDER BY updated_at DESC LIMIT 22)
-  UNION ALL SELECT id, title, kind FROM (
+  UNION ALL SELECT id, title, kind, NULL, NULL FROM (
     SELECT id, title, 'project' AS kind, updated_at FROM project_items
     WHERE deleted_at IS NULL AND status NOT IN ('done', 'dropped')
     ORDER BY updated_at DESC LIMIT 8)`;
@@ -118,9 +121,10 @@ export function commandFacts(
     nowMs,
     areas,
     // A title like "Pay rent 12000" keeps its words, not its amount ("Pay rent <a>").
-    open: open.map((item) => ({
-      ...item,
-      title: maskAmounts(item.title).text.replace(/<a\d+>/g, "<a>"),
+    open: open.map(({ id, kind, title }) => ({
+      id,
+      kind,
+      title: maskAmounts(title).text.replace(/<a\d+>/g, "<a>"),
     })),
   };
 }
@@ -163,6 +167,33 @@ function when(text: string | undefined, item: CommandItem, nowMs: number): When 
   return text
     ? readWhen(text, nowMs, item.ethiopian_clock ? "ethiopian" : "western")
     : { rest: "" };
+}
+
+/**
+ * A task's new day as columns. A timed task (`call bank fri 10am`) keeps its
+ * time of day, and its reminder keeps its lead, so they don't fire on the old
+ * day; a time in the words (`to mon 3pm`) sets both.
+ */
+export function dayValues(
+  target: OpenItem,
+  date: string,
+  minutes: number | undefined,
+  columns: ("due_date" | "planned_date")[],
+): Record<string, string | number | null> {
+  const values: Record<string, string | number | null> = {};
+  for (const column of columns) values[column] = date;
+  if (minutes !== undefined) {
+    const at = localToEpoch(date, minutes);
+    values.due_at = at;
+    values.remind_at = at;
+    return values;
+  }
+  const anchor = target.dueAt ?? target.remindAt;
+  if (anchor == null) return values;
+  const shift = Date.parse(date) - Date.parse(localDate(anchor));
+  if (target.dueAt != null) values.due_at = target.dueAt + shift;
+  if (target.remindAt != null) values.remind_at = target.remindAt + shift;
+  return values;
 }
 
 const join = (...parts: (string | undefined | false)[]) =>
@@ -247,7 +278,8 @@ export function proposal(item: CommandItem, context: SmartContext): Proposal | n
       }
     }
     case "move": {
-      const date = when(item.when_text, item, nowMs).date;
+      const read = when(item.when_text, item, nowMs);
+      const date = read.date;
       if (!target || target.kind !== "task" || !date) return null;
       return {
         label: join(`Move: ${target.title}`, dayLabel(date, nowMs)),
@@ -256,19 +288,27 @@ export function proposal(item: CommandItem, context: SmartContext): Proposal | n
             op: "update",
             table: "task_items",
             id: target.id,
-            values: { due_date: date, planned_date: date },
+            values: dayValues(target, date, read.minutes, ["due_date", "planned_date"]),
           },
         ],
       };
     }
     case "finish_by": {
-      const date = when(item.by_text, item, nowMs).date;
+      const read = when(item.by_text, item, nowMs);
+      const date = read.date;
       if (!date) return null;
       // Make room for it comes with the packer (#198); for now the deadline is set.
       if (target?.kind === "task")
         return {
           label: join(`Finish by ${dayLabel(date, nowMs)}: ${target.title}`),
-          ops: [{ op: "update", table: "task_items", id: target.id, values: { due_date: date } }],
+          ops: [
+            {
+              op: "update",
+              table: "task_items",
+              id: target.id,
+              values: dayValues(target, date, read.minutes, ["due_date"]),
+            },
+          ],
         };
       if (target) return null;
       const made = taskProposal(item, context, item.by_text);

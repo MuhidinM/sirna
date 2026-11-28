@@ -123,6 +123,29 @@ describe("masking amounts", () => {
     expect(masked.amounts).toEqual({ "<a1>": "150" });
   });
 
+  it("masks an amount stuck to its word, and keeps short ids", () => {
+    expect(maskAmounts("ምሳ120 ዛሬ").text).toBe("ምሳ<a1> ዛሬ");
+    expect(maskAmounts("taxi40 and lunch120 and coffee").text).toBe(
+      "taxi<a1> and lunch<a2> and coffee",
+    );
+    expect(maskAmounts("ምሳ120ብር").text).toBe("ምሳ<a1>ብር");
+    expect(maskAmounts("job2 and a1 and mp3s").text).toBe("job2 and a1 and mp3s");
+  });
+
+  it("a bare m is minutes only for a short length", () => {
+    expect(maskAmounts("120m for laptop").text).toBe("<a1>m for laptop");
+    expect(maskAmounts("run 45m").text).toBe("run 45m");
+  });
+
+  it("keeps an Amharic clock time, and masks birr", () => {
+    expect(maskAmounts("ሰኞ ዶክተር ቀጠሮ ከጠዋቱ 3").text).toBe("ሰኞ ዶክተር ቀጠሮ ከጠዋቱ 3");
+    expect(maskAmounts("በ3 ሰዓት ስብሰባ").text).toBe("በ3 ሰዓት ስብሰባ");
+    expect(maskAmounts("ማታ 2 ምሳ 150 ብር").text).toBe("ማታ 2 ምሳ <a1> ብር");
+    // A small amount is still money: `በ10 ብር`, `በ5` alone.
+    expect(maskAmounts("በ10 ብር ገዛሁ").text).toBe("በ<a1> ብር ገዛሁ");
+    expect(maskAmounts("ዳቦ በ5").text).toBe("ዳቦ በ<a1>");
+  });
+
   it("the fact sheet never holds an amount", () => {
     const facts = commandFacts("lunch 120 and call abel at 3", nowMs, areas, open);
     expect(COMMAND.facts(facts)).not.toContain("120");
@@ -296,6 +319,61 @@ describe("intents become ops (the model decides nothing)", () => {
       },
     ]);
     expect(made?.label).toBe("Move: Payroll report · Fri 4 Dec");
+  });
+
+  it("move: a timed task keeps its time of day, and its reminder moves with it", () => {
+    // `call bank fri 10am`: due and reminded Fri 4 Dec 10:00 (reminders.rs reads remind_at).
+    const due = Date.parse("2026-12-04T10:00:00+03:00");
+    const timed = {
+      nowMs,
+      newId: ids(),
+      areas,
+      open: [
+        {
+          id: "t3",
+          title: "Call bank",
+          kind: "task" as const,
+          dueAt: due,
+          remindAt: due - 30 * 60 * 1000,
+        },
+      ],
+    };
+    const moved = proposal(
+      { intent: "move", title: "Move", target: "t3", when_text: "mon", confidence: "high" },
+      timed,
+    );
+    expect(moved?.ops[0]).toMatchObject({
+      values: {
+        due_date: "2026-11-30",
+        planned_date: "2026-11-30",
+        due_at: Date.parse("2026-11-30T10:00:00+03:00"),
+        remind_at: Date.parse("2026-11-30T09:30:00+03:00"),
+      },
+    });
+    // A time in the words sets both.
+    const at = proposal(
+      { intent: "move", title: "Move", target: "t3", when_text: "mon 3pm", confidence: "high" },
+      timed,
+    );
+    expect(at?.ops[0]).toMatchObject({
+      values: {
+        due_at: Date.parse("2026-11-30T15:00:00+03:00"),
+        remind_at: Date.parse("2026-11-30T15:00:00+03:00"),
+      },
+    });
+    // `finish by wed` moves the deadline's instant too.
+    const by = proposal(
+      { intent: "finish_by", title: "x", target: "t3", by_text: "wed", confidence: "high" },
+      timed,
+    );
+    expect(by?.ops[0]).toMatchObject({
+      values: { due_date: "2026-12-02", due_at: Date.parse("2026-12-02T10:00:00+03:00") },
+    });
+    // Both instants pass the capture gate, and they are never sent to the model.
+    expect(captureOpsAllowed(moved?.ops ?? [])).toBe(true);
+    expect(
+      JSON.stringify(commandFacts("move call bank to mon", nowMs, areas, timed.open)),
+    ).not.toContain(String(due));
   });
 
   it("move: a project can't be moved here", () => {
