@@ -1,6 +1,6 @@
 import { type DatabaseSync } from "node:sqlite";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type Op, type Row, type SqlValue } from "../../kernel/db";
 import { openTestDb } from "../../test/sqlite";
@@ -23,6 +23,7 @@ import {
 } from "./dayplan";
 import { deleteOps } from "./edit";
 import { loadPreview } from "./preview";
+import { MIN_LEFT_MIN } from "./left";
 import { DEFAULT_ANSWERS } from "./routine";
 import { setupOps } from "./setup";
 
@@ -1522,5 +1523,96 @@ describe("memoQuery", () => {
     expect(await memo.query("SELECT ?", [2])).toEqual([{ n: 2 }]);
     memo.clear();
     expect(await memo.query("SELECT ?", [1])).toEqual([{ n: 3 }]);
+  });
+});
+
+describe("time left never hits 0 while a task is open (T-082)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A routine, one task per row, and focus minutes run on each task. */
+  function withTasks(tasks: [id: string, status: string, estimate: number, focusedMin: number][]) {
+    const h = harness();
+    apply(
+      h.db,
+      setupOps(
+        { ...DEFAULT_ANSWERS, clockStyle: "western", targetsHours: {} },
+        [],
+        ["joba", "jobb", "jobhunt", "coding", "experiments", "gym", "quran", "admin"],
+        h.newId,
+      ),
+    );
+    tasks.forEach(([id, status, estimate, focusedMin], i) => {
+      h.db
+        .prepare(
+          `INSERT INTO task_items (id, title, status, area_id, due_date, estimate_min, created_at, updated_at)
+           VALUES (?, ?, ?, 'coding', '2026-11-11', ?, ?, ?)`,
+        )
+        .run(id, `Task ${id}`, status, estimate, i, i);
+      if (focusedMin > 0)
+        h.db
+          .prepare(
+            `INSERT INTO focus_sessions (id, task_id, kind, started_at, planned_min, ended_at, paused_ms)
+             VALUES (?, ?, 'focus', ?, ?, ?, 0)`,
+          )
+          .run(`f-${id}`, id, NOW - 86_400_000, focusedMin, NOW - 86_400_000 + focusedMin * 60_000);
+    });
+    return h;
+  }
+
+  it("keeps an overrun task at the floor, and a short estimate at its own length", async () => {
+    const h = withTasks([
+      ["over", "todo", 60, 90],
+      ["short", "todo", 5, 0],
+      ["fresh", "todo", 60, 20],
+      ["done", "done", 60, 90],
+    ]);
+    const input = await loadPlanInput(h.query, "2026-11-11");
+    expect(input.tasks.map((t) => [t.id, t.remainingMin])).toEqual([
+      ["over", MIN_LEFT_MIN],
+      ["short", 5],
+      ["fresh", 40],
+    ]);
+  });
+
+  it("still plans an open task that ran over, and never a done one", async () => {
+    const h = withTasks([
+      ["over", "todo", 60, 90],
+      ["done", "done", 60, 90],
+    ]);
+    await ensureDayPlan(h.query, h.transact, Date.now(), h.newId);
+    const planned = h.db
+      .prepare(
+        "SELECT DISTINCT task_id FROM day_blocks WHERE task_id IS NOT NULL AND deleted_at IS NULL",
+      )
+      .all() as { task_id: string }[];
+    expect(planned.map((row) => row.task_id)).toEqual(["over"]);
+  });
+
+  it("flags an overrun task due today as late by the floor when today has no time", async () => {
+    vi.setSystemTime(LATE);
+    const h = withTasks([
+      ["over", "todo", 60, 90],
+      ["done", "done", 60, 90],
+    ]);
+    const { late, days } = await loadPreview(h.query, "2026-11-11", Date.now());
+    expect(late).toEqual([
+      {
+        id: "over",
+        title: "Task over",
+        dueDate: "2026-11-11",
+        shortMin: MIN_LEFT_MIN,
+        finishes: "2026-11-12",
+      },
+    ]);
+    // It is planned the next day, once.
+    expect(
+      days.flatMap((d) => d.blocks.filter((b) => b.taskId === "over").map(() => d.date)),
+    ).toEqual(["2026-11-12"]);
   });
 });

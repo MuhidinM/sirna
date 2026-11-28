@@ -8,6 +8,7 @@ import { type Op } from "../../kernel/db";
 import { FILLABLE_KINDS, hasEstimate, type PlanInput } from "./generate";
 import { type PreviewDay, runChain, type SavedDay, shiftDate } from "./carry";
 import { loadChain, type Query } from "./dayplan";
+import { leftFloor } from "./left";
 
 export { fromNow, type PreviewBlock, type PreviewDay } from "./carry";
 
@@ -61,7 +62,9 @@ export function previewWeek(
     const stillNeeds =
       onDueDay && onDueDay.has(task.id)
         ? (onDueDay.get(task.id) ?? 0)
-        : (task.remainingMin ?? null);
+        : task.remainingMin === null || task.remainingMin === undefined
+          ? null
+          : Math.max(task.remainingMin, leftFloor(task));
     late.push({
       id: task.id,
       title: task.title,

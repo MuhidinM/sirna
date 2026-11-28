@@ -12,6 +12,7 @@ import {
   TASK_BLOCK_MIN,
   type TaskInput,
 } from "./generate";
+import { leftFloor } from "./left";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -100,9 +101,13 @@ function book(carry: Carry, input: PlanInput, booked: Booking[]): void {
     if (key) already[key] = (already[key] ?? 0) + block.durationMin;
     if (!block.taskId || carry.finished.has(block.taskId)) continue;
     const task = input.tasks.find((t) => t.id === block.taskId);
+    // A task's own time left never counts as 0 while it is open (T-082): one
+    // that ran over still needs its floor, so only time booked here finishes it.
     const need = carry.left.has(block.taskId)
       ? carry.left.get(block.taskId)
-      : (task?.remainingMin ?? null);
+      : task?.remainingMin === null || task?.remainingMin === undefined
+        ? null
+        : Math.max(task.remainingMin, leftFloor(task));
     const rest = need === null || need === undefined ? 0 : need - block.durationMin;
     if (rest > 0) carry.left.set(block.taskId, rest);
     else {

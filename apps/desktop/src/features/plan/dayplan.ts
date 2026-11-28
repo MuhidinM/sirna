@@ -39,6 +39,7 @@ import {
   type TemplateBlock,
   WINDOWS,
 } from "./generate";
+import { MIN_LEFT_MIN } from "./left";
 
 export type Query = <T extends Row>(sql: string, params?: SqlValue[]) => Promise<T[]>;
 
@@ -95,7 +96,11 @@ export const DONE_THIS_WEEK_SQL = `
   GROUP BY area_id
   HAVING minutes > 0`;
 
-/** Open tasks, with what is left of their estimate after focus time on them. */
+/**
+ * Open tasks, with what is left of their estimate after focus time on them:
+ * never less than MIN_LEFT_MIN (or the whole estimate when shorter), so a task
+ * that ran over is still planned while it is open (T-082).
+ */
 export const OPEN_TASKS_SQL = `
   SELECT t.id, t.title, t.area_id, t.project_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
          t.estimate_min, t.parent_id, t.step_no,
@@ -105,7 +110,8 @@ export const OPEN_TASKS_SQL = `
                    AND before_step.status = 'todo' AND before_step.deleted_at IS NULL) AS waits,
          -- A deadline an old carry may have written isn't urgent until confirmed.
          CASE WHEN t.deadline_stale = 1 THEN NULL ELSE t.due_date END AS due_date,
-         CASE WHEN t.estimate_min IS NULL THEN NULL ELSE MAX(0, t.estimate_min - COALESCE((
+         CASE WHEN t.estimate_min IS NULL THEN NULL
+           ELSE MAX(MIN(t.estimate_min, ${MIN_LEFT_MIN}), t.estimate_min - COALESCE((
            SELECT sum(MAX(0, (f.ended_at - f.started_at - f.paused_ms) / 60000))
            FROM focus_sessions f
            WHERE f.task_id = t.id AND f.kind = 'focus' AND f.ended_at IS NOT NULL), 0)) END
