@@ -9,11 +9,7 @@ import { type Op } from "../kernel/db";
 import { localDate, logicalDate } from "../kernel/dates";
 import { formatEstimate } from "../features/plan/now";
 import { maskAmounts, unmask } from "../features/ai/mask";
-import {
-  type CommandFacts,
-  type CommandItem,
-  SIZE_MIN,
-} from "../features/ai/touchpoints";
+import { type CommandFacts, type CommandItem, SIZE_MIN } from "../features/ai/touchpoints";
 import { dayLabel, echo, toOps } from "./ops";
 import { type ParseOptions, type Parsed, parseCapture } from "./parse";
 import { localToEpoch, readWhen, weekdayName, type When } from "./when";

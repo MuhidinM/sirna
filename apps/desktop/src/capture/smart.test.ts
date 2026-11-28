@@ -438,7 +438,12 @@ describe("intents become ops (the model decides nothing)", () => {
     ).toEqual({
       label: "In Adama · prayer times from here",
       ops: [
-        { op: "upsert", table: "core_settings", id: "prayer.city", values: { value_json: '"adama"' } },
+        {
+          op: "upsert",
+          table: "core_settings",
+          id: "prayer.city",
+          values: { value_json: '"adama"' },
+        },
       ],
     });
   });
