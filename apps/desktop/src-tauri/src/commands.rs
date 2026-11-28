@@ -156,7 +156,7 @@ pub fn capture_replace(
 /// project). The links are read before the undo, since undoing an earlier fix
 /// takes back the links it carried. They are logged under the new capture
 /// with only the carried columns as "before", so undoing it puts back the
-/// links and nothing else: later edits to the steps stay.
+/// links and not `user_edited_at`; undo already skips columns edited since.
 fn replace_in(
     txn: &rusqlite::Transaction<'_>,
     raw_id: i64,
@@ -194,7 +194,7 @@ fn replace_in(
 }
 
 /// Trims the "before" of each carried update to the columns it set, so undo
-/// restores those columns only (undo restores whatever a snapshot holds).
+/// puts back only the carried columns, not `user_edited_at`.
 fn keep_only_carried_columns(
     conn: &rusqlite::Connection,
     context: &str,
