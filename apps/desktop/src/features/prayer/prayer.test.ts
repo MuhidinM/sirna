@@ -92,6 +92,26 @@ describe("checkPrayerSettings and prayerSettingsOps", () => {
       values: { value_json: "9.1" },
     });
   });
+
+  it("writes only what changed, so a Save keeps a city set from the tray", () => {
+    const stored = { ...readPrayerSettings([]), city: "adama" as const };
+    // The form still shows Addis from when Settings opened; the user changed Jumu'ah.
+    const form = { ...stored, city: "addis" as const, jumuah: "12:45" };
+    const ops = prayerSettingsOps({ ...form, city: stored.city }, stored);
+    expect(ops).toEqual([
+      {
+        op: "upsert",
+        table: "core_settings",
+        id: "prayer.jumuah",
+        values: { value_json: '"12:45"' },
+      },
+    ]);
+    expect(prayerSettingsOps(stored, stored)).toEqual([]);
+    expect(prayerSettingsOps(form, stored).map((op) => (op.op === "upsert" ? op.id : ""))).toEqual([
+      "prayer.city",
+      "prayer.jumuah",
+    ]);
+  });
 });
 
 describe("lines on Today", () => {

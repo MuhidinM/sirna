@@ -162,8 +162,24 @@ export function checkPrayerSettings(values: PrayerSettings): string | null {
   return null;
 }
 
-/** The writes for the Prayer section. */
-export function prayerSettingsOps(values: PrayerSettings): Op[] {
+/**
+ * The writes for the Prayer section. With `stored`, only the settings that
+ * differ from it: the tray or `I'm in Adama` can change the city while
+ * Settings is open, and a Save of the Jumu'ah time mustn't put the old city
+ * back (or block undoing that capture).
+ */
+export function prayerSettingsOps(values: PrayerSettings, stored?: PrayerSettings): Op[] {
+  const ops = allPrayerOps(values);
+  if (!stored) return ops;
+  const before = new Map(allPrayerOps(stored).map((op) => [op.op === "upsert" ? op.id : "", op]));
+  return ops.filter((op) => {
+    if (op.op !== "upsert") return true;
+    const old = before.get(op.id);
+    return !(old?.op === "upsert" && old.values.value_json === op.values.value_json);
+  });
+}
+
+function allPrayerOps(values: PrayerSettings): Op[] {
   const setting = (key: string, value: unknown): Op => ({
     op: "upsert",
     table: "core_settings",

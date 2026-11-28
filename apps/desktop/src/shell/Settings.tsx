@@ -280,6 +280,12 @@ function PrayerForm({ initial }: { initial: PrayerSettings }) {
   );
   const [afterText, setAfterText] = useState(String(initial.notifyAfterMin));
   const [note, setNote] = useState("");
+  // The tray and `I'm in Adama` change the city while Settings is open: show it.
+  const [seenCity, setSeenCity] = useState(initial.city);
+  if (initial.city !== seenCity) {
+    setSeenCity(initial.city);
+    setValues((current) => ({ ...current, city: initial.city }));
+  }
   const change = (next: Partial<PrayerSettings>) => {
     setNote("");
     setValues({ ...values, ...next });
@@ -301,7 +307,7 @@ function PrayerForm({ initial }: { initial: PrayerSettings }) {
           setNote(problem);
           return;
         }
-        transact("user", prayerSettingsOps(next), "settings")
+        transact("user", prayerSettingsOps(next, initial), "settings")
           .then(() => setNote("Saved"))
           .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
       }}
