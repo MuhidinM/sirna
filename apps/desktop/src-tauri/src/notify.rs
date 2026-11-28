@@ -5,7 +5,7 @@
 //! toast is on screen.
 
 use tauri::AppHandle;
-use tauri_winrt_notification::{Toast, ToastDismissalReason};
+use tauri_winrt_notification::{Scenario, Toast, ToastDismissalReason};
 
 use crate::windows;
 
@@ -102,4 +102,53 @@ fn show_check_now(app: &AppHandle) {
     if let Err(error) = result {
         log::error!("could not show the check toast: {error}");
     }
+}
+
+/// The T-083 spike: an urgent toast with five buttons (does it pass Do not
+/// disturb, and do its buttons reach Rust?), then two plain toasts with the
+/// same tag (does the second replace the first?). Results go to the log.
+pub fn show_important_check(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let id = app_id(&app);
+        let urgent = Toast::new(&id)
+            .title("Sirna important check")
+            .text1("Do you see this during Do not disturb? Pick any button.")
+            .scenario(Scenario::Urgent)
+            .tag("important-check")
+            .add_button("One", "b1")
+            .add_button("Two", "b2")
+            .add_button("Three", "b3")
+            .add_button("Four", "b4")
+            .add_button("Five", "b5")
+            .on_activated(|action| {
+                log::info!(
+                    "important check action: {}",
+                    action.as_deref().unwrap_or("body")
+                );
+                Ok(())
+            })
+            .on_dismissed(|reason| {
+                log::info!("important check dismissed: {}", dismissal_label(reason));
+                Ok(())
+            });
+        match urgent.show() {
+            Ok(()) => log::info!("important check shown"),
+            Err(error) => log::error!("important check failed: {error}"),
+        }
+        for (n, text) in [
+            (1, "First plain toast (should be replaced)"),
+            (2, "Second plain toast: replaced the first"),
+        ] {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            let plain = Toast::new(&id)
+                .title("Sirna tag check")
+                .text1(text)
+                .tag("plain-check");
+            match plain.show() {
+                Ok(()) => log::info!("tag check {n} shown"),
+                Err(error) => log::error!("tag check {n} failed: {error}"),
+            }
+        }
+    });
 }

@@ -40,6 +40,7 @@ pub fn run() {
             match startup::second_launch_action(args) {
                 startup::SecondLaunch::OpenMain => windows::spawn_open_main(app.clone()),
                 startup::SecondLaunch::TestToast => notify::show_check(app),
+                startup::SecondLaunch::TestImportant => notify::show_important_check(app),
             }
         }))
         .plugin(tauri_plugin_autostart::init(
