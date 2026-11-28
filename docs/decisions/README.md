@@ -18,3 +18,4 @@ The planning-stage decisions (D1–D49) are logged in [plan §15](../plan.md#15-
 | [0010](0010-job-parts-and-lunch.md)        | Job parts, and lunch stays outside job hours             | accepted |
 | [0011](0011-effort-insight-thresholds.md)  | When an effort insight is worth saying                   | accepted |
 | [0012](0012-time-left-floor.md)            | Time left on an open task never reads 0                  | accepted |
+| [0014](0014-ai-in-capture.md)              | AI in the capture box                                    | accepted |

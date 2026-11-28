@@ -1,0 +1,30 @@
+{"ref": "m01", "text": "ነገ ባንክ መደወል", "intents": ["task"]}
+{"ref": "m02", "text": "ዛሬ ምሳ 150", "intents": ["money"]}
+{"ref": "m03", "text": "call ባንክ tomorrow about the card", "intents": ["task"]}
+{"ref": "m04", "text": "send the invoice to job a tomorrow, fix the export bug today and also apply to 2 jobs this week", "intents": ["task", "task", "task"]}
+{"ref": "m05", "text": "move the payroll report to fri", "intents": ["move"]}
+{"ref": "m06", "text": "push the payroll report to monday", "intents": ["move"]}
+{"ref": "m07", "text": "finish the payroll report by wed", "intents": ["finish_by"]}
+{"ref": "m08", "text": "off today", "intents": ["day_mode"]}
+{"ref": "m09", "text": "light day tomorrow", "intents": ["day_mode"]}
+{"ref": "m10", "text": "i'm in adama", "intents": ["place"]}
+{"ref": "m11", "text": "working from adama this week", "intents": ["place"]}
+{"ref": "m12", "text": "አዳማ ነኝ", "intents": ["place"]}
+{"ref": "m13", "text": "ሰኞ ዶክተር ቀጠሮ ከጠዋቱ 3", "intents": ["task"]}
+{"ref": "m14", "text": "lunch 120, call mom tonight and buy bread", "intents": ["money", "task", "task"]}
+{"ref": "m15", "text": "የቤት ኪራይ 12000 ከፈልኩ", "intents": ["money"]}
+{"ref": "m16", "text": "where did i put the wifi password, also remind me to renew the domain fri", "intents": ["question", "task"]}
+{"ref": "m17", "text": "maybe learn rust someday when work is calm", "intents": ["note"]}
+{"ref": "m18", "text": "ለአበል 1500 አበደርኩ", "intents": ["money"]}
+{"ref": "m19", "text": "reschedule the dentist to next tue", "intents": ["move"]}
+{"ref": "m20", "text": "ነገ ጂም, ቁርአን ማታ, and email the landlord", "intents": ["task", "task", "task"]}
+{"ref": "m21", "text": "the client said the deadline moved, so finish the slide deck by thu", "intents": ["note", "finish_by"]}
+{"ref": "m22", "text": "ዛሬ እረፍት ነው", "intents": ["day_mode"]}
+{"ref": "m23", "text": "prepare slides for the job b demo, about 2 hours, steps: outline, draft, rehearse", "intents": ["task"]}
+{"ref": "m24", "text": "taxi 80 and coffee 40 and then call abel back", "intents": ["money", "money", "task"]}
+{"ref": "m25", "text": "ቡና 40 ጠጣሁ, ነገ ሪፖርት ላክ", "intents": ["money", "task"]}
+{"ref": "m26", "text": "back in addis from tomorrow", "intents": ["place"]}
+{"ref": "m27", "text": "the meeting room code changed to the new one on the board", "intents": ["note"]}
+{"ref": "m28", "text": "ሐሙስ ለስራ ማመልከቻ ላክ", "intents": ["task"]}
+{"ref": "m29", "text": "what did i spend on transport last week", "intents": ["question"]}
+{"ref": "m30", "text": "move the portfolio work to next week and finish the cv by sat", "intents": ["move", "finish_by"]}

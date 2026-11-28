@@ -133,6 +133,7 @@ pub fn run() {
             commands::capture_ready,
             commands::capture_replace,
             commands::close_window,
+            commands::capture_rows,
             commands::secret_set,
             commands::ai_send,
             commands::calendar_fetch,

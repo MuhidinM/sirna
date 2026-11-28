@@ -15,11 +15,17 @@ import { describe, expect, it } from "vitest";
 
 import { systemClock } from "../src/kernel/clock";
 import { checkWithDate } from "../src/features/projects/capacity";
-import { type CaptureCase, readJsonl, type TimingCase } from "../src/features/ai/evalset";
+import {
+  type CaptureCase,
+  type CommandCase,
+  readJsonl,
+  type TimingCase,
+} from "../src/features/ai/evalset";
+import { commandFacts } from "../src/capture/smart";
 import { timingFacts } from "../src/features/ai/facts";
 import { geminiBody } from "../src/features/ai/providers";
 import { type AiTask, type LlmProvider, plain, runTask } from "../src/features/ai/task";
-import { CAPTURE, TIMING } from "../src/features/ai/touchpoints";
+import { CAPTURE, COMMAND, TIMING } from "../src/features/ai/touchpoints";
 
 const KEY = process.env.GEMINI_API_KEY ?? "";
 const MODEL = process.env.GEMINI_MODEL ?? "";
@@ -65,6 +71,8 @@ interface Score {
   date: string;
   timing: { pass: number; total: number };
   capture: { pass: number; total: number };
+  /** Smart capture lines whose intents came back as expected, in order (T-090). */
+  command?: { pass: number; total: number };
 }
 
 describe.skipIf(!KEY || !MODEL)("AI evals (live)", () => {
@@ -76,6 +84,7 @@ describe.skipIf(!KEY || !MODEL)("AI evals (live)", () => {
         date: new Date(systemClock.now()).toISOString().slice(0, 10),
         timing: { pass: 0, total: 0 },
         capture: { pass: 0, total: 0 },
+        command: { pass: 0, total: 0 },
       };
 
       // Timing reasons: every dated idea must get a valid, grounded reply.
@@ -123,6 +132,23 @@ describe.skipIf(!KEY || !MODEL)("AI evals (live)", () => {
         for (const c of batch) if (byRef.get(c.ref)?.kind === c.kind) score.capture.pass += 1;
       }
 
+      // Smart capture: one request a line; the intents must match, in order.
+      const command = { pass: 0, total: 0 };
+      const nowMs = Date.parse("2026-11-28T10:00:00+03:00");
+      const open = [
+        { id: "t1", title: "Payroll report", kind: "task" as const },
+        { id: "t2", title: "Dentist", kind: "task" as const },
+        { id: "p1", title: "Portfolio site", kind: "project" as const },
+      ];
+      for (const c of readJsonl<CommandCase>("command.jsonl")) {
+        command.total += 1;
+        const result = await fresh(COMMAND, commandFacts(c.text, nowMs, areas, open));
+        const got = result.ok ? result.value.items.map((item) => item.intent) : [];
+        if (got.join(",") === c.intents.join(",")) command.pass += 1;
+        else console.warn(`command ${c.ref}:`, result.ok ? got.join(",") : result.code);
+      }
+      score.command = command;
+
       const file = new URL("./baseline.json", import.meta.url);
       writeFileSync(
         new URL("./last-run.json", import.meta.url),
@@ -140,6 +166,10 @@ describe.skipIf(!KEY || !MODEL)("AI evals (live)", () => {
       expect(score.capture.pass, "capture passes dropped").toBeGreaterThanOrEqual(
         baseline.capture.pass,
       );
+      if (baseline.command)
+        expect(command.pass, "command passes dropped").toBeGreaterThanOrEqual(
+          baseline.command.pass,
+        );
     },
     20 * 60 * 1000,
   );

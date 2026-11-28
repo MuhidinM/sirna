@@ -124,3 +124,57 @@ body {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/*
+ * Smart capture rows (ADR-0014): under the bar, one 28 px line each, then a
+ * 24 px line of keys. windows.rs capture_height matches: 6 gap + 2 x 6
+ * padding + rows x 28 + 24. The line ring is a shadow so it adds no height.
+ */
+.capture-panel {
+  display: none;
+  margin-top: 6px;
+  padding: 6px 14px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--panel-line);
+  border-radius: 20px;
+}
+
+.capture-panel:has(.capture-rows:not([hidden])) {
+  display: block;
+}
+
+.capture-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capture-rows li {
+  height: 28px;
+  line-height: 28px;
+  padding: 0 var(--space-1);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.capture-rows li[aria-current="true"] {
+  background: var(--cream);
+  color: var(--cream-ink);
+}
+
+.capture-rows li[data-on="false"] {
+  color: var(--ink-3);
+  text-decoration: line-through;
+}
+
+.capture-keys {
+  height: 24px;
+  margin: 0;
+  line-height: 24px;
+  font-size: 12px;
+  color: var(--ink-3);
+}

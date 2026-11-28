@@ -138,6 +138,19 @@ pub fn paint_title_bar(window: &tauri::WebviewWindow, theme: &str) {
 /// The capture bar's size: thin and long (src/capture/capture.css matches it).
 pub const CAPTURE_WIDTH: f64 = 680.0;
 pub const CAPTURE_HEIGHT: f64 = 52.0;
+/// Smart capture rows under the bar (capture.css matches): a 6 px gap, a
+/// panel with 6 px padding, 28 px a row and a 24 px line of keys.
+pub const CAPTURE_ROW_HEIGHT: f64 = 28.0;
+pub const CAPTURE_MAX_ROWS: u32 = 6;
+const CAPTURE_PANEL_EXTRA: f64 = 6.0 + 2.0 * 6.0 + 24.0;
+
+/// The capture window's height with `rows` rows showing (at most six).
+pub fn capture_height(rows: u32) -> f64 {
+    match rows.min(CAPTURE_MAX_ROWS) {
+        0 => CAPTURE_HEIGHT,
+        rows => CAPTURE_HEIGHT + CAPTURE_PANEL_EXTRA + f64::from(rows) * CAPTURE_ROW_HEIGHT,
+    }
+}
 
 /// The capture box: small, frameless, on top, not in the taskbar. It closes
 /// when it loses focus. Whether to keep it warm instead is decided in T-010.
@@ -168,4 +181,17 @@ fn open_capture(app: &AppHandle) -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_capture_box_grows_for_at_most_six_rows() {
+        assert_eq!(capture_height(0), CAPTURE_HEIGHT);
+        assert_eq!(capture_height(1), 52.0 + 42.0 + 28.0);
+        assert_eq!(capture_height(6), 52.0 + 42.0 + 6.0 * 28.0);
+        assert_eq!(capture_height(60), capture_height(6));
+    }
 }

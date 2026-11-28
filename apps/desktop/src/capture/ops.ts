@@ -467,7 +467,7 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
   }
 }
 
-function dayLabel(date: string, nowMs: number): string {
+export function dayLabel(date: string, nowMs: number): string {
   const today = logicalDate(nowMs);
   if (date === today) return "Today";
   const tomorrow = logicalDate(nowMs + 24 * 60 * 60 * 1000);
