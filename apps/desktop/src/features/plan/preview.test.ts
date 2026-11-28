@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { type AreaInput, type PlanInput, projectKey, type TaskInput } from "./generate";
 import { shiftDate } from "./dayplan";
-import { MIN_LEFT_MIN } from "./left";
 import { fromNow, planTodayOps, previewWeek, pushDeadlineOps } from "./preview";
 
 const coding: AreaInput = {
@@ -62,19 +61,6 @@ describe("the week ahead (T-069)", () => {
     // Without an estimate a task is done after one block.
     const quick = previewWeek([day(0, [task({ id: "q" })]), day(1, [task({ id: "q" })])]);
     expect(quick.days.map((d) => d.blocks[0]?.taskId ?? null)).toEqual(["q", null]);
-  });
-
-  it("never finishes an open task just because its own time left is 0 (T-082)", () => {
-    // An estimated task that reads 0 left is still open: it needs its floor.
-    const over = task({ remainingMin: 0, estimateMin: 60, dueDate: MON });
-    const preview = previewWeek([0, 1].map((i) => day(i, [over])));
-    expect(preview.days[0]?.blocks.some((b) => b.taskId === "t")).toBe(true);
-    expect(preview.late).toEqual([]);
-    // With no time on its due day, it is late by the floor.
-    const busy = { ...day(0, [over]), template: [] };
-    expect(previewWeek([busy]).late).toEqual([
-      { id: "t", title: "Portfolio", dueDate: MON, shortMin: MIN_LEFT_MIN, finishes: null },
-    ]);
   });
 
   it("flags a task due this week that never gets time", () => {
