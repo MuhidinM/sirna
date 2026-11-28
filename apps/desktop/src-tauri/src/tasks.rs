@@ -8,6 +8,9 @@ use crate::tx::{self, Op};
 /// Shared with the Today screen, so the tray and the screen agree.
 const TODAY_TOP_SQL: &str = include_str!("../../src/features/tasks/queries/today_top.sql");
 
+/// Up next (T-086), shared with Today (features/tasks/upNext.ts).
+const UP_NEXT_SQL: &str = include_str!("../../src/features/tasks/queries/up_next.sql");
+
 /// The newest capture not undone. A newer line that made nothing (`afford`,
 /// `? search`) hides the Undo rather than letting it reach an older capture
 /// (F38); the same rule as LAST_CAPTURE_SQL in src/capture/fix.ts.
@@ -58,6 +61,28 @@ pub fn today_top(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<TopTask
             id: row.get(0)?,
             title: row.get(1)?,
             done: row.get::<_, String>(2)? == "done",
+        })
+    })?;
+    rows.collect()
+}
+
+/// A task Up next offers.
+#[derive(Debug, PartialEq)]
+pub struct NextTask {
+    pub id: String,
+    pub title: String,
+}
+
+/// The first `limit` tasks in the Up next order, as Today shows them. The
+/// tray will offer them (T-085); until then only the test reads it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn up_next(conn: &Connection, now_ms: i64, limit: i64) -> rusqlite::Result<Vec<NextTask>> {
+    let (date, start) = logical_day(now_ms);
+    let mut statement = conn.prepare(UP_NEXT_SQL)?;
+    let rows = statement.query_map(rusqlite::params![date, start, now_ms, limit], |row| {
+        Ok(NextTask {
+            id: row.get(0)?,
+            title: row.get(1)?,
         })
     })?;
     rows.collect()
@@ -198,6 +223,29 @@ mod tests {
     use crate::{db, migrate};
 
     const NOON_11_NOV: i64 = 1_794_387_600_000; // 2026-11-11 12:00 in Addis Ababa
+
+    /// Same fixture and order as src/features/tasks/upNext.test.ts.
+    #[test]
+    fn up_next_matches_todays_order() {
+        let conn = conn();
+        conn.execute_batch(include_str!(
+            "../../src/features/tasks/fixtures/up_next.sql"
+        ))
+        .expect("fixture");
+        let ids: Vec<String> = up_next(&conn, NOON_11_NOV, 50)
+            .expect("up next")
+            .into_iter()
+            .map(|task| task.id)
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "hand", "due-past", "due-tom", "pinned", "stale", "planned", "ja1", "jb1",
+                "due-far", "c1", "n1", "ja2", "jb2", "old-run", "step1"
+            ]
+        );
+        assert_eq!(up_next(&conn, NOON_11_NOV, 2).expect("two").len(), 2);
+    }
 
     fn conn() -> Connection {
         let mut conn = Connection::open_in_memory().expect("open");
