@@ -251,6 +251,16 @@
   margin: calc(-1 * var(--space-3)) 0 var(--space-4);
 }
 
+/* Prayer times under the date (T-092): one quiet line, the hint follows it. */
+.today-prayer {
+  margin: calc(-1 * var(--space-3)) 0 var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.today-prayer + .today-hint {
+  margin-top: 0;
+}
+
 /* --- Editing a day's board (time-first §1 rule 8) --------------------------------------------- */
 
 .link-btn {

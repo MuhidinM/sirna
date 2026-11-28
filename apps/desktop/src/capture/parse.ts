@@ -21,6 +21,18 @@ import { transferSaving } from "../features/savings/savings";
 
 export const PARSER_ID = "capture@1";
 
+/** The cities prayer times know (Rust prayer.rs and the tray's Location menu). */
+export type City = "addis" | "adama";
+
+/** `i'm in adama`, `in addis ababa`, `now in adama` → the city; anything else → undefined. */
+export function readCity(lower: string): City | undefined {
+  const match = /^(?:i'?m |i am |now )?(?:now )?in (addis(?: ababa)?|adama)[.!]?$/.exec(
+    lower.trim(),
+  );
+  if (!match) return undefined;
+  return match[1]?.startsWith("addis") ? "addis" : "adama";
+}
+
 export type Parsed =
   | {
       kind: "task";
@@ -82,6 +94,8 @@ export type Parsed =
   | { kind: "away"; until?: string }
   /** `back`, `i'm back`: away ends now (F41). */
   | { kind: "back" }
+  /** `I'm in Adama`, `in addis` (T-092): where prayer times are worked out for. */
+  | { kind: "city"; city: City }
   | SavingItem
   | { kind: "focus" }
   /** `gym done`, `skipped gym` (plan §3.5): one of today's blocks, ticked or skipped. */
@@ -1280,6 +1294,8 @@ function parseOne(raw: string, options: ParseOptions): Parsed {
   if (block) return block;
   if (/^away\b/.test(lower)) return readAway(text, nowMs, clockStyle);
   if (/^(?:i'?m |i am )?back(?: now)?[.!]?$/.test(lower)) return { kind: "back" };
+  const city = readCity(lower);
+  if (city) return { kind: "city", city };
 
   // Savings (plan §3.13). Kept narrow so ordinary lines stay what they were:
   // `saved 500` / `put aside 2k`  — nothing after the amount;

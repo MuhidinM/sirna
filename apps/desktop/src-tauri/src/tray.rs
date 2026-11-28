@@ -3,7 +3,7 @@
 //! The menu shows today's top 3 as check items and "Last: … · Undo", and is
 //! rebuilt whenever data changes.
 
-use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Error, Manager, Wry};
 
@@ -23,6 +23,9 @@ const FOCUS_RESUME_ID: &str = "focus-resume";
 const FOCUS_STOP_ID: &str = "focus-stop";
 const FOCUS_DISTRACTED_ID: &str = "focus-distracted";
 const REVIEW_ID: &str = "review";
+const CITY_PREFIX: &str = "city:";
+/// The Location submenu (T-092): where prayer times are calculated for.
+pub const CITIES: [(&str, &str); 2] = [("addis", "Addis Ababa"), ("adama", "Adama")];
 const MENU_TEXT_MAX: usize = 48;
 
 /// The tooltip names the capture hotkey, so a fallback key is never a surprise.
@@ -74,7 +77,7 @@ fn short(text: &str) -> String {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let (top, last, offer_review, stopped) = {
+    let (top, last, offer_review, stopped, city) = {
         let db = app.state::<Db>();
         let conn = db.write.lock();
         let now = clock::now_ms();
@@ -93,6 +96,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             last,
             review::offered(&conn, now),
             crate::guard::stopped_now(&conn, now),
+            crate::prayer::config(&conn).city,
         )
     };
 
@@ -223,6 +227,29 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             None::<&str>,
         )?));
     }
+    let places = CITIES
+        .iter()
+        .map(|(id, name)| {
+            CheckMenuItem::with_id(
+                app,
+                format!("{CITY_PREFIX}{id}"),
+                *name,
+                true,
+                city == *id,
+                None::<&str>,
+            )
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let place_refs: Vec<&dyn IsMenuItem<Wry>> = places
+        .iter()
+        .map(|item| item as &dyn IsMenuItem<Wry>)
+        .collect();
+    items.push(Box::new(Submenu::with_items(
+        app,
+        "Location",
+        true,
+        &place_refs,
+    )?));
     items.push(Box::new(MenuItem::with_id(
         app,
         TEST_TOAST_ID,
@@ -293,6 +320,29 @@ fn undo_capture(app: &AppHandle, raw_id: i64) -> Result<usize, String> {
     Ok(undone)
 }
 
+/// Writes prayer.city from the Location submenu (logged, so it shows in history).
+fn set_city(app: &AppHandle, city: &str) -> Result<(), String> {
+    if !CITIES.iter().any(|(id, _)| *id == city) {
+        return Err(format!("unknown city {city}"));
+    }
+    let db = app.state::<Db>();
+    let mut conn = db.write.lock();
+    let txn = conn.transaction().map_err(|error| error.to_string())?;
+    let mut values = serde_json::Map::new();
+    values.insert(
+        "value_json".into(),
+        serde_json::Value::from(serde_json::Value::from(city).to_string()),
+    );
+    let op = crate::tx::Op::Upsert {
+        table: "core_settings".into(),
+        id: "prayer.city".into(),
+        values,
+    };
+    crate::tx::apply_ops(&txn, "user", Some("tray"), &[op], clock::now_ms())
+        .map_err(|error| error.to_string())?;
+    txn.commit().map_err(|error| error.to_string())
+}
+
 fn on_menu(app: &AppHandle, id: &str) {
     if let Some(task_id) = id.strip_prefix(TASK_PREFIX) {
         let result = {
@@ -304,6 +354,13 @@ fn on_menu(app: &AppHandle, id: &str) {
             log::warn!("could not tick the task: {error}");
         }
         changed(app, &["task_items"]);
+        return;
+    }
+    if let Some(city) = id.strip_prefix(CITY_PREFIX) {
+        if let Err(error) = set_city(app, city) {
+            log::warn!("could not set the location: {error}");
+        }
+        changed(app, &["core_settings"]);
         return;
     }
     if let Some(raw_id) = id

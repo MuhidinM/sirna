@@ -31,6 +31,7 @@
     "allow-ai-models",
     "allow-ai-usage",
     "allow-calendar-fetch",
-    "allow-widget-apply"
+    "allow-widget-apply",
+    "allow-prayer-times"
   ]
 }

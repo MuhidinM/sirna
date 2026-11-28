@@ -444,6 +444,16 @@ export function toOps(parsed: Parsed, context: OpsContext): Op[] {
     case "back":
     case "focus":
       return [];
+    case "city":
+      // The only setting a capture may write (commands.rs capture_ops_allowed).
+      return [
+        {
+          op: "upsert",
+          table: "core_settings",
+          id: "prayer.city",
+          values: { value_json: JSON.stringify(parsed.city) },
+        },
+      ];
     case "block":
       // Only the status changes, logged under the capture so Ctrl+Z puts it back.
       return [
@@ -681,6 +691,8 @@ export function echo(
       return `Away until ${midLine(parsed.until ? dayLabel(parsed.until, nowMs) : "Tomorrow")}`;
     case "back":
       return "Back · away is off";
+    case "city":
+      return `In ${parsed.city === "adama" ? "Adama" : "Addis Ababa"} · prayer times from here`;
     case "focus":
       return "Focus";
     case "block":

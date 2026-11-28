@@ -19,7 +19,24 @@ import { transactTheme, useTheme } from "./useTheme";
 import { AI_LOG_SQL, type AiCall, callSummary, checkDailyCap, pretty } from "../features/ai/log";
 import { systemClock } from "../kernel/clock";
 import { CalendarStatus, syncNow } from "./Calendar";
-import { IconArrowRight, IconBolt, IconExpand, IconPencil, IconSettings, IconSun } from "./icons";
+import {
+  IconArrowRight,
+  IconBolt,
+  IconExpand,
+  IconMoon,
+  IconPencil,
+  IconSettings,
+  IconSun,
+} from "./icons";
+import {
+  checkPrayerSettings,
+  type CityChoice,
+  OFFSET_NAMES,
+  PRAYER_SETTINGS_SQL,
+  type PrayerSettings,
+  prayerSettingsOps,
+  readPrayerSettings,
+} from "../features/prayer/prayer";
 import { PanelHead } from "./kit";
 import { Bar, Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
@@ -221,6 +238,203 @@ function FocusAndLook({ initial }: { initial: SettingsValues }) {
           ))}
         </div>
       </fieldset>
+      <div className="row">
+        <Button type="submit">Save</Button>
+        <span className="meta set-note" role="status">
+          {note}
+        </span>
+      </div>
+    </form>
+  );
+}
+
+const CITY_LABELS: { value: CityChoice; label: string }[] = [
+  { value: "addis", label: "Addis Ababa" },
+  { value: "adama", label: "Adama" },
+  { value: "custom", label: "Elsewhere" },
+];
+
+const OFFSET_LABELS: Record<(typeof OFFSET_NAMES)[number], string> = {
+  fajr: "Fajr",
+  sunrise: "Sunrise",
+  dhuhr: "Dhuhr",
+  asr: "Asr",
+  maghrib: "Maghrib",
+  isha: "Isha",
+};
+
+/** Prayer times (T-092): worked out on the PC from the city you pick. */
+function PrayerSection() {
+  const rows = useLiveQuery<{ key: string; value_json: string | null }>(PRAYER_SETTINGS_SQL);
+  if (rows.loading) return null;
+  return <PrayerForm initial={readPrayerSettings(rows.rows)} />;
+}
+
+/** Whole minutes typed in a box, or NaN (checkPrayerSettings says so). */
+const wholeMinutes = (text: string) => (/^-?\d+$/.test(text.trim()) ? Number(text) : NaN);
+
+function PrayerForm({ initial }: { initial: PrayerSettings }) {
+  const [values, setValues] = useState(initial);
+  const [offsetText, setOffsetText] = useState<Record<string, string>>(() =>
+    Object.fromEntries(OFFSET_NAMES.map((name) => [name, String(initial.offsets[name])])),
+  );
+  const [afterText, setAfterText] = useState(String(initial.notifyAfterMin));
+  const [note, setNote] = useState("");
+  // The tray and `I'm in Adama` change the city while Settings is open: show it.
+  const [seenCity, setSeenCity] = useState(initial.city);
+  if (initial.city !== seenCity) {
+    setSeenCity(initial.city);
+    setValues((current) => ({ ...current, city: initial.city }));
+  }
+  const change = (next: Partial<PrayerSettings>) => {
+    setNote("");
+    setValues({ ...values, ...next });
+  };
+  return (
+    <form
+      className="setting"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const next: PrayerSettings = {
+          ...values,
+          offsets: Object.fromEntries(
+            OFFSET_NAMES.map((name) => [name, wholeMinutes(offsetText[name] ?? "0")]),
+          ) as PrayerSettings["offsets"],
+          notifyAfterMin: wholeMinutes(afterText),
+        };
+        const problem = checkPrayerSettings(next);
+        if (problem) {
+          setNote(problem);
+          return;
+        }
+        transact("user", prayerSettingsOps(next, initial), "settings")
+          .then(() => setNote("Saved"))
+          .catch((error: unknown) => setNote(`Couldn't save: ${message(error)}`));
+      }}
+    >
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={values.enabled}
+          onChange={(event) => change({ enabled: event.target.checked })}
+        />
+        Show prayer times and a toast after each adhan
+      </label>
+      <div className="row">
+        <label className="field">
+          <span>Where you are</span>
+          <select
+            value={values.city}
+            onChange={(event) => change({ city: event.target.value as CityChoice })}
+          >
+            {CITY_LABELS.map((city) => (
+              <option key={city.value} value={city.value}>
+                {city.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {values.city === "custom" && (
+          <>
+            <label className="field">
+              <span>Latitude</span>
+              <input
+                inputMode="decimal"
+                value={values.lat}
+                onChange={(event) => change({ lat: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Longitude</span>
+              <input
+                inputMode="decimal"
+                value={values.lng}
+                onChange={(event) => change({ lng: event.target.value })}
+              />
+            </label>
+          </>
+        )}
+      </div>
+      <div className="row">
+        <label className="field">
+          <span>Method</span>
+          <select
+            value={values.method}
+            onChange={(event) => change({ method: event.target.value as PrayerSettings["method"] })}
+          >
+            <option value="mwl">Muslim World League (Fajr 18°, Isha 17°)</option>
+            <option value="egyptian">Egyptian (Fajr 19.5°, Isha 17.5°)</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Asr</span>
+          <select
+            value={values.asr}
+            onChange={(event) => change({ asr: event.target.value as PrayerSettings["asr"] })}
+          >
+            <option value="shafii">Shafi&apos;i</option>
+            <option value="hanafi">Hanafi</option>
+          </select>
+        </label>
+      </div>
+      <p className="meta set-aside">
+        If your mosque&apos;s Fajr in late November is about 74 min before sunrise, it&apos;s Muslim
+        World League; about 81 min means Egyptian. Offsets move one time by whole minutes.
+      </p>
+      <fieldset className="row">
+        <legend className="visually-hidden">Minutes added to each time</legend>
+        {OFFSET_NAMES.map((name) => (
+          <label key={name} className="field">
+            <span>{OFFSET_LABELS[name]} ± min</span>
+            <input
+              inputMode="numeric"
+              size={4}
+              value={offsetText[name] ?? "0"}
+              onChange={(event) => {
+                setNote("");
+                setOffsetText({ ...offsetText, [name]: event.target.value });
+              }}
+            />
+          </label>
+        ))}
+      </fieldset>
+      <div className="row">
+        <label className="field">
+          <span>Jumu&apos;ah time (empty: Dhuhr)</span>
+          <input
+            placeholder="12:30"
+            value={values.jumuah}
+            onChange={(event) => change({ jumuah: event.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span>Toast after adhan (min)</span>
+          <input
+            inputMode="numeric"
+            value={afterText}
+            onChange={(event) => {
+              setNote("");
+              setAfterText(event.target.value);
+            }}
+          />
+        </label>
+        <label className="field">
+          <span>Ramadan start</span>
+          <input
+            type="date"
+            value={values.ramadanStart}
+            onChange={(event) => change({ ramadanStart: event.target.value })}
+          />
+        </label>
+      </div>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={values.fajrToast}
+          onChange={(event) => change({ fajrToast: event.target.checked })}
+        />
+        Toast at Fajr too
+      </label>
       <div className="row">
         <Button type="submit">Save</Button>
         <span className="meta set-note" role="status">
@@ -562,6 +776,7 @@ const SECTIONS = [
   { id: "set-ai", title: "AI" },
   { id: "set-capture", title: "Capture" },
   { id: "set-look", title: "Focus and look" },
+  { id: "set-prayer", title: "Prayer" },
   { id: "set-windows", title: "Windows" },
 ] as const;
 
@@ -713,6 +928,10 @@ export function Settings() {
                 </p>
               )}
               {!settings.loading && <FocusAndLook initial={readSettings(settings.rows)} />}
+            </Section>
+
+            <Section id="set-prayer" icon={<IconMoon size={18} />} sub="Times from where you are">
+              <PrayerSection />
             </Section>
 
             <Section id="set-windows" icon={<IconExpand size={18} />} sub="Start-up and the widget">

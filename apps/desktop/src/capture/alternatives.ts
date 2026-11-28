@@ -28,6 +28,7 @@ export function readings(parsed: Parsed, raw: string, nowMs: number): Parsed[] {
     parsed.kind === "search" ||
     parsed.kind === "away" ||
     parsed.kind === "back" ||
+    parsed.kind === "city" ||
     parsed.kind === "focus"
   )
     return options;

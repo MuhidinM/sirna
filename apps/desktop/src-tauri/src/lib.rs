@@ -15,6 +15,7 @@ mod hotkey;
 mod kit;
 mod migrate;
 mod notify;
+mod prayer;
 mod reminders;
 mod review;
 mod secrets;
@@ -128,6 +129,7 @@ pub fn run() {
             commands::focus_status,
             commands::notes_undo,
             commands::open_notes,
+            commands::prayer_times,
             commands::capture_ready,
             commands::capture_replace,
             commands::close_window,

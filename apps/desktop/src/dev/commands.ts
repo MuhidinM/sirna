@@ -144,6 +144,14 @@ export function captureOpsAllowed(ops: readonly Op[]): boolean {
         "project_items",
         "savings_entries",
       ].includes(op.table);
+    // `I'm in Adama` (T-092): only the prayer city, only a known one.
+    if (op.op === "upsert")
+      return (
+        op.table === "core_settings" &&
+        op.id === "prayer.city" &&
+        Object.keys(op.values).length === 1 &&
+        ['"addis"', '"adama"'].includes(String(op.values.value_json))
+      );
     if (op.op === "update" && op.table === "day_blocks") {
       const entries = Object.entries(op.values);
       return (
@@ -240,7 +248,14 @@ export function captureCommit(conn: Conn, args: CaptureArgs, now: number): Done<
   return { result: rawId, changed: [...tablesOf(ops), "core_raw_items"] };
 }
 
-const CAPTURE_TABLES = ["core_raw_items", "task_items", "note_items", "money_txns", "day_blocks"];
+const CAPTURE_TABLES = [
+  "core_raw_items",
+  "core_settings",
+  "task_items",
+  "note_items",
+  "money_txns",
+  "day_blocks",
+];
 
 export function captureReplace(
   conn: Conn,

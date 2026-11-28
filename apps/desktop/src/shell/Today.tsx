@@ -39,6 +39,14 @@ import { PanelHead } from "./kit";
 import { MonthPanel } from "./MonthPanel";
 import { Button } from "./ui";
 import { useLiveQuery } from "./useLiveQuery";
+import { usePrayerTimes } from "./usePrayerTimes";
+import {
+  PRAYER_SETTINGS_SQL,
+  prayerDate,
+  prayerLine,
+  ramadanLine,
+  readPrayerSettings,
+} from "../features/prayer/prayer";
 
 interface TaskRow extends Record<string, string | number | null> {
   id: string;
@@ -280,6 +288,14 @@ export function Today({
   const away = useLiveQuery<{ value_json: string }>(AWAY_SQL);
   const backOn = awayUntil(away.rows[0]?.value_json, today);
   const focus = useFocus();
+  // Prayer times (T-092): one small line under the date, and Ramadan's when set.
+  // Prayer days follow the calendar, not the 03:00 day: suhoor at 02:30 is the new day's.
+  const prayerDay = prayerDate(minuteNow);
+  const prayer = usePrayerTimes(prayerDay);
+  const prayerRows = useLiveQuery<{ key: string; value_json: string | null }>(PRAYER_SETTINGS_SQL);
+  const prayerSettings = readPrayerSettings(prayerRows.rows);
+  const showPrayer = prayer !== null && prayerSettings.enabled;
+  const ramadan = showPrayer ? ramadanLine(prayerSettings.ramadanStart, prayerDay, prayer) : null;
 
   // A light day keeps one task in Top 3 (F53); the rest stay under Also due.
   const light = lightDayTop(top.rows, blocks.rows);
@@ -322,6 +338,17 @@ export function Today({
                 <IconPlus size={16} /> Capture
               </Button>
             </header>
+            {showPrayer && (
+              <p className="meta today-prayer" aria-label="Prayer times today">
+                {prayerLine(prayer)}
+                {ramadan && (
+                  <>
+                    <br />
+                    {ramadan}
+                  </>
+                )}
+              </p>
+            )}
             <p className="meta today-hint">
               Capture anything with your capture key; it shows up here.
             </p>

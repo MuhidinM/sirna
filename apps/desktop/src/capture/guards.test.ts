@@ -282,3 +282,20 @@ describe("fixing a line from Add for today (reg2-5)", () => {
     });
   });
 });
+
+describe("a city capture and a later city change (T-092)", () => {
+  const city = (value: string): Op[] => [
+    { op: "upsert", table: "core_settings", id: "prayer.city", values: { value_json: value } },
+  ];
+
+  it("names the prayer city, not Away", () => {
+    const { c, blocked } = setup();
+    const raw = captureCommit(c, { rawText: "I'm in Adama", ops: city('"adama"') }, T).result;
+    expect(blocked(raw)).toBeNull();
+    // The tray's Location menu writes outside the capture.
+    applyOps(c, "user", "tray", city('"addis"'), T + 1);
+    expect(blocked(raw)).toBe(
+      "The prayer city has changed since. Set it from the tray or in Settings.",
+    );
+  });
+});

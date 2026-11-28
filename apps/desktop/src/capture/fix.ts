@@ -75,6 +75,8 @@ const CHANGED: Record<string, string> = {
   day_blocks: "You've changed this block since. Edit it on Today.",
   savings_entries: "You've changed this saving since. Edit it on Money.",
   core_settings: "Away has changed since. Set it on Today.",
+  "core_settings:prayer.city":
+    "The prayer city has changed since. Set it from the tray or in Settings.",
 };
 
 /**

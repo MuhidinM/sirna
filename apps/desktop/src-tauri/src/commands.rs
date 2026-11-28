@@ -32,9 +32,10 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
     tables
 }
 
-/// A capture may only add tasks, notes and money, and tick or skip a block
-/// (`gym done`, plan §3.5: its status and nothing else). Anything else
-/// (deletes, settings) goes through db_tx, which the capture window can't call.
+/// A capture may only add tasks, notes and money, tick or skip a block
+/// (`gym done`, plan §3.5: its status and nothing else), and set the prayer
+/// city (`I'm in Adama`, T-092). Anything else (deletes, other settings) goes
+/// through db_tx, which the capture window can't call.
 pub fn capture_ops_allowed(ops: &[Op]) -> bool {
     ops.iter().all(|op| match op {
         Op::Insert { table, .. } => matches!(
@@ -46,6 +47,16 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
                 | "project_items"
                 | "savings_entries"
         ),
+        // `I'm in Adama` (T-092): only the prayer city, only a known one.
+        Op::Upsert { table, id, values } => {
+            table == "core_settings"
+                && id == "prayer.city"
+                && values.len() == 1
+                && matches!(
+                    values.get("value_json").and_then(Value::as_str),
+                    Some("\"addis\"" | "\"adama\"")
+                )
+        }
         Op::Update { table, values, .. } => {
             table == "day_blocks"
                 && !values.is_empty()
@@ -58,8 +69,9 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
 }
 
 /// What a capture's undo or fix can change, for `data-changed`.
-pub const CAPTURE_TABLES: [&str; 5] = [
+pub const CAPTURE_TABLES: [&str; 6] = [
     "core_raw_items",
+    "core_settings",
     "task_items",
     "note_items",
     "money_txns",
@@ -380,6 +392,9 @@ pub(crate) fn undo_blocked(
             "day_blocks" => "You've changed this block since. Edit it on Today.",
             "savings_entries" => "You've changed this saving since. Edit it on Money.",
             "core_settings" => "Away has changed since. Set it on Today.",
+            "core_settings:prayer.city" => {
+                "The prayer city has changed since. Set it from the tray or in Settings."
+            }
             _ => "You've changed this since.",
         };
         return Ok(Some(text.to_string()));
@@ -491,6 +506,82 @@ mod tests {
         assert!(capture_ops_allowed(&[block("status", "skipped")]));
         assert!(!capture_ops_allowed(&[block("status", "planned")]));
         assert!(!capture_ops_allowed(&[block("title", "x")]));
+    }
+
+    fn city(id: &str, json: &str) -> Op {
+        let mut values = Map::new();
+        values.insert("value_json".into(), json.into());
+        Op::Upsert {
+            table: "core_settings".into(),
+            id: id.into(),
+            values,
+        }
+    }
+
+    #[test]
+    fn a_capture_may_set_only_the_prayer_city() {
+        assert!(capture_ops_allowed(&[city("prayer.city", "\"adama\"")]));
+        assert!(capture_ops_allowed(&[city("prayer.city", "\"addis\"")]));
+        assert!(!capture_ops_allowed(&[city("prayer.city", "\"custom\"")]));
+        assert!(!capture_ops_allowed(&[city("prayer.lat", "9")]));
+        assert!(!capture_ops_allowed(&[city("ui.theme", "\"dark\"")]));
+    }
+
+    #[test]
+    fn undoing_a_city_capture_puts_the_old_city_back() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let read = |txn: &rusqlite::Transaction<'_>| {
+            crate::db::setting_string(txn, "prayer.city").unwrap_or_default()
+        };
+        let first = super::store_capture(
+            &txn,
+            "in adama",
+            &[city("prayer.city", "\"adama\"")],
+            None,
+            1,
+        )
+        .unwrap();
+        let second = super::store_capture(
+            &txn,
+            "in addis",
+            &[city("prayer.city", "\"addis\"")],
+            None,
+            2,
+        )
+        .unwrap();
+        assert_eq!(read(&txn), "addis");
+        super::undo_capture_in(&txn, second, 3).unwrap();
+        assert_eq!(read(&txn), "adama");
+        super::undo_capture_in(&txn, first, 4).unwrap();
+        assert_eq!(read(&txn), "");
+    }
+
+    #[test]
+    fn a_city_changed_since_blocks_undo_with_its_own_words() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw = super::store_capture(
+            &txn,
+            "in adama",
+            &[city("prayer.city", "\"adama\"")],
+            None,
+            1,
+        )
+        .unwrap();
+        // The tray's Location menu writes outside any capture.
+        crate::tx::apply_ops(
+            &txn,
+            "user",
+            Some("tray"),
+            &[city("prayer.city", "\"addis\"")],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            super::undo_blocked(&txn, raw, "undo").unwrap().as_deref(),
+            Some("The prayer city has changed since. Set it from the tray or in Settings.")
+        );
     }
 
     #[test]
@@ -1453,4 +1544,19 @@ pub fn focus_control(action: String, app: AppHandle) -> Result<(), String> {
 pub fn focus_status(focus: State<'_, crate::focus::FocusState>) -> crate::focus::Status {
     let machine = focus.machine.lock();
     crate::focus::status(&machine, clock::now_ms())
+}
+
+/// One day's prayer times (T-092), in local minutes from midnight.
+/// `date` is YYYY-MM-DD; without one, today (Addis Ababa).
+#[tauri::command]
+pub fn prayer_times(
+    date: Option<String>,
+    db: State<'_, Db>,
+) -> Result<crate::prayer::Times, String> {
+    let day = match date.as_deref() {
+        Some(text) => crate::prayer::parse_date(text).ok_or("Use a date like 2026-11-28")?,
+        None => crate::prayer::local_date(clock::now_ms()),
+    };
+    let config = crate::prayer::config(&db.read.lock());
+    Ok(crate::prayer::times(day, &config))
 }
