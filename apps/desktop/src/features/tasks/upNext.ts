@@ -2,20 +2,16 @@
  * Up next (T-086, R-RUN-03): the order work is offered in. The SQL is shared
  * with the tray (tasks.rs reads the same file), so both always agree.
  */
-import { query } from "../../kernel/db";
 import { todayParams } from "./today";
 import upNextSql from "./queries/up_next.sql?raw";
 
 export { upNextSql };
 
-/** Why a task is where it is in the order. */
-export const UP_NEXT_TIERS = ["in hand", "due soon", "pinned", "planned", "next"] as const;
-
 export type UpNextRow = {
   id: string;
   title: string;
   area_id: string | null;
-  /** Index into UP_NEXT_TIERS. */
+  /** 0 in hand, 1 due soon, 2 pinned, 3 planned, 4 the rest (up_next.sql). */
   tier: number;
   due_date: string | null;
   estimate_min: number | null;
@@ -25,8 +21,4 @@ export type UpNextRow = {
 export function upNextParams(now: number, limit: number): [string, number, number, number] {
   const [date, start] = todayParams(now);
   return [date, start, now, limit];
-}
-
-export function loadUpNext(now: number, limit = 5): Promise<UpNextRow[]> {
-  return query<UpNextRow>(upNextSql, upNextParams(now, limit));
 }
