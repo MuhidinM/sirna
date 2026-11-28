@@ -17,3 +17,4 @@ The planning-stage decisions (D1–D49) are logged in [plan §15](../plan.md#15-
 | [0009](0009-own-schema-module.md)          | Our own small schema module instead of zod               | accepted |
 | [0010](0010-job-parts-and-lunch.md)        | Job parts, and lunch stays outside job hours             | accepted |
 | [0011](0011-effort-insight-thresholds.md)  | When an effort insight is worth saying                   | accepted |
+| [0012](0012-time-left-floor.md)            | Time left on an open task never reads 0                  | accepted |

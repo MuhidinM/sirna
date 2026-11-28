@@ -39,6 +39,7 @@ import {
   type TemplateBlock,
   WINDOWS,
 } from "./generate";
+import { timeLeft } from "./left";
 
 export type Query = <T extends Row>(sql: string, params?: SqlValue[]) => Promise<T[]>;
 
@@ -95,7 +96,10 @@ export const DONE_THIS_WEEK_SQL = `
   GROUP BY area_id
   HAVING minutes > 0`;
 
-/** Open tasks, with what is left of their estimate after focus time on them. */
+/**
+ * Open tasks, with what is left of their estimate after focus time on them.
+ * taskOnDay raises it to the floor (timeLeft, T-082).
+ */
 export const OPEN_TASKS_SQL = `
   SELECT t.id, t.title, t.area_id, t.project_id, t.created_at, t.due_at, t.planned_window, t.planned_date,
          t.estimate_min, t.parent_id, t.step_no,
@@ -205,7 +209,9 @@ export function taskOnDay(task: OpenTaskRow, date: string, nowMs?: number): Task
     ...(task.project_id ? { projectId: task.project_id } : {}),
     dueDate: task.due_date,
     createdAt: task.created_at,
-    remainingMin: task.remaining_min,
+    // Never under the floor while open, so an overrun task is still planned
+    // and the chain never finishes it just because it read 0 (T-082).
+    remainingMin: timeLeft({ remainingMin: task.remaining_min, estimateMin: task.estimate_min }),
     ...(task.parent_id && task.step_no !== null && task.step_no !== undefined
       ? { step: { parentId: task.parent_id, no: task.step_no, waits: task.waits === 1 } }
       : {}),
