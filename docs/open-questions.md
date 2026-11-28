@@ -11,7 +11,7 @@ Questions whose answers change what gets built. Answer them before the milestone
 
 ## Before M2 (routine)
 
-5. Should prayer times anchor the day (e.g. Quran after Fajr, gym after Asr)?
+5. ~~Should prayer times anchor the day (e.g. Quran after Fajr, gym after Asr)?~~ Answered (T-092).
 6. Quran goal: minutes a day, pages a day, or memorization?
 7. Gym: which days and what time of day? (Default Mon/Wed/Fri, 45 min.)
 8. Rest day? (Default Sunday.)
@@ -33,8 +33,9 @@ Questions whose answers change what gets built. Answer them before the milestone
 
 ## Answered
 
-| Question             | Answer                                                 | Date       |
-| -------------------- | ------------------------------------------------------ | ---------- |
-| App name             | Sirna (Oromo: order, system)                           | 2026-11-11 |
-| Email integration    | None; check-email routine blocks instead               | 2026-11-11 |
-| Bank/SMS integration | None; spending asked in the night review (mostly cash) | 2026-11-11 |
+| Question             | Answer                                                                             | Date       |
+| -------------------- | ---------------------------------------------------------------------------------- | ---------- |
+| App name             | Sirna (Oromo: order, system)                                                       | 2026-11-11 |
+| Email integration    | None; check-email routine blocks instead                                           | 2026-11-11 |
+| Bank/SMS integration | None; spending asked in the night review (mostly cash)                             | 2026-11-11 |
+| Prayer anchors (5)   | Yes: each prayer is a set-time anchor (toast after adhan, quiet window); see T-092 | 2026-11-28 |
