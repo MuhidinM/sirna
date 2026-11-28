@@ -22,9 +22,18 @@ import {
   removeOtherBlock,
   restore,
   status,
+  soloMs,
   todayBlocks,
 } from "./focus";
-import { openIntent, setupStart, tickThrough, type Toast, type World } from "./runtime";
+import {
+  laneCommand,
+  openIntent,
+  runStart,
+  setupStart,
+  tickThrough,
+  type Toast,
+  type World,
+} from "./runtime";
 
 const T0 = 1_794_387_600_000; // 2026-11-11 12:00 Addis
 const minutes = (n: number) => n * 60_000;
@@ -37,6 +46,7 @@ const context = (): Context => ({
   title: "Coding",
   focus_min: 25,
   break_min: 5,
+  lanes: [],
 });
 
 const start = (m: Machine, now: number, n: number) =>
@@ -465,5 +475,88 @@ describe("the harness runtime", () => {
     expect(() => setupStart(w, { target: { other: " " } }, null, late)).toThrow(
       "Type what this session is for.",
     );
+  });
+});
+
+// The run and lane tests of focus.rs (T-084), against the port.
+describe("runs with lanes", () => {
+  const runWorld = () => {
+    const c = conn();
+    c.exec(`INSERT INTO task_items (id, title, area_id, created_at, updated_at) VALUES
+      ('a', 'Login bug', 'joba', 0, 0),
+      ('b', 'Invoice export', 'jobb', 0, 0),
+      ('c', 'Kifiya application', 'jobhunt', 0, 0);`);
+    let counter = 0;
+    const emitted: unknown[] = [];
+    const w: World = {
+      conn: c,
+      machine: emptyMachine(),
+      nextCounter: () => counter++,
+      emit: (event, payload) => emitted.push([event, payload]),
+      toast: () => {},
+    };
+    return { c, w, emitted };
+  };
+  const rows = (c: Conn) =>
+    c.all(
+      "SELECT task_id, result, effort_min, wall_min, clean FROM focus_run_tasks ORDER BY position",
+    );
+
+  it("starts with the first lane running and works out effort and clean at the end", () => {
+    const { c, w, emitted } = runWorld();
+    expect(runStart(w, { taskIds: ["a", "b", "c", "a"], minutes: 30 }, T0)).toBe("started");
+    expect(status(w.machine, T0).title).toBe("Login bug +2");
+    laneCommand(w, "lane_start", { taskId: "b" }, T0 + minutes(15));
+    laneCommand(w, "lane_done", { taskId: "a" }, T0 + minutes(20));
+    expect(emitted).toContainEqual([
+      "data-changed",
+      ["focus_run_tasks", "focus_lane_spans", "task_items"],
+    ]);
+    tickThrough(w, T0 + minutes(20), T0 + minutes(30));
+    const got = rows(c);
+    expect(got.map((r) => [r.task_id, r.result, r.wall_min, r.clean])).toEqual([
+      ["a", "done", 20, 1],
+      ["b", null, 15, 0],
+      ["c", null, 0, 0],
+    ]);
+    expect(Number(got[0]?.effort_min)).toBeCloseTo(17.5, 6);
+    expect(Number(got[1]?.effort_min)).toBeCloseTo(12.5, 6);
+    expect(c.all("SELECT end_kind FROM focus_lane_spans ORDER BY id")).toEqual([
+      { end_kind: "done" },
+      { end_kind: "run_end" },
+    ]);
+    expect(c.all("SELECT status FROM task_items WHERE id = 'a'")).toEqual([{ status: "done" }]);
+  });
+
+  it("adds and removes lanes, and a restart keeps them", () => {
+    const { c, w } = runWorld();
+    runStart(w, { taskIds: ["a"] }, T0);
+    laneCommand(w, "lane_add", { taskId: "b" }, T0 + minutes(1));
+    laneCommand(w, "lane_add", { taskId: "c" }, T0 + minutes(1));
+    laneCommand(w, "lane_start", { taskId: "c" }, T0 + minutes(2));
+    laneCommand(w, "lane_remove", { taskId: "b" }, T0 + minutes(3));
+    laneCommand(w, "lane_pause", { taskId: "a" }, T0 + minutes(4));
+    expect(() => laneCommand(w, "lane_add", { taskId: "nope" }, T0)).toThrow("That task is gone.");
+    const live = status(w.machine, T0 + minutes(10));
+    expect(live.title).toBe("Login bug +1");
+    expect(live.lanes.map((l) => [l.id, l.running, l.wall_min])).toEqual([
+      ["a", false, 4],
+      ["c", true, 8],
+    ]);
+    expect(status(restore(c, T0 + minutes(10)), T0 + minutes(10))).toEqual(live);
+    expect(() => runStart(w, { taskIds: ["nope"] }, T0)).toThrow("Pick at least one task");
+  });
+
+  it("counts solo time only where one lane ran", () => {
+    const solo = soloMs(
+      [
+        ["a", 0, 30],
+        ["b", 10, 20],
+        ["c", 25, 50],
+      ],
+      0,
+      40,
+    );
+    expect(Object.fromEntries(solo)).toEqual({ a: 15, c: 10 });
   });
 });

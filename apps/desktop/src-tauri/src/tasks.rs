@@ -82,7 +82,7 @@ fn live_status(conn: &Connection, id: &str) -> Result<Option<String>, tx::TxErro
 
 /// Writes the done state and its audit row in one transaction.
 fn write_done(
-    conn: &mut Connection,
+    conn: &Connection,
     id: &str,
     done: bool,
     context: &str,
@@ -106,7 +106,7 @@ fn write_done(
         id: id.into(),
         values,
     };
-    let txn = conn.transaction().map_err(sql_error)?;
+    let txn = conn.unchecked_transaction().map_err(sql_error)?;
     tx::apply_ops(&txn, "user", Some(context), &[op], now_ms)?;
     txn.commit().map_err(sql_error)
 }
@@ -124,9 +124,20 @@ pub fn toggle_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<bool,
 /// A reminder's Done button: always ends up done, never reopens a task that
 /// was finished elsewhere, and ignores deleted tasks.
 pub fn mark_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<(), tx::TxError> {
+    mark_done_in(conn, id, "reminder", now_ms)
+}
+
+/// Done, logged under `context` so it can be undone (a reminder's button, a
+/// run's lane). A task already done or deleted is left as it is.
+pub fn mark_done_in(
+    conn: &Connection,
+    id: &str,
+    context: &str,
+    now_ms: i64,
+) -> Result<(), tx::TxError> {
     match live_status(conn, id)?.as_deref() {
         None | Some("done") => Ok(()),
-        Some(_) => write_done(conn, id, true, "reminder", now_ms),
+        Some(_) => write_done(conn, id, true, context, now_ms),
     }
 }
 

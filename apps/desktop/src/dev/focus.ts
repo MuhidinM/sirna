@@ -1,6 +1,7 @@
 /**
- * Dev-only port of the focus timer: src-tauri/src/focus.rs (the Machine, its
- * database effects, contexts), guard.rs (hard stop, daily cap), kit.rs (the
+ * Dev-only port of the focus timer: src-tauri/src/focus.rs (the Machine, runs
+ * and their lanes, its database effects, contexts), the done write in
+ * tasks.rs, guard.rs (hard stop, daily cap), kit.rs (the
  * kit list) and the set-up sheet commands in commands.rs. Sessions land in
  * focus_sessions exactly as Rust writes them. There is no timer thread:
  * the harness ticks the machine when time moves (see store.ts).
@@ -19,8 +20,41 @@ export const LONG_BREAK_MIN = 20;
 export const LONG_BREAK_LOCK_MS = 10 * MINUTE_MS;
 export const SLEEP_GRACE_MS = 30 * MINUTE_MS;
 export const EXTEND_MIN = 5;
+export const RUN_MIN = 30;
+export const CLEAN_SHARE = 0.7;
 
 export type Kind = "focus" | "break" | "long_break";
+
+/** focus::Lane: a task in a run, started, paused and finished on its own. */
+export interface Lane {
+  task_id: string;
+  title: string;
+  area_id: string | null;
+  area: string | null;
+  position: number;
+  running_since: number | null;
+  done: boolean;
+  closed_ms: number;
+}
+
+export const wallMs = (lane: Lane, now: number) =>
+  lane.closed_ms + (lane.running_since === null ? 0 : Math.max(now - lane.running_since, 0));
+
+function stopRunning(lane: Lane, at: number): boolean {
+  if (lane.running_since === null) return false;
+  lane.closed_ms += Math.max(at - lane.running_since, 0);
+  lane.running_since = null;
+  return true;
+}
+
+/** run_title: the first task, "+N" for the rest. */
+export function runTitle(lanes: readonly Lane[]): string {
+  const [first] = lanes;
+  if (!first) return "Focus";
+  return lanes.length === 1 ? first.title : `${first.title} +${lanes.length - 1}`;
+}
+
+const copyLanes = (lanes: readonly Lane[]) => lanes.map((lane) => ({ ...lane }));
 
 export interface Session {
   id: string;
@@ -37,6 +71,8 @@ export interface Session {
   break_min: number;
   /** Distracted (+1) taps on this session; the card shows them. */
   distractions: number;
+  lanes: Lane[];
+  run_of: string | null;
 }
 
 export const endsAt = (session: Session) =>
@@ -52,6 +88,7 @@ export interface Context {
   title: string;
   focus_min: number;
   break_min: number;
+  lanes: Lane[];
 }
 
 export type Outcome = "completed" | "stopped" | "interrupted";
@@ -63,7 +100,12 @@ export type Event =
   | { type: "resume" }
   | { type: "stop" }
   | { type: "distracted" }
-  | { type: "extend"; id: string };
+  | { type: "extend"; id: string }
+  | { type: "lane_start"; task_id: string }
+  | { type: "lane_pause"; task_id: string }
+  | { type: "lane_done"; task_id: string }
+  | { type: "lane_add"; lane: Lane }
+  | { type: "lane_remove"; task_id: string };
 
 export type Effect =
   | { type: "save"; session: Session }
@@ -73,7 +115,14 @@ export type Effect =
   | { type: "break_over" }
   | { type: "need_confirm" }
   | { type: "already_focusing" }
-  | { type: "past_hard_stop" };
+  | { type: "past_hard_stop" }
+  | { type: "span_open"; session_id: string; task_id: string; at: number }
+  | { type: "span_close"; session_id: string; task_id: string; at: number; end: "done" | "pause" }
+  | { type: "lane_removed"; session_id: string; task_id: string }
+  | { type: "task_done"; session_id: string; task_id: string; at: number };
+
+/** A session as an effect carries it: its own copy of the lanes. */
+const snapshot = (session: Session): Session => ({ ...session, lanes: copyLanes(session.lanes) });
 
 export interface Machine {
   current: Session | null;
@@ -94,7 +143,7 @@ export function handle(machine: Machine, event: Event, now: number): Effect[] {
       const session = machine.current;
       if (session && session.kind === "focus" && session.paused_at === null) {
         session.paused_at = now;
-        return [{ type: "save", session: { ...session } }];
+        return [{ type: "save", session: snapshot(session) }];
       }
       return [];
     }
@@ -103,7 +152,7 @@ export function handle(machine: Machine, event: Event, now: number): Effect[] {
       if (session && session.paused_at !== null) {
         session.paused_ms += now - session.paused_at;
         session.paused_at = null;
-        return [{ type: "save", session: { ...session } }];
+        return [{ type: "save", session: snapshot(session) }];
       }
       return [];
     }
@@ -117,8 +166,9 @@ export function handle(machine: Machine, event: Event, now: number): Effect[] {
       if (session.paused_at !== null) {
         session.paused_ms += now - session.paused_at;
         session.paused_at = null;
-        effects.push({ type: "save", session: { ...session } });
+        effects.push({ type: "save", session: snapshot(session) });
       }
+      for (const l of session.lanes) stopRunning(l, now);
       effects.push({ type: "close", id: session.id, at: now, outcome: "stopped" });
       return effects;
     }
@@ -130,6 +180,81 @@ export function handle(machine: Machine, event: Event, now: number): Effect[] {
     }
     case "extend":
       return extend(machine, event.id, now);
+    default:
+      return lane(machine, event, now);
+  }
+}
+
+/** Session::follow_first_lane: the row keeps the first task; the run's name follows its lanes. */
+function followFirstLane(session: Session, titleBefore: string) {
+  if (session.block_id !== null) return;
+  const first = [...session.lanes].sort((a, b) => a.position - b.position)[0];
+  if (first) {
+    session.task_id = first.task_id;
+    session.area_id = first.area_id;
+  }
+  if (session.title === titleBefore) session.title = runTitle(session.lanes);
+}
+
+function lane(
+  machine: Machine,
+  event: Extract<
+    Event,
+    { type: "lane_start" | "lane_pause" | "lane_done" | "lane_add" | "lane_remove" }
+  >,
+  now: number,
+): Effect[] {
+  const session = machine.current;
+  if (session?.kind !== "focus") return [];
+  const session_id = session.id;
+  const find = (taskId: string) => session.lanes.find((l) => l.task_id === taskId);
+  switch (event.type) {
+    case "lane_start": {
+      const found = find(event.task_id);
+      if (!found || found.done || found.running_since !== null) return [];
+      found.running_since = now;
+      return [{ type: "span_open", session_id, task_id: event.task_id, at: now }];
+    }
+    case "lane_pause": {
+      const found = find(event.task_id);
+      if (!found || !stopRunning(found, now)) return [];
+      return [{ type: "span_close", session_id, task_id: event.task_id, at: now, end: "pause" }];
+    }
+    case "lane_done": {
+      const found = find(event.task_id);
+      if (!found || found.done) return [];
+      const effects: Effect[] = [];
+      if (stopRunning(found, now))
+        effects.push({
+          type: "span_close",
+          session_id,
+          task_id: event.task_id,
+          at: now,
+          end: "done",
+        });
+      found.done = true;
+      effects.push({ type: "task_done", session_id, task_id: event.task_id, at: now });
+      return effects;
+    }
+    case "lane_add": {
+      if (find(event.lane.task_id)) return [];
+      const titleBefore = runTitle(session.lanes);
+      const position = Math.max(0, ...session.lanes.map((l) => l.position)) + 1;
+      session.lanes.push({ ...event.lane, position, running_since: null, closed_ms: 0 });
+      followFirstLane(session, titleBefore);
+      return [{ type: "save", session: snapshot(session) }];
+    }
+    case "lane_remove": {
+      const index = session.lanes.findIndex((l) => l.task_id === event.task_id);
+      if (index < 0 || session.lanes[index]?.done) return [];
+      const titleBefore = runTitle(session.lanes);
+      session.lanes.splice(index, 1);
+      followFirstLane(session, titleBefore);
+      return [
+        { type: "lane_removed", session_id, task_id: event.task_id },
+        { type: "save", session: snapshot(session) },
+      ];
+    }
   }
 }
 
@@ -158,8 +283,15 @@ function start(machine: Machine, context: Context, force: boolean, id: string, n
     extended: false,
     break_min: Math.max(context.break_min, 0),
     distractions: 0,
+    lanes: copyLanes(context.lanes),
+    run_of: null,
   };
-  effects.push({ type: "save", session: { ...session } });
+  // The first open task's lane starts with the run.
+  const opened = session.lanes.find((l) => !l.done);
+  if (opened) opened.running_since = now;
+  effects.push({ type: "save", session: snapshot(session) });
+  if (opened)
+    effects.push({ type: "span_open", session_id: session.id, task_id: opened.task_id, at: now });
   machine.current = session;
   return effects;
 }
@@ -168,6 +300,7 @@ function tick(machine: Machine, now: number): Effect[] {
   const session = machine.current;
   if (!session || session.paused_at !== null || remainingMs(session, now) > 0) return [];
   const ended = endsAt(session);
+  for (const l of session.lanes) stopRunning(l, ended);
   if (session.kind === "focus") {
     if (now - ended > SLEEP_GRACE_MS) {
       machine.current = null;
@@ -193,8 +326,10 @@ function tick(machine: Machine, now: number): Effect[] {
       paused_at: null,
       paused_ms: 0,
       distractions: 0,
+      lanes: session.lanes.map((l) => ({ ...l, running_since: null })),
+      run_of: session.run_of ?? session.id,
     };
-    effects.push({ type: "save", session: { ...rest } });
+    effects.push({ type: "save", session: snapshot(rest) });
     effects.push({ type: "break_started", minutes, long, can_extend: !long && !session.extended });
     machine.current = rest;
     return effects;
@@ -219,12 +354,14 @@ function extend(machine: Machine, id: string, now: number): Effect[] {
     paused_ms: 0,
     extended: true,
     distractions: 0,
+    lanes: current.lanes.map((l) => ({ ...l, running_since: null, closed_ms: 0 })),
+    run_of: current.run_of,
   };
   machine.in_row = Math.max(0, machine.in_row - 1);
   machine.current = focus;
   return [
     { type: "close", id: current.id, at: now, outcome: "stopped" },
-    { type: "save", session: { ...focus } },
+    { type: "save", session: snapshot(focus) },
   ];
 }
 
@@ -241,6 +378,7 @@ export function status(machine: Machine, now: number) {
       in_row: machine.in_row,
       block_id: null,
       distractions: 0,
+      lanes: [],
     };
   return {
     kind: session.kind,
@@ -251,6 +389,15 @@ export function status(machine: Machine, now: number) {
     in_row: machine.in_row,
     block_id: session.block_id,
     distractions: session.distractions,
+    lanes: session.lanes.map((l) => ({
+      id: l.task_id,
+      title: l.title,
+      area_id: l.area_id,
+      area: l.area,
+      running: l.running_since !== null,
+      done: l.done,
+      wall_min: Math.floor(wallMs(l, now) / MINUTE_MS),
+    })),
   };
 }
 
@@ -265,9 +412,10 @@ export function applyDb(conn: Conn, effects: readonly Effect[]) {
       const s = effect.session;
       conn.run(
         `INSERT INTO focus_sessions
-           (id, block_id, area_id, task_id, kind, started_at, planned_min, paused_at, paused_ms, extended)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-         ON CONFLICT (id) DO UPDATE SET planned_min = ?7, paused_at = ?8, paused_ms = ?9, extended = ?10`,
+           (id, block_id, area_id, task_id, kind, started_at, planned_min, paused_at, paused_ms, extended, run_of)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT (id) DO UPDATE SET planned_min = ?7, paused_at = ?8, paused_ms = ?9, extended = ?10,
+           area_id = ?3, task_id = ?4`,
         [
           s.id,
           s.block_id,
@@ -279,18 +427,162 @@ export function applyDb(conn: Conn, effects: readonly Effect[]) {
           s.paused_at,
           s.paused_ms,
           s.extended ? 1 : 0,
+          s.run_of,
         ],
       );
+      if (s.kind === "focus")
+        for (const l of s.lanes)
+          conn.run(
+            `INSERT OR IGNORE INTO focus_run_tasks (session_id, task_id, area_id, position)
+             VALUES (?, ?, ?, ?)`,
+            [s.id, l.task_id, l.area_id, l.position],
+          );
     } else if (effect.type === "close") {
       conn.run(
         "UPDATE focus_sessions SET ended_at = ?, outcome = ?, paused_at = NULL WHERE id = ?",
         [effect.at, effect.outcome, effect.id],
       );
+      conn.run(
+        `UPDATE focus_lane_spans SET end_at = MAX(start_at, ?), end_kind = 'run_end'
+         WHERE session_id = ? AND end_at IS NULL`,
+        [effect.at, effect.id],
+      );
+      finishRun(conn, effect.id);
+    } else if (effect.type === "span_open") {
+      conn.run("INSERT INTO focus_lane_spans (session_id, task_id, start_at) VALUES (?, ?, ?)", [
+        effect.session_id,
+        effect.task_id,
+        effect.at,
+      ]);
+    } else if (effect.type === "span_close") {
+      conn.run(
+        `UPDATE focus_lane_spans SET end_at = MAX(start_at, ?), end_kind = ?
+         WHERE session_id = ? AND task_id = ? AND end_at IS NULL`,
+        [effect.at, effect.end, effect.session_id, effect.task_id],
+      );
+    } else if (effect.type === "lane_removed") {
+      for (const table of ["focus_lane_spans", "focus_run_tasks"])
+        conn.run(`DELETE FROM ${table} WHERE session_id = ? AND task_id = ?`, [
+          effect.session_id,
+          effect.task_id,
+        ]);
+    } else if (effect.type === "task_done") {
+      conn.run("UPDATE focus_run_tasks SET result = 'done' WHERE session_id = ? AND task_id = ?", [
+        effect.session_id,
+        effect.task_id,
+      ]);
+      try {
+        markDoneIn(conn, effect.task_id, laneContext(effect.session_id), effect.at);
+      } catch (error) {
+        console.error("could not mark the lane's task done:", error);
+      }
     } else if (effect.type === "add_distraction") {
       conn.run("UPDATE focus_sessions SET distractions = distractions + 1 WHERE id = ?", [
         effect.id,
       ]);
     }
+  }
+}
+
+export const laneContext = (sessionId: string) => `lane:${sessionId}`;
+
+/** tasks::mark_done_in: done, logged under `context`; done or deleted tasks are left alone. */
+export function markDoneIn(conn: Conn, taskId: string, context: string, now: number) {
+  const row = first(conn, "SELECT status FROM task_items WHERE id = ? AND deleted_at IS NULL", [
+    taskId,
+  ]);
+  if (!row || row.status === "done") return;
+  applyOps(
+    conn,
+    "user",
+    context,
+    [
+      {
+        op: "update",
+        table: "task_items",
+        id: taskId,
+        values: { status: "done", completed_at: now },
+      },
+    ],
+    now,
+  );
+}
+
+/** solo_ms: per task, the time it was the only lane running. */
+export function soloMs(
+  spans: readonly [string, number, number][],
+  from: number,
+  to: number,
+): Map<string, number> {
+  const clamped = spans
+    .map(([task, start, end]) => [task, Math.max(start, from), Math.min(end, to)] as const)
+    .filter(([, start, end]) => end > start);
+  const points = [...new Set(clamped.flatMap(([, start, end]) => [start, end]))].sort(
+    (a, b) => a - b,
+  );
+  const out = new Map<string, number>();
+  points.forEach((a, i) => {
+    const b = points[i + 1];
+    if (b === undefined) return;
+    const running = [
+      ...new Set(clamped.filter(([, start, end]) => start <= a && end >= b).map(([task]) => task)),
+    ];
+    const [only] = running;
+    if (running.length === 1 && only !== undefined) out.set(only, (out.get(only) ?? 0) + b - a);
+  });
+  return out;
+}
+
+/** finish_run: each task's effort, wall minutes and clean flag when a run closes. */
+export function finishRun(conn: Conn, sessionId: string) {
+  const tasks = conn.all("SELECT task_id, result FROM focus_run_tasks WHERE session_id = ?", [
+    sessionId,
+  ]);
+  if (tasks.length === 0) return;
+  const row = first(
+    conn,
+    "SELECT started_at, ended_at, paused_ms FROM focus_sessions WHERE id = ?",
+    [sessionId],
+  );
+  if (!row || row.ended_at === null) return;
+  const started = Number(row.started_at);
+  const ended = Number(row.ended_at);
+  const wall = ended - started;
+  const scale = wall > 0 ? Math.max(wall - Number(row.paused_ms), 0) / wall : 0;
+  const spans = conn
+    .all(
+      "SELECT task_id, start_at, end_at FROM focus_lane_spans WHERE session_id = ? AND end_at IS NOT NULL",
+      [sessionId],
+    )
+    .map(
+      (r) => [String(r.task_id), Number(r.start_at), Number(r.end_at)] as [string, number, number],
+    );
+  const solo = soloMs(spans, started, ended);
+  for (const task of tasks) {
+    const taskId = String(task.task_id);
+    const wallMsOf = spans
+      .filter(([id]) => id === taskId)
+      .reduce((sum, [, a, b]) => sum + Math.max(Math.min(b, ended) - Math.max(a, started), 0), 0);
+    const effort = Number(
+      first(
+        conn,
+        "SELECT COALESCE(SUM(minutes), 0) AS n FROM v_focus_share WHERE session_id = ? AND task_id = ?",
+        [sessionId, taskId],
+      )?.n ?? 0,
+    );
+    const soloMin = ((solo.get(taskId) ?? 0) * scale) / 60_000;
+    const clean = task.result === "done" && effort > 0 && soloMin + 1e-9 >= CLEAN_SHARE * effort;
+    conn.run(
+      `UPDATE focus_run_tasks SET effort_min = ?, wall_min = ?, clean = ?
+       WHERE session_id = ? AND task_id = ?`,
+      [
+        effort,
+        Math.floor((wallMsOf + MINUTE_MS / 2) / MINUTE_MS),
+        clean ? 1 : 0,
+        sessionId,
+        taskId,
+      ],
+    );
   }
 }
 
@@ -301,6 +593,7 @@ const plain = (): Context => ({
   title: "Focus",
   focus_min: 25,
   break_min: 5,
+  lanes: [],
 });
 
 /** context_for: the block's area, task and title, and the area's lengths. */
@@ -314,13 +607,67 @@ export function contextFor(conn: Conn, blockId: string | null): Context {
     [blockId],
   );
   if (!row) return plain();
+  const taskId = row.task_id as string | null;
+  const taskLane = taskId === null ? undefined : laneFor(conn, taskId, 1);
   return {
     block_id: blockId,
     area_id: row.area_id as string | null,
-    task_id: row.task_id as string | null,
+    task_id: taskId,
     title: String(row.title),
     focus_min: Number(row.focus_min),
     break_min: Number(row.break_min),
+    lanes: taskLane ? [taskLane] : [],
+  };
+}
+
+/** lane_for: a task as a lane, nothing run yet; undefined when it is gone. */
+export function laneFor(conn: Conn, taskId: string, position: number): Lane | undefined {
+  const row = first(
+    conn,
+    `SELECT t.title, t.area_id, a.name, t.status = 'done' AS done
+     FROM task_items AS t LEFT JOIN area_items AS a ON a.id = t.area_id
+     WHERE t.id = ? AND t.deleted_at IS NULL`,
+    [taskId],
+  );
+  if (!row) return undefined;
+  return {
+    task_id: taskId,
+    title: String(row.title),
+    area_id: row.area_id as string | null,
+    area: row.name as string | null,
+    position,
+    running_since: null,
+    done: Number(row.done) === 1,
+    closed_ms: 0,
+  };
+}
+
+/** context_for_run: the run's lanes in order, its first task's area and break. */
+export function contextForRun(
+  conn: Conn,
+  taskIds: readonly string[],
+  minutes: number | null,
+): Context | undefined {
+  const lanes: Lane[] = [];
+  for (const taskId of taskIds) {
+    if (lanes.some((l) => l.task_id === taskId)) continue;
+    const found = laneFor(conn, taskId, lanes.length + 1);
+    if (found) lanes.push(found);
+  }
+  const head = lanes[0];
+  if (!head) return undefined;
+  const area =
+    head.area_id === null
+      ? undefined
+      : first(conn, "SELECT break_min FROM area_items WHERE id = ?", [head.area_id]);
+  return {
+    block_id: null,
+    area_id: head.area_id,
+    task_id: head.task_id,
+    title: runTitle(lanes),
+    focus_min: Math.max(minutes ?? RUN_MIN, 1),
+    break_min: area ? Number(area.break_min) : 5,
+    lanes,
   };
 }
 
@@ -339,6 +686,7 @@ export function contextForArea(conn: Conn, areaId: string): Context {
     title: String(row.name),
     focus_min: Number(row.focus_min),
     break_min: Number(row.break_min),
+    lanes: [],
   };
 }
 
@@ -428,8 +776,9 @@ export function restore(conn: Conn, now: number): Machine {
   const open = first(
     conn,
     `SELECT s.id, s.kind, s.started_at, s.planned_min, s.paused_at, s.paused_ms, s.block_id,
-            s.area_id, s.task_id, s.extended, s.distractions,
-            COALESCE(f.intent_text, b.title, a.name, 'Focus') AS title, COALESCE(a.break_min, 5) AS break_min
+            s.area_id, s.task_id, s.extended, s.distractions, s.run_of,
+            COALESCE(f.intent_text, b.title) AS named, COALESCE(a.name, 'Focus') AS area_name,
+            COALESCE(a.break_min, 5) AS break_min
      FROM focus_sessions AS s
      LEFT JOIN day_blocks AS b ON b.id = s.block_id
      LEFT JOIN area_items AS a ON a.id = s.area_id
@@ -448,11 +797,23 @@ export function restore(conn: Conn, now: number): Machine {
         area_id: open.area_id as string | null,
         task_id: open.task_id as string | null,
         extended: Number(open.extended) === 1,
-        title: String(open.title),
+        title: String(open.area_name),
         break_min: Number(open.break_min),
         distractions: Number(open.distractions),
+        lanes: [],
+        run_of: open.run_of as string | null,
       }
     : null;
+  if (current) {
+    current.lanes =
+      current.kind === "focus"
+        ? loadLanes(conn, current.id, true)
+        : current.run_of !== null
+          ? loadLanes(conn, current.run_of, false)
+          : [];
+    if (open?.named !== null && open?.named !== undefined) current.title = String(open.named);
+    else if (current.lanes.length > 0) current.title = runTitle(current.lanes);
+  }
   const recent = conn.all(
     `SELECT started_at, ended_at FROM focus_sessions
      WHERE kind = 'focus' AND outcome = 'completed' AND ended_at > ? ORDER BY started_at DESC LIMIT 8`,
@@ -470,6 +831,35 @@ export function restore(conn: Conn, now: number): Machine {
     in_row: inRow,
     last_focus_end: recent[0] ? Number(recent[0].ended_at) : null,
   };
+}
+
+/** load_lanes: a run's lanes in order; `live` with their open span and time run. */
+export function loadLanes(conn: Conn, sessionId: string, live: boolean): Lane[] {
+  return conn
+    .all(
+      `SELECT r.task_id, t.title, r.area_id, a.name, r.position,
+              COALESCE(r.result = 'done', 0) OR t.status = 'done' AS done,
+              (SELECT MIN(p.start_at) FROM focus_lane_spans AS p
+               WHERE p.session_id = r.session_id AND p.task_id = r.task_id AND p.end_at IS NULL) AS running_since,
+              (SELECT COALESCE(SUM(p.end_at - p.start_at), 0) FROM focus_lane_spans AS p
+               WHERE p.session_id = r.session_id AND p.task_id = r.task_id AND p.end_at IS NOT NULL) AS closed_ms
+       FROM focus_run_tasks AS r
+       JOIN task_items AS t ON t.id = r.task_id
+       LEFT JOIN area_items AS a ON a.id = r.area_id
+       WHERE r.session_id = ?
+       ORDER BY r.position`,
+      [sessionId],
+    )
+    .map((row) => ({
+      task_id: String(row.task_id),
+      title: String(row.title),
+      area_id: row.area_id as string | null,
+      area: row.name as string | null,
+      position: Number(row.position),
+      done: Number(row.done) === 1,
+      running_since: live && row.running_since !== null ? Number(row.running_since) : null,
+      closed_ms: live ? Number(row.closed_ms) : 0,
+    }));
 }
 
 /** set_intent's write: the intent becomes the session's title and is stored. */

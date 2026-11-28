@@ -1,7 +1,8 @@
 /**
  * Dev-only port of the focus runtime around the Machine: focus::dispatch,
  * start_for, the toasts' buttons, and the commands setup_start,
- * focus_start and focus_control. It runs on a World the harness supplies
+ * focus_start, focus_control, run_start and the lane commands. It runs on a
+ * World the harness supplies
  * (one shared database and machine), so tests can drive it in node too.
  */
 import { type Conn, first, inTransaction } from "./conn";
@@ -10,12 +11,15 @@ import {
   afterComplete,
   afterStart,
   applyDb,
+  type Context,
   contextFor,
+  contextForRun,
   contextForTarget,
   endsAt,
   type Effect,
   type Event,
   handle,
+  laneFor,
   lastTarget,
   type Machine,
   newId,
@@ -110,18 +114,34 @@ export function dispatch(world: World, event: Event, now: number): Effect[] {
     const toast = toastFor(world, effect, now);
     if (toast) world.toast(toast);
   }
-  const changed = effects.some(
-    (e) => e.type === "save" || e.type === "close" || e.type === "add_distraction",
-  );
   if (effects.some((e) => e.type === "close" && e.outcome === "completed")) {
     const capText = afterComplete(world.conn, now);
     if (capText) world.toast({ at: now, title: "Daily focus cap", body: capText, buttons: [] });
   }
-  if (changed) {
+  const tables = changedTables(effects);
+  if (tables.length > 0) {
     world.emit("focus-changed", null);
-    world.emit("data-changed", ["focus_sessions"]);
+    world.emit("data-changed", tables);
   }
   return effects;
+}
+
+/** changed_tables: what a set of effects wrote, for "data-changed". */
+export function changedTables(effects: readonly Effect[]): string[] {
+  const tables = new Set<string>();
+  for (const effect of effects) {
+    if (effect.type === "save" || effect.type === "close" || effect.type === "add_distraction")
+      ["focus_sessions", "focus_run_tasks", "focus_lane_spans"].forEach((t) => tables.add(t));
+    else if (
+      effect.type === "span_open" ||
+      effect.type === "span_close" ||
+      effect.type === "lane_removed"
+    )
+      ["focus_run_tasks", "focus_lane_spans"].forEach((t) => tables.add(t));
+    else if (effect.type === "task_done")
+      ["focus_run_tasks", "task_items"].forEach((t) => tables.add(t));
+  }
+  return [...tables];
 }
 
 /** focus::start_for: a session for a block, an area with no block, or nothing. */
@@ -132,7 +152,11 @@ export function startFor(
   force: boolean,
   now: number,
 ): Effect[] {
-  const context = contextForTarget(world.conn, blockId, areaId);
+  return startContext(world, contextForTarget(world.conn, blockId, areaId), force, now);
+}
+
+/** start_context: the hard stop, the machine, the cap. */
+function startContext(world: World, context: Context, force: boolean, now: number): Effect[] {
   if (!force && stoppedNow(world.conn, now)) return [{ type: "past_hard_stop" }];
   const id = newId(now, world.nextCounter());
   const effects = dispatch(world, { type: "start", context, force, id }, now);
@@ -166,6 +190,37 @@ export function focusStart(
 ): string {
   const block = typeof args.blockId === "string" ? args.blockId : null;
   return startResult(startFor(world, block, null, args.force === true, now));
+}
+
+/** run_start: a run of tasks, the first task's lane running at once. */
+export function runStart(
+  world: World,
+  args: { taskIds?: unknown; minutes?: unknown; force?: unknown },
+  now: number,
+): string {
+  const ids = Array.isArray(args.taskIds) ? args.taskIds.map(String) : [];
+  const minutes = typeof args.minutes === "number" ? args.minutes : null;
+  const context = contextForRun(world.conn, ids, minutes);
+  if (!context) throw "Pick at least one task for the run.";
+  return startResult(startContext(world, context, args.force === true, now));
+}
+
+/** lane_start, lane_pause, lane_done, lane_add and lane_remove. */
+export function laneCommand(
+  world: World,
+  command: "lane_start" | "lane_pause" | "lane_done" | "lane_add" | "lane_remove",
+  args: { taskId?: unknown },
+  now: number,
+) {
+  const taskId = String(args.taskId);
+  if (command === "lane_add") {
+    const lane = laneFor(world.conn, taskId, 0);
+    if (!lane) throw "That task is gone.";
+    dispatch(world, { type: "lane_add", lane }, now);
+  } else {
+    dispatch(world, { type: command, task_id: taskId }, now);
+  }
+  return null;
 }
 
 /** focus_control */

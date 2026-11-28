@@ -1540,6 +1540,50 @@ pub fn focus_control(action: String, app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Starts a run of tasks (T-084): `minutes` long (30 when not given), the
+/// first task's lane running at once. Same answers as focus_start.
+#[tauri::command]
+pub fn run_start(
+    task_ids: Vec<String>,
+    minutes: Option<i64>,
+    force: Option<bool>,
+    app: AppHandle,
+) -> Result<String, String> {
+    let effects = crate::focus::start_run(&app, &task_ids, minutes, force.unwrap_or(false))?;
+    Ok(start_result(&effects))
+}
+
+/// ▶ on a lane: it runs (alongside any others) until paused or done.
+#[tauri::command]
+pub fn lane_start(task_id: String, app: AppHandle) {
+    crate::focus::dispatch(&app, crate::focus::Event::LaneStart { task_id });
+}
+
+/// ⏸ on a lane.
+#[tauri::command]
+pub fn lane_pause(task_id: String, app: AppHandle) {
+    crate::focus::dispatch(&app, crate::focus::Event::LanePause { task_id });
+}
+
+/// ✓ on a lane: its span ends and the task is marked done (logged, undoable).
+#[tauri::command]
+pub fn lane_done(task_id: String, app: AppHandle) {
+    crate::focus::dispatch(&app, crate::focus::Event::LaneDone { task_id });
+}
+
+/// + Add: the task joins the running run as a lane, not started.
+#[tauri::command]
+pub fn lane_add(task_id: String, app: AppHandle) -> Result<(), String> {
+    crate::focus::add_lane(&app, &task_id)
+}
+
+/// Untick: the task leaves the run and its time is shared among the rest
+/// (a task done in the run stays).
+#[tauri::command]
+pub fn lane_remove(task_id: String, app: AppHandle) {
+    crate::focus::dispatch(&app, crate::focus::Event::LaneRemove { task_id });
+}
+
 #[tauri::command]
 pub fn focus_status(focus: State<'_, crate::focus::FocusState>) -> crate::focus::Status {
     let machine = focus.machine.lock();
