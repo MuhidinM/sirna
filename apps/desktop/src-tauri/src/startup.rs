@@ -5,11 +5,15 @@ use crate::AUTOSTART_ARG;
 /// Passed to a second launch to show the check toast (used by the smoke test).
 pub const TEST_TOAST_ARG: &str = "--test-toast";
 
+/// Passed to a second launch to show the important-toast check (T-083 spike).
+pub const TEST_IMPORTANT_ARG: &str = "--test-important";
+
 /// What a second launch asks the running instance to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SecondLaunch {
     OpenMain,
     TestToast,
+    TestImportant,
 }
 
 pub fn second_launch_action<I, S>(args: I) -> SecondLaunch
@@ -17,7 +21,13 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    if args.into_iter().any(|arg| arg.as_ref() == TEST_TOAST_ARG) {
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect();
+    if args.iter().any(|arg| arg == TEST_IMPORTANT_ARG) {
+        SecondLaunch::TestImportant
+    } else if args.iter().any(|arg| arg == TEST_TOAST_ARG) {
         SecondLaunch::TestToast
     } else {
         SecondLaunch::OpenMain
@@ -63,6 +73,14 @@ mod tests {
         assert_eq!(
             second_launch_action(["sirna.exe", "--test-toast"]),
             SecondLaunch::TestToast
+        );
+    }
+
+    #[test]
+    fn second_launch_can_ask_for_the_important_check() {
+        assert_eq!(
+            second_launch_action(["sirna.exe", "--test-important"]),
+            SecondLaunch::TestImportant
         );
     }
 

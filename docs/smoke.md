@@ -55,6 +55,17 @@ Five minutes in the **installed** build after every `pnpm ship` (tray, toasts an
 - **Advisor, caps, afford, review:** Categories → Use all suggestions sets caps; Money → Month shows "Caps this month" and, when something needs you, "Worth a look" (also on Today) with its button and Not now; "Can I afford it?" answers Fine / Tight / Not now; ‹ to last month shows its review, and so does the week card on the first Sunday (T-063 to T-066).
 - **Reboot:** after a restart Sirna is in the tray without opening a window (autostart, T-018).
 
+## Important notifications through Do not disturb (T-083)
+
+Run `sirna.exe --test-important` against the installed build while Do not disturb is on (Win+N).
+
+- [x] 2026-11-28, build 26300: the first urgent toast is held until Windows asks to allow important notifications for Sirna; after Allow, it shows during Do not disturb (priority only).
+- [x] Its buttons reach Rust with no window open (log: `important check action: b2`).
+- [x] A toast with five buttons shows all five.
+- [x] A newer toast with the same tag replaces the older one.
+- To turn it back on after "Don't allow": Settings → System → Notifications → Sirna → Allow important notifications.
+- Not checked yet: Alarms-only Do not disturb and full screen (the pop-up fallback comes with T-093).
+
 ## Restore a backup (T-032)
 
 Sirna makes a checked copy once a day (`VACUUM INTO`, then `quick_check`) and before every migration. It keeps the newest 14 daily copies (`sirna-YYYY-MM-DD.db`) and 5 pre-migration copies in `D:\Sirna\backups` (next to the data when there is no D:).

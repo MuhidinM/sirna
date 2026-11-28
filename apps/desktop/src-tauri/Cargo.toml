@@ -48,3 +48,7 @@ codegen-units = 16
 opt-level = 2
 strip = true
 panic = "unwind" # a panic in one job must not take the tray down (plan §4.1)
+
+# Adds the Windows 11 "urgent" scenario and a toast tag (docs/decisions, T-083).
+[patch.crates-io]
+tauri-winrt-notification = { path = "vendor/tauri-winrt-notification" }
