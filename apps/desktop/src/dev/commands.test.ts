@@ -53,6 +53,18 @@ describe("captures", () => {
     expect(captureOpsAllowed([block({ status: "skipped" })])).toBe(true);
     expect(captureOpsAllowed([block({ status: "planned" })])).toBe(false);
     expect(captureOpsAllowed([block({ title: "x" })])).toBe(false);
+    // `move`: a task's day, and a timed task's due and reminder instants with it.
+    const task = (values: Record<string, string | number | null>): Op => ({
+      op: "update",
+      table: "task_items",
+      id: "t",
+      values,
+    });
+    expect(captureOpsAllowed([task({ due_date: "2026-12-01", due_at: 1, remind_at: null })])).toBe(
+      true,
+    );
+    expect(captureOpsAllowed([task({ due_at: "10:00" })])).toBe(false);
+    expect(captureOpsAllowed([task({ title: "x" })])).toBe(false);
   });
 
   it("may set the prayer city and nothing else in settings (T-092)", () => {

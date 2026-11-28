@@ -23,6 +23,13 @@ export interface CaptureCase {
   area: string | null;
 }
 
+/** A line for smart capture (T-090): English, Amharic or mixed, and the intents it holds, in order. */
+export interface CommandCase {
+  ref: string;
+  text: string;
+  intents: string[];
+}
+
 export function readJsonl<T>(name: string): T[] {
   const text = readFileSync(new URL(`../../../evals/${name}`, import.meta.url), "utf8");
   return text

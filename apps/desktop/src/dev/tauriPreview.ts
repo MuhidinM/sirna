@@ -257,6 +257,7 @@ export async function install(): Promise<void> {
     widget_apply: (a) => windowEvent("widget_apply", "widget.html", a),
     title_bar: () => null,
     capture_ready: () => null,
+    capture_rows: () => null,
     brief_ready: () => null,
 
     "plugin:event|listen": (a) => {
@@ -277,7 +278,7 @@ export async function install(): Promise<void> {
       has_key: true,
       model: "gemini-flash-lite-latest",
       used: 3,
-      cap: 15,
+      cap: 200,
       quota_day: "",
     }),
     secret_status: () => true,

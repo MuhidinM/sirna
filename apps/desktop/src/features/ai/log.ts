@@ -21,7 +21,7 @@ export interface AiCall {
   response_text: string | null;
 }
 
-export const DEFAULT_DAILY_CAP = 15;
+export const DEFAULT_DAILY_CAP = 200;
 export const MAX_DAILY_CAP = 1000;
 
 /** A request body shown readably; anything that isn't JSON as it is. */

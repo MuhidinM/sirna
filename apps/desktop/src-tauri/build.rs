@@ -68,6 +68,7 @@ fn main() {
         "capture_undo",
         "capture_ready",
         "capture_replace",
+        "capture_rows",
         "close_window",
         "db_query",
         "db_tx",

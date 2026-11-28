@@ -22,7 +22,11 @@ use serde_json::Value;
 pub const HOST: &str = "generativelanguage.googleapis.com";
 pub const KEY_NAME: &str = "gemini_api_key";
 pub const PACE: Duration = Duration::from_secs(7);
-pub const DEFAULT_DAILY_CAP: i64 = 15;
+pub const DEFAULT_DAILY_CAP: i64 = 200;
+/// The capture box waits at most this long for its turn behind the 7 s pace;
+/// later than that it is told "busy" at once and keeps the line as a note
+/// (ADR-0014). It never retries either: the box gives up after 4 s.
+pub const CAPTURE_MAX_WAIT: Duration = Duration::from_secs(1);
 pub const DAILY_CAP_KEY: &str = "ai.daily_cap";
 pub const MODEL_KEY: &str = "ai.model";
 pub const KEEP_DAYS: i64 = 30;
@@ -172,7 +176,20 @@ impl Gate {
     /// returns how long to wait before sending it. Err in plain mode or when
     /// the cap is reached. Every Ok must be followed by `release` once the
     /// request is logged.
+    #[cfg(test)]
     pub fn reserve(&mut self, now: Instant, used: i64, cap: i64) -> Result<Duration, Refusal> {
+        self.reserve_within(now, used, cap, None)
+    }
+
+    /// `reserve`, but refused as `Busy` (nothing reserved) when the wait
+    /// would be longer than `max_wait`.
+    pub fn reserve_within(
+        &mut self,
+        now: Instant,
+        used: i64,
+        cap: i64,
+        max_wait: Option<Duration>,
+    ) -> Result<Duration, Refusal> {
         if let Some(until) = self.plain_until {
             if now < until {
                 return Err(Refusal::PlainMode((until - now).as_secs()));
@@ -182,8 +199,11 @@ impl Gate {
         if used + self.in_flight >= cap {
             return Err(Refusal::Budget(cap));
         }
-        self.in_flight += 1;
         let at = self.next_free.map_or(now, |free| free.max(now));
+        if max_wait.is_some_and(|max| at - now > max) {
+            return Err(Refusal::Busy);
+        }
+        self.in_flight += 1;
         self.next_free = Some(at + PACE);
         Ok(at - now)
     }
@@ -227,6 +247,8 @@ pub enum Refusal {
     BadModel,
     Budget(i64),
     PlainMode(u64),
+    /// A capture call that would wait more than `CAPTURE_MAX_WAIT`.
+    Busy,
     RateLimited(u64),
     Http(u16, String),
     Network(String),
@@ -239,6 +261,7 @@ impl Refusal {
             Refusal::BadModel => "bad-model".into(),
             Refusal::Budget(cap) => format!("budget:{cap}"),
             Refusal::PlainMode(seconds) => format!("plain-mode:{seconds}"),
+            Refusal::Busy => "busy".into(),
             Refusal::RateLimited(seconds) => format!("rate-limited:{seconds}"),
             Refusal::Http(status, message) => format!("http:{status}:{message}"),
             Refusal::Network(message) => format!("network:{message}"),
@@ -442,7 +465,9 @@ pub fn send(env: &impl Env, gate: &Mutex<Gate>, request: &Request<'_>) -> Result
     loop {
         let (used, cap) =
             env.with_db(|conn| (used_on(conn, &pacific_date(env.now_ms())), daily_cap(conn)));
-        let wait = gate.lock().reserve(Instant::now(), used, cap)?;
+        let wait = gate
+            .lock()
+            .reserve_within(Instant::now(), used, cap, max_wait(request.task))?;
         // Released when this attempt is over (logged, so `used` counts it).
         let _slot = Slot(gate);
         if !wait.is_zero() {
@@ -563,7 +588,11 @@ pub fn send(env: &impl Env, gate: &Mutex<Gate>, request: &Request<'_>) -> Result
             }
         };
         match retry_after {
-            Some(delay) if attempt < MAX_RETRIES && delay <= MAX_RETRY_WAIT => {
+            Some(delay)
+                if max_wait(request.task).is_none()
+                    && attempt < MAX_RETRIES
+                    && delay <= MAX_RETRY_WAIT =>
+            {
                 attempt += 1;
                 env.sleep(delay);
             }
@@ -573,6 +602,11 @@ pub fn send(env: &impl Env, gate: &Mutex<Gate>, request: &Request<'_>) -> Result
             }
         }
     }
+}
+
+/// How long a task may wait for its turn: only the capture box is in a hurry.
+pub fn max_wait(task: &str) -> Option<Duration> {
+    (task == "command").then_some(CAPTURE_MAX_WAIT)
 }
 
 fn backoff(attempt: u32) -> Duration {
@@ -784,6 +818,29 @@ mod tests {
             Err(Refusal::PlainMode(_))
         ));
         assert!(gate.reserve(t0 + PLAIN_FOR, 0, 99).is_ok());
+    }
+
+    #[test]
+    fn a_capture_call_is_refused_as_busy_rather_than_waiting() {
+        let mut gate = Gate::default();
+        let t0 = Instant::now();
+        assert_eq!(gate.reserve(t0, 0, 99), Ok(Duration::ZERO));
+        // The next free slot is 7 s away: the capture box doesn't wait for it.
+        assert_eq!(
+            gate.reserve_within(t0, 0, 99, max_wait("command")),
+            Err(Refusal::Busy)
+        );
+        assert_eq!(Refusal::Busy.code(), "busy");
+        // Nothing was reserved, so the cap and the pace are unchanged.
+        assert_eq!(gate.reserve(t0, 0, 99), Ok(PACE));
+        // Within a second of its turn it waits.
+        let later = t0 + 2 * PACE - Duration::from_millis(500);
+        assert_eq!(
+            gate.reserve_within(later, 0, 99, max_wait("command")),
+            Ok(Duration::from_millis(500))
+        );
+        assert_eq!(max_wait("timing"), None);
+        assert_eq!(DEFAULT_DAILY_CAP, 200);
     }
 
     #[test]

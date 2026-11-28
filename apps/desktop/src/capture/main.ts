@@ -1,7 +1,13 @@
 // The capture box runs without React so it opens fast and stays small (plan §4.3).
 //
-// Keys: Enter saves · Tab changes what it is saved as · Up arrow (empty box)
-// brings back the last capture to fix · Ctrl+Z (empty box) undoes it · Escape closes.
+// Keys: Enter saves · Shift+Enter asks the AI to read it · Tab changes what it
+// is saved as · Up arrow (empty box) brings back the last capture to fix ·
+// Ctrl+Z (empty box) undoes it · Escape closes.
+//
+// Smart capture (ADR-0014): when the rules are unsure, Enter saves the line
+// as an inbox note first, then one AI call proposes rows. Enter accepts the
+// rows that are on, Up/Down + Space turn one off, Tab changes its area, and
+// Escape keeps the note. Accepting replaces the note, so undo and fix work.
 import { invoke } from "@tauri-apps/api/core";
 
 import { systemClock } from "../kernel/clock";
@@ -44,6 +50,24 @@ import { CATEGORIES_SQL, LEARNED_SQL } from "../features/money/money";
 import { type ParseOptions, type Parsed, parseCapture, PARSER_ID } from "./parse";
 import { TODAY_PARSER, TODAY_PARSER_ID, todayTask } from "./today";
 import { type ClockStyle } from "./when";
+import {
+  accepted,
+  COMMAND_PARSER_ID,
+  commandFacts,
+  needsAi,
+  OPEN_ITEMS_SQL,
+  type OpenItem,
+  restore,
+  rowKey,
+  rowsFor,
+  type RowsState,
+  rowText,
+  type SmartContext,
+} from "./smart";
+import { gemini } from "../features/ai/providers";
+import { isStrict, STRICT_SQL } from "../features/ai/strict";
+import { type LlmProvider, plain, runTask, type TaskResult } from "../features/ai/task";
+import { COMMAND, type CommandItem } from "../features/ai/touchpoints";
 
 import { applyTheme, cachedTheme } from "../theme/theme";
 
@@ -60,6 +84,9 @@ applyTheme(cachedTheme());
 
 const ECHO_MS = 1500;
 const ANSWER_MS = 6000;
+/** How long the box waits for the AI before keeping the line as a note. */
+const AI_MS = 4000;
+const KEPT = "Kept for tonight's review";
 
 function element<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -70,6 +97,7 @@ function element<T extends Element>(selector: string): T {
 const form = element<HTMLFormElement>("#capture");
 const input = element<HTMLInputElement>("#capture-input");
 const output = element<HTMLOutputElement>("#capture-echo");
+const rowList = element<HTMLUListElement>("#capture-rows");
 
 let clockStyle: ClockStyle = "western";
 /** Savings goal names, so `saved 500 laptop` reads as saving only when a goal fits. */
@@ -102,6 +130,15 @@ let savingsContext: SavingsContext = { goals: [], unclaimed: {}, ripe: () => nul
 let fixKind: Parsed["kind"] | undefined;
 /** True while a save, fix or undo is in flight. */
 let busy = false;
+/** Strict mode keeps capture rules-only; assumed on until the setting is read. */
+let strict = true;
+/** Open tasks and projects, so `move the report to fri` can name one. */
+let openItems: OpenItem[] = [];
+/** Shift+Enter: read this line with the AI even if the rules are sure. */
+let forceAi = false;
+/** The AI's rows for a line already saved as a note, while they show. */
+let review: { rawId: number; text: string; state: RowsState; context: SmartContext } | undefined;
+let aiProvider: LlmProvider | undefined;
 
 const close = () => invoke("close_window");
 
@@ -134,6 +171,26 @@ function loadContext() {
   ])
     .then(([row]) => {
       if (row && JSON.parse(row.value_json) === "ethiopian") clockStyle = "ethiopian";
+    })
+    .catch(() => undefined);
+
+  void query<{ value_json: string | null }>(STRICT_SQL)
+    .then((rows) => {
+      strict = isStrict(rows);
+    })
+    .catch(() => undefined);
+
+  void query<
+    Pick<OpenItem, "id" | "title" | "kind"> & { due_at: number | null; remind_at: number | null }
+  >(OPEN_ITEMS_SQL)
+    .then((rows) => {
+      openItems = rows.map(({ id, title, kind, due_at, remind_at }) => ({
+        id,
+        title,
+        kind,
+        dueAt: due_at,
+        remindAt: remind_at,
+      }));
     })
     .catch(() => undefined);
 
@@ -296,6 +353,17 @@ form.addEventListener("submit", (event) => {
     output.textContent = parsed.why;
     return;
   }
+  // Unsure, or Shift+Enter: saved as a note now, read by the AI next. Never while
+  // fixing, and never over a reading picked with Tab: that choice is the user's.
+  const smart =
+    !editing &&
+    !strict &&
+    (forceAi || (picked === 0 && needsAi(parsed, rawText, { plain: nowMs < plain.until })));
+  forceAi = false;
+  if (smart) {
+    readSmart(rawText, parsed, nowMs);
+    return;
+  }
   const base = editing?.today ? TODAY_PARSER_ID : PARSER_ID;
   const parser = picked === 0 ? base : `${base}+tab`;
   input.disabled = true;
@@ -436,7 +504,140 @@ form.addEventListener("submit", (event) => {
     });
 });
 
+/** The rows as they stand, the cursor's marked. */
+function showRows() {
+  if (!review) return;
+  const { state, context } = review;
+  rowList.replaceChildren(
+    ...state.rows.map((row, index) => {
+      const item = document.createElement("li");
+      item.textContent = rowText(row, context);
+      item.dataset.on = String(row.on);
+      if (index === state.cursor) item.setAttribute("aria-current", "true");
+      return item;
+    }),
+  );
+  rowList.hidden = false;
+}
+
+function withTimeout<T>(pending: Promise<TaskResult<T>>): Promise<TaskResult<T>> {
+  return Promise.race([
+    pending,
+    new Promise<TaskResult<T>>((resolve) =>
+      setTimeout(() => resolve({ ok: false, code: "timeout" }), AI_MS),
+    ),
+  ]);
+}
+
+/**
+ * Store first: the line is saved as an inbox note, so nothing is lost if the
+ * AI is slow, offline or out of budget. Then one COMMAND call; its rows show
+ * under the bar until Enter or Escape.
+ */
+function readSmart(rawText: string, parsed: Parsed, nowMs: number) {
+  input.disabled = true;
+  busy = true;
+  const body = rawText.trim().replace(/\s+/g, " ");
+  const note: Parsed = parsed.kind === "inbox" && parsed.body ? parsed : { kind: "inbox", body };
+  const context: SmartContext = {
+    nowMs,
+    newId: () => ulid(),
+    areas: moneyContext.areas ?? [],
+    open: openItems,
+    parse: { clockStyle, goals: goalNames, blocks: todayBlocks, ...moneyContext },
+  };
+  void commitCapture(rawText, toOps(note, { nowMs, newId: () => ulid() }), PARSER_ID).then(
+    async (rawId) => {
+      // Saved: from here on a failure keeps the note, never asks to save again.
+      try {
+        output.textContent = "Reading…";
+        const facts = commandFacts(rawText, nowMs, context.areas, openItems);
+        aiProvider ??= gemini();
+        const result = await withTimeout(runTask(COMMAND, facts, aiProvider));
+        const items: CommandItem[] = result.ok
+          ? result.value.items.map((item) => restore(item, facts.amounts))
+          : [];
+        const rows = rowsFor(items, context);
+        if (!rows.length) {
+          finish(KEPT);
+          return;
+        }
+        review = { rawId, text: rawText, state: { rows, cursor: 0 }, context };
+        showRows();
+        output.textContent = "Enter: save all";
+        void invoke("capture_rows", { rows: rows.length }).catch(() => undefined);
+      } catch {
+        review = undefined;
+        rowList.hidden = true;
+        finish(KEPT);
+      }
+    },
+    // Only a failed save keeps the line in the box to try again.
+    () => {
+      busy = false;
+      input.disabled = false;
+      output.textContent = "Couldn't save. Try again.";
+      input.focus();
+    },
+  );
+}
+
+/** Enter on the rows: the note is replaced by what the rows that are on make. */
+function acceptRows() {
+  if (!review) return;
+  const { rawId, text, state, context } = review;
+  review = undefined;
+  const { ops, effects, count } = accepted(state.rows, context);
+  if (!count) {
+    finish(KEPT);
+    return;
+  }
+  output.textContent = "Saving…";
+  void replaceCapture(rawId, text, ops, COMMAND_PARSER_ID)
+    .then(async (newId) => {
+      // A day off today: away until tomorrow, logged under this capture so undo puts it back.
+      for (const effect of effects)
+        if (effect.kind === "away")
+          try {
+            await invoke("set_away", { until: effect.until, rawId: newId });
+          } catch {
+            finish(`Saved ${count}, but couldn't set away. Set it on Today.`, ANSWER_MS);
+            return;
+          }
+      const search = effects.find((effect) => effect.kind === "search");
+      if (search) {
+        void invoke("open_notes", { query: search.query }).finally(() => void close());
+        return;
+      }
+      finish(`Saved ${count} · Ctrl+Z undoes`);
+    })
+    .catch((error: unknown) => {
+      // The note is still there: say so and close.
+      finish(typeof error === "string" ? `${error} · ${KEPT}` : KEPT, ANSWER_MS);
+    });
+}
+
 document.addEventListener("keydown", (event) => {
+  if (review) {
+    event.preventDefault();
+    if (event.repeat) return;
+    const action = rowKey(
+      review.state,
+      event.key,
+      event.shiftKey,
+      (moneyContext.areas ?? []).map((area) => area.id),
+    );
+    if (action.kind === "accept") acceptRows();
+    else if (action.kind === "keep") {
+      review = undefined;
+      finish(KEPT);
+    } else if (action.kind === "state") {
+      review.state = action.state;
+      showRows();
+    }
+    return;
+  }
+  if (event.key === "Enter") forceAi = event.shiftKey;
   if (event.key === "Escape") {
     void close();
     return;

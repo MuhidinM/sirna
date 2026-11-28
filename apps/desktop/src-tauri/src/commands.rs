@@ -33,8 +33,9 @@ fn tables_of(ops: &[Op]) -> Vec<String> {
 }
 
 /// A capture may only add tasks, notes and money, tick or skip a block
-/// (`gym done`, plan §3.5: its status and nothing else), and set the prayer
-/// city (`I'm in Adama`, T-092). Anything else (deletes, other settings) goes
+/// (`gym done`, plan §3.5: its status and nothing else), move a task's day
+/// (smart capture, ADR-0014) and set the prayer city (`I'm in Adama`, T-092).
+/// Anything else (deletes, other settings) goes
 /// through db_tx, which the capture window can't call.
 pub fn capture_ops_allowed(ops: &[Op]) -> bool {
     ops.iter().all(|op| match op {
@@ -57,15 +58,35 @@ pub fn capture_ops_allowed(ops: &[Op]) -> bool {
                     Some("\"addis\"" | "\"adama\"")
                 )
         }
-        Op::Update { table, values, .. } => {
-            table == "day_blocks"
-                && !values.is_empty()
+        Op::Update { table, values, .. } if table == "day_blocks" => {
+            !values.is_empty()
                 && values.iter().all(|(key, value)| {
                     key == "status" && matches!(value.as_str(), Some("done" | "skipped"))
                 })
         }
+        // Smart capture (ADR-0014): `move` and `finish by` change a task's day, nothing
+        // else. A timed task's due and reminder instants move with it.
+        Op::Update { table, values, .. } if table == "task_items" => {
+            !values.is_empty()
+                && values.iter().all(|(key, value)| match key.as_str() {
+                    "due_date" | "planned_date" => {
+                        value.is_null() || value.as_str().is_some_and(is_iso_date)
+                    }
+                    "due_at" | "remind_at" => value.is_null() || value.is_i64(),
+                    _ => false,
+                })
+        }
         _ => false,
     })
+}
+
+fn is_iso_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
 }
 
 /// What a capture's undo or fix can change, for `data-changed`.
@@ -582,6 +603,59 @@ mod tests {
             super::undo_blocked(&txn, raw, "undo").unwrap().as_deref(),
             Some("The prayer city has changed since. Set it from the tray or in Settings.")
         );
+    }
+
+    #[test]
+    fn smart_capture_may_move_a_task() {
+        let update = |table: &str, key: &str, value: Value| {
+            let mut values = Map::new();
+            values.insert(key.into(), value);
+            Op::Update {
+                table: table.into(),
+                id: "t".into(),
+                values,
+            }
+        };
+        assert!(capture_ops_allowed(&[update(
+            "task_items",
+            "due_date",
+            "2026-12-01".into()
+        )]));
+        assert!(capture_ops_allowed(&[update(
+            "task_items",
+            "planned_date",
+            Value::Null
+        )]));
+        assert!(!capture_ops_allowed(&[update(
+            "task_items",
+            "due_date",
+            "fri".into()
+        )]));
+        assert!(capture_ops_allowed(&[update(
+            "task_items",
+            "due_at",
+            1_764_900_000_000_i64.into()
+        )]));
+        assert!(capture_ops_allowed(&[update(
+            "task_items",
+            "remind_at",
+            Value::Null
+        )]));
+        assert!(!capture_ops_allowed(&[update(
+            "task_items",
+            "due_at",
+            "10:00".into()
+        )]));
+        assert!(!capture_ops_allowed(&[update(
+            "task_items",
+            "title",
+            "x".into()
+        )]));
+        assert!(!capture_ops_allowed(&[update(
+            "task_items",
+            "status",
+            "done".into()
+        )]));
     }
 
     #[test]
@@ -1364,8 +1438,8 @@ fn write_away(
 }
 
 /// The task names the AI gate accepts (plan §7.3); each is logged by name.
-const AI_TASKS: [&str; 8] = [
-    "timing", "estimate", "brief", "week", "review", "capture", "split", "money",
+const AI_TASKS: [&str; 9] = [
+    "timing", "estimate", "brief", "week", "review", "capture", "split", "money", "command",
 ];
 
 /// Sends one model request through the gate (ai.rs). The webview builds the
@@ -1474,6 +1548,18 @@ pub fn hotkey_set(key: String, app: AppHandle, db: State<'_, Db>) -> Result<Stri
     emit_changed(&app, vec!["core_settings".into()]);
     crate::tray::refresh_tooltip(&app);
     Ok(in_use)
+}
+
+/// Grows the capture box to show `rows` smart-capture rows (0 shrinks it
+/// back to the bar). The height is worked out here, capped at six rows.
+#[tauri::command]
+pub fn capture_rows(rows: u32, window: WebviewWindow) -> Result<(), String> {
+    window
+        .set_size(tauri::LogicalSize::new(
+            crate::windows::CAPTURE_WIDTH,
+            crate::windows::capture_height(rows),
+        ))
+        .map_err(|error| error.to_string())
 }
 
 /// Closes the calling window (the capture box).

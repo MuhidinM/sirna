@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "capture",
-  "description": "The capture box: save and undo a capture (tasks, notes, money, ideas), read, close itself. No db_tx, no secrets.",
+  "description": "The capture box: save and undo a capture (tasks, notes, money, ideas), read, close itself, grow to show smart-capture rows and ask the AI through the gate (ADR-0014). No db_tx, no secrets.",
   "windows": ["capture"],
   "permissions": [
     "core:event:default",
@@ -12,6 +12,8 @@
     "allow-db-query",
     "allow-capture-replace",
     "allow-open-notes",
-    "allow-set-away"
+    "allow-set-away",
+    "allow-ai-send",
+    "allow-capture-rows"
   ]
 }

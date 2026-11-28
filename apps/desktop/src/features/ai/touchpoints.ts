@@ -5,7 +5,9 @@
  * area names, minutes, dates and energy, nothing else (§7.4, R-AI-02); in
  * strict mode titles are replaced by area names.
  */
+import { readWhen } from "../../capture/when";
 import { groundText, unknownIds } from "./ground";
+import { unmask } from "./mask";
 import { s } from "./schema";
 import { type AiTask } from "./task";
 
@@ -351,3 +353,179 @@ export const INSIGHT: AiTask<InsightFacts, { line: string }> = {
     return groundText([output.line], INSIGHT.facts(input));
   },
 };
+
+// --- Smart capture in your own words (T-090, ADR-0014) ------------------------------
+
+/** The closed list of things a line can ask for. App code does each one; the model only names it. */
+export const INTENTS = [
+  "task",
+  "note",
+  "money",
+  "move",
+  "finish_by",
+  "day_mode",
+  "place",
+  "question",
+] as const;
+export type Intent = (typeof INTENTS)[number];
+
+/** T-shirt sizes the model picks; code turns them into minutes. */
+export const SIZE_MIN = { xs: 15, s: 30, m: 60, l: 120, xl: 240 } as const;
+export type Size = keyof typeof SIZE_MIN;
+
+export const PLACES = ["addis", "adama"] as const;
+export type Place = (typeof PLACES)[number];
+
+export interface CommandFacts {
+  /** The typed line with money amounts masked (`lunch <a1>`). */
+  text: string;
+  /** Token → amount, to read the reply back. Never in the fact sheet. */
+  amounts: Record<string, string>;
+  today: string;
+  weekday: string;
+  /** For checking the date words in the reply. Never in the fact sheet. */
+  nowMs: number;
+  areas: { id: string; name: string }[];
+  open: { id: string; title: string; kind: "task" | "project" }[];
+}
+
+export interface CommandItem {
+  intent: Intent;
+  title: string;
+  area?: string;
+  area_phrase?: string;
+  when_text?: string;
+  by_text?: string;
+  ethiopian_clock?: boolean;
+  size?: Size;
+  steps?: string[];
+  target?: string;
+  mode?: "off" | "light" | "normal";
+  place?: Place;
+  span?: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export const COMMAND_MAX_ITEMS = 6;
+const COMMAND_MAX_STEPS = 5;
+
+export const COMMAND: AiTask<CommandFacts, { items: CommandItem[] }> = {
+  id: "command",
+  version: "1",
+  schema: s.object({
+    items: s.array(
+      s.object(
+        {
+          intent: s.enum(INTENTS, "What the user asks for"),
+          title: s.string({
+            maxLength: 120,
+            description:
+              "Starts with a verb, in the user's own words; English if they wrote Amharic",
+          }),
+          area: s.string({ description: "One of the area ids, only if it clearly fits" }),
+          area_phrase: s.string({ description: "The words in the line that named the area" }),
+          when_text: s.string({
+            description: "English date words for when: today, tomorrow, fri, 20 dec, at 3pm",
+          }),
+          by_text: s.string({ description: "English date words for a deadline (finish_by)" }),
+          ethiopian_clock: s.boolean("True if the time is Ethiopian clock (ከጠዋቱ 3 = 9am)"),
+          size: s.enum(Object.keys(SIZE_MIN), "How long: xs 15m, s 30m, m 1h, l 2h, xl 4h"),
+          steps: s.array(s.string({ maxLength: 80 }), {
+            maxItems: COMMAND_MAX_STEPS,
+            description: "Only if the user listed steps",
+          }),
+          target: s.string({ description: "The id of an open task or project it is about" }),
+          mode: s.enum(["off", "light", "normal"], "For day_mode"),
+          place: s.enum(PLACES, "For place: where the user is"),
+          span: s.string({
+            description:
+              "For money and question: the exact part of the line, copied character for character",
+          }),
+          confidence: s.enum(["low", "medium", "high"]),
+        },
+        [
+          "area",
+          "area_phrase",
+          "when_text",
+          "by_text",
+          "ethiopian_clock",
+          "size",
+          "steps",
+          "target",
+          "mode",
+          "place",
+          "span",
+        ],
+      ),
+      { maxItems: COMMAND_MAX_ITEMS },
+    ),
+  }),
+  system: SYSTEM,
+  facts: (f) =>
+    [
+      `today: ${f.today} (${f.weekday})`,
+      `area ids: ${f.areas.map((a) => `${a.id} (${a.name})`).join("; ") || "none"}`,
+      "open tasks and projects:",
+      ...(f.open.length ? f.open.map((o) => `- ${o.id} (${o.kind}): ${o.title}`) : ["- none"]),
+      `places: ${PLACES.join(", ")}`,
+      `line: ${f.text}`,
+    ].join("\n"),
+  ask: () =>
+    [
+      `Read the line (English, Amharic or mixed) and list up to ${COMMAND_MAX_ITEMS} things it asks for, in order.`,
+      "Intents: task (something to do), note (to remember), money (spent, earned, lent: copy the exact words as span),",
+      "move (an open task to another day: target id and when_text), finish_by (must be done by a day: by_text, target id if it is an open task),",
+      "day_mode (a day off, light or normal: mode and when_text), place (where the user is: addis or adama),",
+      "question (looking something up: copy the words as span).",
+      "Write when_text and by_text as short English date words. Tokens like <a1> are hidden amounts: copy them as they are.",
+      "Leave out anything you are unsure of rather than guess.",
+    ].join(" "),
+  ground: (output, input) => groundCommand(output.items, input),
+};
+
+/** Every date word in a reply must be one our own reader understands. */
+function readsAsDate(text: string, input: CommandFacts, ethiopian: boolean): boolean {
+  const when = readWhen(
+    unmask(text, input.amounts),
+    input.nowMs,
+    ethiopian ? "ethiopian" : "western",
+  );
+  return when.date !== undefined || when.minutes !== undefined || when.window !== undefined;
+}
+
+export function groundCommand(items: CommandItem[], input: CommandFacts): string | null {
+  const areaIds = new Set(input.areas.map((a) => a.id));
+  const openIds = new Set(input.open.map((o) => o.id));
+  const line = input.text.toLowerCase();
+  for (const [index, item] of items.entries()) {
+    const at = `item ${index + 1}`;
+    if (item.area && !areaIds.has(item.area)) return `${at}: unknown area ${item.area}`;
+    if (item.target && !openIds.has(item.target)) return `${at}: unknown target ${item.target}`;
+    if (item.span !== undefined && !input.text.includes(item.span))
+      return `${at}: span is not in the line`;
+    if (item.area_phrase && !line.includes(item.area_phrase.toLowerCase()))
+      return `${at}: area words are not in the line`;
+    const ethiopian = item.ethiopian_clock === true;
+    if (item.when_text && !readsAsDate(item.when_text, input, ethiopian))
+      return `${at}: can't read "${item.when_text}"`;
+    if (item.by_text && !readsAsDate(item.by_text, input, ethiopian))
+      return `${at}: can't read "${item.by_text}"`;
+    const needs: Partial<Record<Intent, keyof CommandItem>> = {
+      money: "span",
+      question: "span",
+      move: "target",
+      finish_by: "by_text",
+      day_mode: "mode",
+      place: "place",
+    };
+    const field = needs[item.intent];
+    if (field && (item[field] === undefined || item[field] === "")) return `${at}: no ${field}`;
+    if (item.intent === "move" && !item.when_text) return `${at}: no when_text`;
+    if ((item.intent === "task" || item.intent === "note") && !item.title.trim())
+      return `${at}: no title`;
+  }
+  return groundText(
+    items.flatMap((item) => [item.title, ...(item.steps ?? [])]),
+    COMMAND.facts(input),
+  );
+}

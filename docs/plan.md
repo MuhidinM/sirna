@@ -620,7 +620,7 @@ React screen → task module (prompt, zod schema, validate, ground, fallback)  [
               key from Credential Manager · host allowlist · pacing · daily budget · core_ai_calls row
 ```
 
-- AI runs only while `main` is open, started by the screen that needs it. Nothing calls the model in the background.
+- AI runs only while `main` is open, started by the screen that needs it. Nothing calls the model in the background. The one exception is the capture box, which may read the line just typed ([ADR-0014](decisions/0014-ai-in-capture.md)).
 - AI text renders in a fixed slot under the numbers; if it is not back within 4 s, the card shows the template text and fills in when ready.
 - No Google SDK; the key never reaches the webview.
 - **Facts, not tools.** The app sends a fact sheet and gets typed JSON back. Each tool round trip would cost a request on a tight free quota, and fact sheets are easier to test.
@@ -653,15 +653,15 @@ Features call `runTask(taskId, input)`. Schemas: zod → flat JSON Schema (type,
 
 ### 7.4 Privacy
 
-Google's free-tier terms allow using content to improve products, with human review. What goes out now is low-sensitivity: task and project titles, area names, minutes, dates, energy numbers. No money amounts, no email, no names beyond what you type in a title. One switch, **Strict mode**, sends area names instead of task titles. A "What was sent" viewer keeps every payload for 30 days. Moving to a paid tier is a config change.
+Google's free-tier terms allow using content to improve products, with human review. What goes out now is low-sensitivity: task and project titles, area names, minutes, dates, energy numbers, and a capture line the rules were unsure of, with each money amount replaced by a token ([ADR-0014](decisions/0014-ai-in-capture.md)). No money amounts, no email, no names beyond what you type in a title. One switch, **Strict mode**, sends area names instead of task titles. A "What was sent" viewer keeps every payload for 30 days. Moving to a paid tier is a config change.
 
 ### 7.5 Limits
 
-Free-tier numbers are shown per project in AI Studio, not published. App cap: 15 requests a day until you enter your numbers, then 80% of them. The daily count resets at midnight Pacific (11:00 in Addis; 10:00 during US summer time). One request per 7 s; on 429 honor `RetryInfo`, else 2 retries with backoff; 3 failures in a row → plain mode for 10 minutes.
+Free-tier numbers are shown per project in AI Studio, not published. App cap: 200 requests a day ([ADR-0014](decisions/0014-ai-in-capture.md); 15 before) until you enter your numbers, then 80% of them. The daily count resets at midnight Pacific (11:00 in Addis; 10:00 during US summer time). One request per 7 s; on 429 honor `RetryInfo`, else 2 retries with backoff; 3 failures in a row → plain mode for 10 minutes.
 
 ### 7.6 Evaluation
 
-`evals/capture.jsonl` (60 lines) and `evals/timing.jsonl` (20 ideas with fixed fact sheets and the expected verdict and slot). `pnpm test` runs the rules and the slot finder offline; `pnpm eval:ai` calls the model only for the AI parts. A prompt or model change ships only if the pass count does not drop.
+`evals/capture.jsonl` (60 lines), `evals/command.jsonl` (30 mixed lines for the capture box's COMMAND call, [ADR-0014](decisions/0014-ai-in-capture.md)) and `evals/timing.jsonl` (20 ideas with fixed fact sheets and the expected verdict and slot). `pnpm test` runs the rules and the slot finder offline; `pnpm eval:ai` calls the model only for the AI parts. A prompt or model change ships only if the pass count does not drop.
 
 ---
 
