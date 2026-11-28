@@ -22,9 +22,19 @@ import {
   removeOtherBlock,
   restore,
   status,
+  soloMs,
   todayBlocks,
 } from "./focus";
-import { openIntent, setupStart, tickThrough, type Toast, type World } from "./runtime";
+import {
+  laneCommand,
+  openIntent,
+  runStart,
+  setupStart,
+  tickThrough,
+  type Toast,
+  type World,
+} from "./runtime";
+import { undoContext } from "./tx";
 
 const T0 = 1_794_387_600_000; // 2026-11-11 12:00 Addis
 const minutes = (n: number) => n * 60_000;
@@ -37,6 +47,7 @@ const context = (): Context => ({
   title: "Coding",
   focus_min: 25,
   break_min: 5,
+  lanes: [],
 });
 
 const start = (m: Machine, now: number, n: number) =>
@@ -465,5 +476,151 @@ describe("the harness runtime", () => {
     expect(() => setupStart(w, { target: { other: " " } }, null, late)).toThrow(
       "Type what this session is for.",
     );
+  });
+});
+
+// The run and lane tests of focus.rs (T-084), against the port.
+describe("runs with lanes", () => {
+  const runWorld = () => {
+    const c = conn();
+    c.exec(`INSERT INTO task_items (id, title, area_id, created_at, updated_at) VALUES
+      ('a', 'Login bug', 'joba', 0, 0),
+      ('b', 'Invoice export', 'jobb', 0, 0),
+      ('c', 'Kifiya application', 'jobhunt', 0, 0);`);
+    let counter = 0;
+    const emitted: unknown[] = [];
+    const w: World = {
+      conn: c,
+      machine: emptyMachine(),
+      nextCounter: () => counter++,
+      emit: (event, payload) => emitted.push([event, payload]),
+      toast: () => {},
+    };
+    return { c, w, emitted };
+  };
+  const rows = (c: Conn) =>
+    c.all(
+      "SELECT task_id, result, effort_min, wall_min, clean FROM focus_run_tasks ORDER BY position",
+    );
+
+  it("starts with the first lane running and works out effort and clean at the end", () => {
+    const { c, w, emitted } = runWorld();
+    expect(runStart(w, { taskIds: ["a", "b", "c", "a"], minutes: 30 }, T0)).toBe("started");
+    expect(status(w.machine, T0).title).toBe("Login bug +2");
+    laneCommand(w, "lane_start", { taskId: "b" }, T0 + minutes(15));
+    laneCommand(w, "lane_done", { taskId: "a" }, T0 + minutes(20));
+    expect(emitted).toContainEqual([
+      "data-changed",
+      ["focus_run_tasks", "focus_lane_spans", "task_items"],
+    ]);
+    tickThrough(w, T0 + minutes(20), T0 + minutes(30));
+    const got = rows(c);
+    expect(got.map((r) => [r.task_id, r.result, r.wall_min, r.clean])).toEqual([
+      ["a", "done", 20, 1],
+      ["b", null, 15, 0],
+      ["c", null, 0, 0],
+    ]);
+    expect(Number(got[0]?.effort_min)).toBeCloseTo(17.5, 6);
+    expect(Number(got[1]?.effort_min)).toBeCloseTo(12.5, 6);
+    expect(c.all("SELECT end_kind FROM focus_lane_spans ORDER BY id")).toEqual([
+      { end_kind: "done" },
+      { end_kind: "run_end" },
+    ]);
+    expect(c.all("SELECT status FROM task_items WHERE id = 'a'")).toEqual([{ status: "done" }]);
+  });
+
+  it("adds and removes lanes, and a restart keeps them", () => {
+    const { c, w } = runWorld();
+    runStart(w, { taskIds: ["a"] }, T0);
+    laneCommand(w, "lane_add", { taskId: "b" }, T0 + minutes(1));
+    laneCommand(w, "lane_add", { taskId: "c" }, T0 + minutes(1));
+    laneCommand(w, "lane_start", { taskId: "c" }, T0 + minutes(2));
+    laneCommand(w, "lane_remove", { taskId: "b" }, T0 + minutes(3));
+    laneCommand(w, "lane_pause", { taskId: "a" }, T0 + minutes(4));
+    expect(() => laneCommand(w, "lane_add", { taskId: "nope" }, T0)).toThrow("That task is gone.");
+    const live = status(w.machine, T0 + minutes(10));
+    expect(live.title).toBe("Login bug +1");
+    expect(live.lanes.map((l) => [l.id, l.running, l.wall_min])).toEqual([
+      ["a", false, 4],
+      ["c", true, 8],
+    ]);
+    expect(status(restore(c, T0 + minutes(10)), T0 + minutes(10))).toEqual(live);
+    expect(() => runStart(w, { taskIds: ["nope"] }, T0)).toThrow("Pick at least one task");
+  });
+
+  it("removing the last lane charges no task", () => {
+    const { c, w } = runWorld();
+    runStart(w, { taskIds: ["a"] }, T0);
+    laneCommand(w, "lane_remove", { taskId: "a" }, T0 + minutes(5));
+    tickThrough(w, T0 + minutes(5), T0 + minutes(30));
+    expect(c.all("SELECT task_id, area_id FROM focus_sessions WHERE kind = 'focus'")).toEqual([
+      { task_id: null, area_id: null },
+    ]);
+    expect(c.all("SELECT * FROM v_focus_share WHERE task_id = 'a'")).toEqual([]);
+  });
+
+  it("an undone lane done reopens the lane and is not clean", () => {
+    const { c, w } = runWorld();
+    runStart(w, { taskIds: ["a", "b"] }, T0);
+    laneCommand(w, "lane_pause", { taskId: "a" }, T0);
+    laneCommand(w, "lane_start", { taskId: "b" }, T0);
+    laneCommand(w, "lane_done", { taskId: "b" }, T0 + minutes(10));
+    const session = String(w.machine.current?.id);
+    undoContext(c, "user", `lane:${session}`, T0 + minutes(11));
+    laneCommand(w, "lane_start", { taskId: "b" }, T0 + minutes(12));
+    expect(status(w.machine, T0 + minutes(12)).lanes[1]).toMatchObject({
+      done: false,
+      running: true,
+    });
+    tickThrough(w, T0 + minutes(12), T0 + minutes(30));
+    expect(rows(c).map((r) => [r.task_id, r.result, r.clean])).toEqual([
+      ["a", null, 0],
+      ["b", null, 0],
+    ]);
+  });
+
+  it("a break looks the same after a restart, lane times too", () => {
+    const { c, w } = runWorld();
+    runStart(w, { taskIds: ["a", "b"], minutes: 25 }, T0);
+    laneCommand(w, "lane_start", { taskId: "b" }, T0 + minutes(5));
+    tickThrough(w, T0 + minutes(5), T0 + minutes(26));
+    const live = status(w.machine, T0 + minutes(26));
+    expect(live.kind).toBe("break");
+    expect(live.lanes.map((l) => l.wall_min)).toEqual([25, 20]);
+    expect(status(restore(c, T0 + minutes(26)), T0 + minutes(26))).toEqual(live);
+  });
+
+  it("a task joining an area session leaves the area on the row", () => {
+    const { c, w } = runWorld();
+    handle(
+      w.machine,
+      { type: "start", context: contextForTarget(c, null, "coding"), force: false, id: "r1" },
+      T0,
+    );
+    laneCommand(w, "lane_add", { taskId: "a" }, T0 + minutes(20));
+    expect(c.all("SELECT task_id, area_id FROM focus_sessions")).toEqual([
+      { task_id: null, area_id: "coding" },
+    ]);
+  });
+
+  it("a block task with no area counts for the block's area", () => {
+    const { c } = runWorld();
+    c.exec(`INSERT INTO task_items (id, title, area_id, created_at, updated_at) VALUES ('d', 'Notes', NULL, 0, 0);
+      INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, task_id, title, created_at, updated_at)
+      VALUES ('b1', '2026-11-11', 0, 1, 'area', 'joba', 'd', 'Notes', 0, 0);`);
+    expect(contextFor(c, "b1").lanes[0]).toMatchObject({ area_id: "joba", area: "Job A" });
+  });
+
+  it("counts solo time only where one lane ran", () => {
+    const solo = soloMs(
+      [
+        ["a", 0, 30],
+        ["b", 10, 20],
+        ["c", 25, 50],
+      ],
+      0,
+      40,
+    );
+    expect(Object.fromEntries(solo)).toEqual({ a: 15, c: 10 });
   });
 });

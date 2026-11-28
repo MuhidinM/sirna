@@ -6,6 +6,7 @@
 //! below applies the effects (database rows, toasts) and wakes a thread at
 //! the next deadline.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +30,11 @@ pub const LONG_BREAK_LOCK_MS: i64 = 10 * MINUTE_MS;
 /// A session found this long past its end (the laptop slept) closes as interrupted.
 pub const SLEEP_GRACE_MS: i64 = 30 * MINUTE_MS;
 pub const EXTEND_MIN: i64 = 5;
+/// A run's length when none is given (plan v3: 30 min, Enter to start).
+pub const RUN_MIN: i64 = 30;
+/// A task done live teaches its time when at least this share of its effort
+/// was spent while it was the only lane running.
+pub const CLEAN_SHARE: f64 = 0.7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +51,64 @@ impl Kind {
             Kind::Break => "break",
             Kind::LongBreak => "long_break",
         }
+    }
+}
+
+/// A task in a run: a lane you start, pause and finish on its own (T-084).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lane {
+    pub task_id: String,
+    pub title: String,
+    /// The task's area when it joined the run (a snapshot).
+    pub area_id: Option<String>,
+    pub area: Option<String>,
+    pub position: i64,
+    /// When its open span began; None while paused or not started.
+    pub running_since: Option<i64>,
+    pub done: bool,
+    /// Lane time in spans already closed.
+    pub closed_ms: i64,
+}
+
+impl Lane {
+    /// Clock time the lane ran, shared or not.
+    pub fn wall_ms(&self, now: i64) -> i64 {
+        self.closed_ms + self.running_since.map_or(0, |since| (now - since).max(0))
+    }
+
+    fn stop_running(&mut self, at: i64) -> bool {
+        match self.running_since.take() {
+            Some(since) => {
+                self.closed_ms += (at - since).max(0);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// How a lane's span ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpanEnd {
+    Done,
+    Pause,
+}
+
+impl SpanEnd {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpanEnd::Done => "done",
+            SpanEnd::Pause => "pause",
+        }
+    }
+}
+
+/// A run's name when nothing else names it: its first task, "+N" for the rest.
+pub fn run_title(lanes: &[Lane]) -> String {
+    match lanes {
+        [] => "Focus".into(),
+        [only] => only.title.clone(),
+        [first, rest @ ..] => format!("{} +{}", first.title, rest.len()),
     }
 }
 
@@ -65,6 +129,10 @@ pub struct Session {
     pub break_min: i64,
     /// Distracted (+1) taps on this session; the card shows them.
     pub distractions: u32,
+    /// The run's tasks, in order. Empty for a session with no task.
+    pub lanes: Vec<Lane>,
+    /// A break or "+5 min": the run it follows.
+    pub run_of: Option<String>,
 }
 
 impl Session {
@@ -75,6 +143,63 @@ impl Session {
     pub fn remaining_ms(&self, now: i64) -> i64 {
         let reference = self.paused_at.unwrap_or(now);
         self.ends_at() - reference
+    }
+
+    /// Every lane stops at `at` (the focus part ended); the spans close in
+    /// the database with the session (apply_db, Close).
+    fn end_lanes(&mut self, at: i64) {
+        for lane in &mut self.lanes {
+            lane.stop_running(at);
+        }
+    }
+
+    /// A run started from tasks keeps its first task on the row for queries
+    /// written before runs. A block or an area session keeps its own area
+    /// when a task joins. With no lanes left the row names no task, so the
+    /// legacy count in v_focus_share never charges a task taken out of the
+    /// run (a run of tasks drops their area too; a block or area keeps its own).
+    /// The run's name follows its lanes while nothing else (a block, an
+    /// intent) names it.
+    fn follow_first_lane(&mut self, title_before: &str) {
+        let follows = self.block_id.is_none() && self.task_id.is_some();
+        match self.lanes.iter().min_by_key(|lane| lane.position) {
+            Some(first) if follows => {
+                self.task_id = Some(first.task_id.clone());
+                self.area_id.clone_from(&first.area_id);
+            }
+            Some(_) => {}
+            None => {
+                if follows {
+                    self.area_id = None;
+                }
+                self.task_id = None;
+            }
+        }
+        if self.block_id.is_none() && self.title == title_before {
+            self.title = run_title(&self.lanes);
+        }
+    }
+
+    /// Lanes whose task was reopened since (an undo of the lane's done) are
+    /// open again.
+    fn reopen_lanes(&mut self, open: &[String]) {
+        for lane in &mut self.lanes {
+            if lane.done && open.contains(&lane.task_id) {
+                lane.done = false;
+            }
+        }
+    }
+
+    /// The lanes as a break or "+5 min" carries them: nothing running.
+    fn carried_lanes(&self, keep_time: bool) -> Vec<Lane> {
+        self.lanes
+            .iter()
+            .map(|lane| Lane {
+                running_since: None,
+                closed_ms: if keep_time { lane.closed_ms } else { 0 },
+                ..lane.clone()
+            })
+            .collect()
     }
 }
 
@@ -87,6 +212,8 @@ pub struct Context {
     pub title: String,
     pub focus_min: i64,
     pub break_min: i64,
+    /// The run's tasks (a block's task, or the tasks a run was started with).
+    pub lanes: Vec<Lane>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -104,6 +231,22 @@ pub enum Event {
     /// "+5 min, once": cut a short break and focus 5 more minutes.
     Extend {
         id: String,
+    },
+    /// Lane controls (T-084): only while a run's focus part is going.
+    LaneStart {
+        task_id: String,
+    },
+    LanePause {
+        task_id: String,
+    },
+    LaneDone {
+        task_id: String,
+    },
+    LaneAdd {
+        lane: Lane,
+    },
+    LaneRemove {
+        task_id: String,
     },
 }
 
@@ -147,6 +290,27 @@ pub enum Effect {
     AlreadyFocusing,
     /// Past the hard stop: starting needs a second tap (T-027).
     PastHardStop,
+    SpanOpen {
+        session_id: String,
+        task_id: String,
+        at: i64,
+    },
+    SpanClose {
+        session_id: String,
+        task_id: String,
+        at: i64,
+        end: SpanEnd,
+    },
+    LaneRemoved {
+        session_id: String,
+        task_id: String,
+    },
+    /// Marks the task done through the logged, undoable path (tasks.rs).
+    TaskDone {
+        session_id: String,
+        task_id: String,
+        at: i64,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -175,6 +339,110 @@ impl Machine {
                 _ => vec![],
             },
             Event::Extend { id } => self.extend(id, now),
+            Event::LaneStart { .. }
+            | Event::LanePause { .. }
+            | Event::LaneDone { .. }
+            | Event::LaneAdd { .. }
+            | Event::LaneRemove { .. } => self.lane(event, now),
+        }
+    }
+
+    fn lane(&mut self, event: Event, now: i64) -> Vec<Effect> {
+        let Some(session) = self.current.as_mut() else {
+            return vec![];
+        };
+        if session.kind != Kind::Focus {
+            return vec![];
+        }
+        let session_id = session.id.clone();
+        let find = |lanes: &[Lane], task_id: &str| lanes.iter().position(|l| l.task_id == task_id);
+        match event {
+            Event::LaneStart { task_id } => {
+                let Some(index) = find(&session.lanes, &task_id) else {
+                    return vec![];
+                };
+                let lane = &mut session.lanes[index];
+                if lane.done || lane.running_since.is_some() {
+                    return vec![];
+                }
+                lane.running_since = Some(now);
+                vec![Effect::SpanOpen {
+                    session_id,
+                    task_id,
+                    at: now,
+                }]
+            }
+            Event::LanePause { task_id } => {
+                let Some(index) = find(&session.lanes, &task_id) else {
+                    return vec![];
+                };
+                if !session.lanes[index].stop_running(now) {
+                    return vec![];
+                }
+                vec![Effect::SpanClose {
+                    session_id,
+                    task_id,
+                    at: now,
+                    end: SpanEnd::Pause,
+                }]
+            }
+            Event::LaneDone { task_id } => {
+                let Some(index) = find(&session.lanes, &task_id) else {
+                    return vec![];
+                };
+                let lane = &mut session.lanes[index];
+                if lane.done {
+                    return vec![];
+                }
+                let mut effects = Vec::new();
+                if lane.stop_running(now) {
+                    effects.push(Effect::SpanClose {
+                        session_id: session_id.clone(),
+                        task_id: task_id.clone(),
+                        at: now,
+                        end: SpanEnd::Done,
+                    });
+                }
+                lane.done = true;
+                effects.push(Effect::TaskDone {
+                    session_id,
+                    task_id,
+                    at: now,
+                });
+                effects
+            }
+            Event::LaneAdd { mut lane } => {
+                if find(&session.lanes, &lane.task_id).is_some() {
+                    return vec![];
+                }
+                let title_before = run_title(&session.lanes);
+                lane.position = session.lanes.iter().map(|l| l.position).max().unwrap_or(0) + 1;
+                lane.running_since = None;
+                lane.closed_ms = 0;
+                session.lanes.push(lane);
+                session.follow_first_lane(&title_before);
+                vec![Effect::Save(session.clone())]
+            }
+            Event::LaneRemove { task_id } => {
+                let Some(index) = find(&session.lanes, &task_id) else {
+                    return vec![];
+                };
+                // A finished task stays: it was done in this run.
+                if session.lanes[index].done {
+                    return vec![];
+                }
+                let title_before = run_title(&session.lanes);
+                session.lanes.remove(index);
+                session.follow_first_lane(&title_before);
+                vec![
+                    Effect::LaneRemoved {
+                        session_id,
+                        task_id,
+                    },
+                    Effect::Save(session.clone()),
+                ]
+            }
+            _ => vec![],
         }
     }
 
@@ -198,7 +466,7 @@ impl Machine {
         if self.last_focus_end.is_none_or(|end| now - end > ROW_GAP_MS) {
             self.in_row = 0;
         }
-        let session = Session {
+        let mut session = Session {
             id,
             kind: Kind::Focus,
             started_at: now,
@@ -212,20 +480,39 @@ impl Machine {
             extended: false,
             break_min: context.break_min.max(0),
             distractions: 0,
+            lanes: context.lanes,
+            run_of: None,
         };
+        // The first open task's lane starts with the run.
+        let opened = session
+            .lanes
+            .iter_mut()
+            .find(|lane| !lane.done)
+            .map(|lane| {
+                lane.running_since = Some(now);
+                lane.task_id.clone()
+            });
         effects.push(Effect::Save(session.clone()));
+        if let Some(task_id) = opened {
+            effects.push(Effect::SpanOpen {
+                session_id: session.id.clone(),
+                task_id,
+                at: now,
+            });
+        }
         self.current = Some(session);
         effects
     }
 
     fn tick(&mut self, now: i64) -> Vec<Effect> {
-        let Some(session) = self.current.clone() else {
+        let Some(mut session) = self.current.clone() else {
             return vec![];
         };
         if session.paused_at.is_some() || session.remaining_ms(now) > 0 {
             return vec![];
         }
         let ended = session.ends_at();
+        session.end_lanes(ended);
         match session.kind {
             Kind::Focus => {
                 if now - ended > SLEEP_GRACE_MS {
@@ -270,6 +557,8 @@ impl Machine {
                     extended: session.extended,
                     break_min: session.break_min,
                     distractions: 0,
+                    lanes: session.carried_lanes(true),
+                    run_of: session.run_of.clone().or_else(|| Some(session.id.clone())),
                 };
                 effects.push(Effect::Save(rest.clone()));
                 effects.push(Effect::BreakStarted {
@@ -327,6 +616,7 @@ impl Machine {
                     session.paused_ms += now - paused_at;
                     effects.push(Effect::Save(session.clone()));
                 }
+                session.end_lanes(now);
                 effects.push(Effect::Close {
                     id: session.id,
                     at: now,
@@ -359,6 +649,8 @@ impl Machine {
             extended: true,
             break_min: current.break_min,
             distractions: 0,
+            lanes: current.carried_lanes(false),
+            run_of: current.run_of.clone(),
         };
         // The extra minutes don't count as another session in the row.
         self.in_row = self.in_row.saturating_sub(1);
@@ -389,6 +681,36 @@ pub struct Status {
     pub in_row: u32,
     pub block_id: Option<String>,
     pub distractions: u32,
+    /// The run's lanes, in order (empty for a session with no task).
+    pub lanes: Vec<LaneStatus>,
+}
+
+/// A lane as the widget, tray and sheet show it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct LaneStatus {
+    pub id: String,
+    pub title: String,
+    pub area_id: Option<String>,
+    pub area: Option<String>,
+    pub running: bool,
+    pub done: bool,
+    /// Clock minutes the lane ran so far, shared or not.
+    pub wall_min: i64,
+}
+
+fn lane_status(lanes: &[Lane], now: i64) -> Vec<LaneStatus> {
+    lanes
+        .iter()
+        .map(|lane| LaneStatus {
+            id: lane.task_id.clone(),
+            title: lane.title.clone(),
+            area_id: lane.area_id.clone(),
+            area: lane.area.clone(),
+            running: lane.running_since.is_some(),
+            done: lane.done,
+            wall_min: lane.wall_ms(now) / MINUTE_MS,
+        })
+        .collect()
 }
 
 pub fn status(machine: &Machine, now: i64) -> Status {
@@ -402,6 +724,7 @@ pub fn status(machine: &Machine, now: i64) -> Status {
             in_row: machine.in_row,
             block_id: session.block_id.clone(),
             distractions: session.distractions,
+            lanes: lane_status(&session.lanes, now),
         },
         None => Status {
             kind: None,
@@ -412,6 +735,7 @@ pub fn status(machine: &Machine, now: i64) -> Status {
             in_row: machine.in_row,
             block_id: None,
             distractions: 0,
+            lanes: Vec::new(),
         },
     }
 }
@@ -437,9 +761,10 @@ pub fn new_id(now: i64) -> String {
 fn save(conn: &Connection, session: &Session) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO focus_sessions
-           (id, block_id, area_id, task_id, kind, started_at, planned_min, paused_at, paused_ms, extended)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-         ON CONFLICT (id) DO UPDATE SET planned_min = ?7, paused_at = ?8, paused_ms = ?9, extended = ?10",
+           (id, block_id, area_id, task_id, kind, started_at, planned_min, paused_at, paused_ms, extended, run_of)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT (id) DO UPDATE SET planned_min = ?7, paused_at = ?8, paused_ms = ?9, extended = ?10,
+           area_id = ?3, task_id = ?4",
         params![
             session.id,
             session.block_id,
@@ -451,8 +776,128 @@ fn save(conn: &Connection, session: &Session) -> rusqlite::Result<()> {
             session.paused_at,
             session.paused_ms,
             i64::from(session.extended),
+            session.run_of,
         ],
     )?;
+    // A break carries its run's lanes only in memory; the rows are the run's.
+    if session.kind == Kind::Focus {
+        for lane in &session.lanes {
+            conn.execute(
+                "INSERT OR IGNORE INTO focus_run_tasks (session_id, task_id, area_id, position)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![session.id, lane.task_id, lane.area_id, lane.position],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The undo context of a task ticked done in a run's lane.
+pub fn lane_context(session_id: &str) -> String {
+    format!("lane:{session_id}")
+}
+
+/// Pieces of time where exactly one lane ran, per task: the "on its own"
+/// part of a clean timing. Spans are clamped to the run.
+fn solo_ms(spans: &[(String, i64, i64)], from: i64, to: i64) -> HashMap<String, i64> {
+    let clamped: Vec<(&str, i64, i64)> = spans
+        .iter()
+        .map(|(task, start, end)| (task.as_str(), (*start).max(from), (*end).min(to)))
+        .filter(|(_, start, end)| end > start)
+        .collect();
+    let mut points: Vec<i64> = clamped
+        .iter()
+        .flat_map(|(_, start, end)| [*start, *end])
+        .collect();
+    points.sort_unstable();
+    points.dedup();
+    let mut out: HashMap<String, i64> = HashMap::new();
+    for piece in points.windows(2) {
+        let (a, b) = (piece[0], piece[1]);
+        let mut running: Vec<&str> = clamped
+            .iter()
+            .filter(|(_, start, end)| *start <= a && *end >= b)
+            .map(|(task, _, _)| *task)
+            .collect();
+        running.sort_unstable();
+        running.dedup();
+        if let [only] = running.as_slice() {
+            *out.entry((*only).to_string()).or_default() += b - a;
+        }
+    }
+    out
+}
+
+/// When a run closes: each task's effort (its share, v_focus_share), its
+/// wall minutes, and whether it is a clean timing (done live, with at least
+/// CLEAN_SHARE of its effort spent while it was the only lane running).
+pub fn finish_run(conn: &Connection, session_id: &str) -> rusqlite::Result<()> {
+    // A lane's done that was undone since is not a result.
+    conn.execute(
+        "UPDATE focus_run_tasks SET result = NULL
+         WHERE session_id = ?1 AND result = 'done'
+           AND task_id NOT IN (SELECT id FROM task_items WHERE status = 'done')",
+        [session_id],
+    )?;
+    let tasks: Vec<(String, Option<String>)> = conn
+        .prepare("SELECT task_id, result FROM focus_run_tasks WHERE session_id = ?1")?
+        .query_map([session_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let (started, ended, paused_ms): (i64, Option<i64>, i64) = conn.query_row(
+        "SELECT started_at, ended_at, paused_ms FROM focus_sessions WHERE id = ?1",
+        [session_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let Some(ended) = ended else {
+        return Ok(());
+    };
+    let wall = ended - started;
+    // Shares are scaled to focus time (pauses out), as the view does.
+    let scale = if wall > 0 {
+        (wall - paused_ms).max(0) as f64 / wall as f64
+    } else {
+        0.0
+    };
+    let spans: Vec<(String, i64, i64)> = conn
+        .prepare(
+            "SELECT task_id, start_at, end_at FROM focus_lane_spans
+             WHERE session_id = ?1 AND end_at IS NOT NULL",
+        )?
+        .query_map([session_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let solo = solo_ms(&spans, started, ended);
+    for (task_id, result) in tasks {
+        let wall_ms: i64 = spans
+            .iter()
+            .filter(|(task, _, _)| *task == task_id)
+            .map(|(_, start, end)| ((*end).min(ended) - (*start).max(started)).max(0))
+            .sum();
+        let effort: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(minutes), 0) FROM v_focus_share WHERE session_id = ?1 AND task_id = ?2",
+            params![session_id, task_id],
+            |row| row.get(0),
+        )?;
+        let solo_min = solo.get(&task_id).copied().unwrap_or(0) as f64 * scale / 60_000.0;
+        let clean = result.as_deref() == Some("done")
+            && effort > 0.0
+            && solo_min + 1e-9 >= CLEAN_SHARE * effort;
+        conn.execute(
+            "UPDATE focus_run_tasks SET effort_min = ?3, wall_min = ?4, clean = ?5
+             WHERE session_id = ?1 AND task_id = ?2",
+            params![
+                session_id,
+                task_id,
+                effort,
+                (wall_ms + MINUTE_MS / 2) / MINUTE_MS,
+                i64::from(clean)
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -465,6 +910,64 @@ fn apply_db(conn: &Connection, effects: &[Effect]) -> rusqlite::Result<()> {
                     "UPDATE focus_sessions SET ended_at = ?2, outcome = ?3, paused_at = NULL WHERE id = ?1",
                     params![id, at, outcome.as_str()],
                 )?;
+                // The focus part is over: every lane still running stops with it.
+                conn.execute(
+                    "UPDATE focus_lane_spans SET end_at = MAX(start_at, ?2), end_kind = 'run_end'
+                     WHERE session_id = ?1 AND end_at IS NULL",
+                    params![id, at],
+                )?;
+                finish_run(conn, id)?;
+            }
+            Effect::SpanOpen {
+                session_id,
+                task_id,
+                at,
+            } => {
+                conn.execute(
+                    "INSERT INTO focus_lane_spans (session_id, task_id, start_at) VALUES (?1, ?2, ?3)",
+                    params![session_id, task_id, at],
+                )?;
+            }
+            Effect::SpanClose {
+                session_id,
+                task_id,
+                at,
+                end,
+            } => {
+                conn.execute(
+                    "UPDATE focus_lane_spans SET end_at = MAX(start_at, ?3), end_kind = ?4
+                     WHERE session_id = ?1 AND task_id = ?2 AND end_at IS NULL",
+                    params![session_id, task_id, at, end.as_str()],
+                )?;
+            }
+            Effect::LaneRemoved {
+                session_id,
+                task_id,
+            } => {
+                conn.execute(
+                    "DELETE FROM focus_lane_spans WHERE session_id = ?1 AND task_id = ?2",
+                    params![session_id, task_id],
+                )?;
+                conn.execute(
+                    "DELETE FROM focus_run_tasks WHERE session_id = ?1 AND task_id = ?2",
+                    params![session_id, task_id],
+                )?;
+            }
+            Effect::TaskDone {
+                session_id,
+                task_id,
+                at,
+            } => {
+                // The run records done only once the task really is done.
+                match crate::tasks::mark_done_in(conn, task_id, &lane_context(session_id), *at) {
+                    Ok(()) => {
+                        conn.execute(
+                            "UPDATE focus_run_tasks SET result = 'done' WHERE session_id = ?1 AND task_id = ?2",
+                            params![session_id, task_id],
+                        )?;
+                    }
+                    Err(error) => log::error!("could not mark the lane's task done: {error}"),
+                }
             }
             Effect::AddDistraction { id } => {
                 conn.execute(
@@ -503,11 +1006,104 @@ pub fn context_for(conn: &Connection, block_id: Option<&str>) -> rusqlite::Resul
                     title: row.get(2)?,
                     focus_min: row.get(3)?,
                     break_min: row.get(4)?,
+                    lanes: Vec::new(),
                 })
             },
         )
         .optional()?;
-    Ok(row.unwrap_or_else(plain))
+    let Some(mut context) = row else {
+        return Ok(plain());
+    };
+    // A block's task is the run's only lane (none for a block with no task).
+    // A task with no area counts for the block's area, as before runs.
+    if let Some(task_id) = context.task_id.clone() {
+        let block_area = match &context.area_id {
+            Some(area) => conn
+                .query_row("SELECT name FROM area_items WHERE id = ?1", [area], |row| {
+                    row.get(0)
+                })
+                .optional()?,
+            None => None,
+        };
+        context.lanes = lane_for(conn, &task_id, 1)?
+            .map(|mut lane| {
+                if lane.area_id.is_none() {
+                    lane.area_id.clone_from(&context.area_id);
+                    lane.area = block_area;
+                }
+                lane
+            })
+            .into_iter()
+            .collect();
+    }
+    Ok(context)
+}
+
+/// A task as a lane: its title and area now, nothing run yet. None when the
+/// task is gone.
+pub fn lane_for(conn: &Connection, task_id: &str, position: i64) -> rusqlite::Result<Option<Lane>> {
+    conn.query_row(
+        "SELECT t.title, t.area_id, a.name, t.status = 'done'
+         FROM task_items AS t LEFT JOIN area_items AS a ON a.id = t.area_id
+         WHERE t.id = ?1 AND t.deleted_at IS NULL",
+        [task_id],
+        |row| {
+            Ok(Lane {
+                task_id: task_id.to_string(),
+                title: row.get(0)?,
+                area_id: row.get(1)?,
+                area: row.get(2)?,
+                position,
+                running_since: None,
+                done: row.get(3)?,
+                closed_ms: 0,
+            })
+        },
+    )
+    .optional()
+}
+
+/// A run of tasks (T-084): its lanes in the order given (unknown, deleted and
+/// repeated ids left out), its first task's area and break, `minutes` long
+/// (RUN_MIN when not given). No lanes: Ok(None).
+pub fn context_for_run(
+    conn: &Connection,
+    task_ids: &[String],
+    minutes: Option<i64>,
+) -> rusqlite::Result<Option<Context>> {
+    let mut lanes: Vec<Lane> = Vec::new();
+    for task_id in task_ids {
+        if lanes.iter().any(|lane| &lane.task_id == task_id) {
+            continue;
+        }
+        let position = i64::try_from(lanes.len()).unwrap_or(i64::MAX - 1) + 1;
+        if let Some(lane) = lane_for(conn, task_id, position)? {
+            lanes.push(lane);
+        }
+    }
+    let Some(first) = lanes.first() else {
+        return Ok(None);
+    };
+    let break_min: i64 = match &first.area_id {
+        Some(area) => conn
+            .query_row(
+                "SELECT break_min FROM area_items WHERE id = ?1",
+                [area],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(5),
+        None => 5,
+    };
+    Ok(Some(Context {
+        block_id: None,
+        area_id: first.area_id.clone(),
+        task_id: Some(first.task_id.clone()),
+        title: run_title(&lanes),
+        focus_min: minutes.unwrap_or(RUN_MIN).max(1),
+        break_min,
+        lanes,
+    }))
 }
 
 /// A session tied to nothing: 25 minutes, a 5-minute break.
@@ -659,8 +1255,8 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
         .query_row(
             "SELECT s.id, s.kind, s.started_at, s.planned_min, s.paused_at, s.paused_ms, s.block_id,
                     s.area_id, s.task_id, s.extended,
-                    COALESCE(f.intent_text, b.title, a.name, 'Focus'), COALESCE(a.break_min, 5),
-                    s.distractions
+                    COALESCE(f.intent_text, b.title), COALESCE(a.break_min, 5),
+                    s.distractions, s.run_of, COALESCE(a.name, 'Focus')
              FROM focus_sessions AS s
              LEFT JOIN day_blocks AS b ON b.id = s.block_id
              LEFT JOIN area_items AS a ON a.id = s.area_id
@@ -674,24 +1270,49 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
                     "long_break" => Kind::LongBreak,
                     _ => Kind::Focus,
                 };
-                Ok(Session {
-                    id: row.get(0)?,
-                    kind,
-                    started_at: row.get(2)?,
-                    planned_min: row.get(3)?,
-                    paused_at: row.get(4)?,
-                    paused_ms: row.get(5)?,
-                    block_id: row.get(6)?,
-                    area_id: row.get(7)?,
-                    task_id: row.get(8)?,
-                    extended: row.get::<_, i64>(9)? == 1,
-                    title: row.get(10)?,
-                    break_min: row.get(11)?,
-                    distractions: row.get(12)?,
-                })
+                let named: Option<String> = row.get(10)?;
+                let area_name: String = row.get(14)?;
+                Ok((
+                    Session {
+                        id: row.get(0)?,
+                        kind,
+                        started_at: row.get(2)?,
+                        planned_min: row.get(3)?,
+                        paused_at: row.get(4)?,
+                        paused_ms: row.get(5)?,
+                        block_id: row.get(6)?,
+                        area_id: row.get(7)?,
+                        task_id: row.get(8)?,
+                        extended: row.get::<_, i64>(9)? == 1,
+                        title: area_name,
+                        break_min: row.get(11)?,
+                        distractions: row.get(12)?,
+                        lanes: Vec::new(),
+                        run_of: row.get(13)?,
+                    },
+                    named,
+                ))
             },
         )
         .optional()?;
+    // The lanes: a run's own; a break's are those of the session it follows
+    // (its id less '-break', as tick names it), with nothing running.
+    let open = match open {
+        Some((mut session, named)) => {
+            session.lanes = match (session.kind, session.id.strip_suffix("-break")) {
+                (Kind::Focus, _) => load_lanes(conn, &session.id, true)?,
+                (_, Some(before)) => load_lanes(conn, before, false)?,
+                _ => Vec::new(),
+            };
+            match named {
+                Some(title) => session.title = title,
+                None if !session.lanes.is_empty() => session.title = run_title(&session.lanes),
+                None => {}
+            }
+            Some(session)
+        }
+        None => None,
+    };
     // The row: completed focus sessions, each starting within the gap of the previous end.
     let mut statement = conn.prepare(
         "SELECT started_at, ended_at FROM focus_sessions
@@ -718,15 +1339,103 @@ pub fn restore(conn: &Connection, now: i64) -> rusqlite::Result<Machine> {
     })
 }
 
+/// A run's lanes from the database, in order, with the time they ran. `live`:
+/// with their open span too (a break shows its run's lanes, none running).
+/// A lane is done while its task is (an undone done reopens it).
+fn load_lanes(conn: &Connection, session_id: &str, live: bool) -> rusqlite::Result<Vec<Lane>> {
+    let mut statement = conn.prepare(
+        "SELECT r.task_id, t.title, r.area_id, a.name, r.position,
+                t.status = 'done',
+                (SELECT MIN(p.start_at) FROM focus_lane_spans AS p
+                 WHERE p.session_id = r.session_id AND p.task_id = r.task_id AND p.end_at IS NULL),
+                (SELECT COALESCE(SUM(p.end_at - p.start_at), 0) FROM focus_lane_spans AS p
+                 WHERE p.session_id = r.session_id AND p.task_id = r.task_id AND p.end_at IS NOT NULL)
+         FROM focus_run_tasks AS r
+         JOIN task_items AS t ON t.id = r.task_id
+         LEFT JOIN area_items AS a ON a.id = r.area_id
+         WHERE r.session_id = ?1
+         ORDER BY r.position",
+    )?;
+    statement
+        .query_map([session_id], |row| {
+            Ok(Lane {
+                task_id: row.get(0)?,
+                title: row.get(1)?,
+                area_id: row.get(2)?,
+                area: row.get(3)?,
+                position: row.get(4)?,
+                done: row.get(5)?,
+                running_since: if live { row.get(6)? } else { None },
+                closed_ms: row.get(7)?,
+            })
+        })?
+        .collect()
+}
+
+/// Reopens the lanes whose task is no longer done (its done was undone), so
+/// the run lets them start again. Called before an event and a status read.
+pub fn refresh_done(conn: &Connection, machine: &mut Machine) -> rusqlite::Result<()> {
+    let Some(session) = machine.current.as_mut() else {
+        return Ok(());
+    };
+    let mut open = Vec::new();
+    for lane in session.lanes.iter().filter(|lane| lane.done) {
+        let done: Option<bool> = conn
+            .query_row(
+                "SELECT status = 'done' FROM task_items WHERE id = ?1",
+                [&lane.task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if done == Some(false) {
+            open.push(lane.task_id.clone());
+        }
+    }
+    session.reopen_lanes(&open);
+    Ok(())
+}
+
+/// Tables a set of effects wrote, for "data-changed".
+fn changed_tables(effects: &[Effect]) -> Vec<&'static str> {
+    let mut tables = Vec::new();
+    let mut add = |table: &'static str| {
+        if !tables.contains(&table) {
+            tables.push(table);
+        }
+    };
+    for effect in effects {
+        match effect {
+            Effect::Save(_) | Effect::Close { .. } | Effect::AddDistraction { .. } => {
+                add("focus_sessions");
+                add("focus_run_tasks");
+                add("focus_lane_spans");
+            }
+            Effect::SpanOpen { .. } | Effect::SpanClose { .. } | Effect::LaneRemoved { .. } => {
+                add("focus_run_tasks");
+                add("focus_lane_spans");
+            }
+            Effect::TaskDone { .. } => {
+                add("focus_run_tasks");
+                add("task_items");
+            }
+            _ => {}
+        }
+    }
+    tables
+}
+
 /// Runs an event through the machine, saves, shows toasts, and wakes the timer thread.
 pub fn dispatch(app: &AppHandle, event: Event) -> Vec<Effect> {
     let now = clock::now_ms();
     let focus = app.state::<FocusState>();
     let effects = {
         let mut machine = focus.machine.lock();
-        let effects = machine.handle(event, now);
         let db = app.state::<Db>();
         let conn = db.write.lock();
+        if let Err(error) = refresh_done(&conn, &mut machine) {
+            log::warn!("could not read which lanes are done: {error}");
+        }
+        let effects = machine.handle(event, now);
         if let Err(error) = apply_db(&conn, &effects) {
             log::error!("could not save the focus session: {error}");
         }
@@ -755,12 +1464,7 @@ pub fn dispatch(app: &AppHandle, event: Event) -> Vec<Effect> {
             }
         });
     }
-    let changed = effects.iter().any(|effect| {
-        matches!(
-            effect,
-            Effect::Save(_) | Effect::Close { .. } | Effect::AddDistraction { .. }
-        )
-    });
+    let tables = changed_tables(&effects);
     let completed = effects.iter().any(|effect| {
         matches!(
             effect,
@@ -773,9 +1477,9 @@ pub fn dispatch(app: &AppHandle, event: Event) -> Vec<Effect> {
     if completed {
         crate::guard::after_complete(app);
     }
-    if changed {
+    if !tables.is_empty() {
         let _ = app.emit("focus-changed", ());
-        let _ = app.emit("data-changed", ["focus_sessions"]);
+        let _ = app.emit("data-changed", tables);
     }
     effects
 }
@@ -977,33 +1681,64 @@ pub fn start_for(
         context_for_target(&conn, block_id, area_id)
     };
     match context {
-        Ok(context) => {
-            let now = clock::now_ms();
-            if !force && crate::guard::stopped_now(&app.state::<Db>().write.lock(), now) {
-                return vec![Effect::PastHardStop];
-            }
-            let id = new_id(now);
-            let effects = dispatch(
-                app,
-                Event::Start {
-                    context,
-                    force,
-                    id: id.clone(),
-                },
-            );
-            if effects
-                .iter()
-                .any(|e| matches!(e, Effect::Save(s) if s.id == id))
-            {
-                crate::guard::after_start(app, &id);
-            }
-            effects
-        }
+        Ok(context) => start_context(app, context, force),
         Err(error) => {
             log::error!("could not read the block for focus: {error}");
             vec![]
         }
     }
+}
+
+/// Starts a session for a context: the hard stop, the machine, the cap.
+fn start_context(app: &AppHandle, context: Context, force: bool) -> Vec<Effect> {
+    let now = clock::now_ms();
+    if !force && crate::guard::stopped_now(&app.state::<Db>().write.lock(), now) {
+        return vec![Effect::PastHardStop];
+    }
+    let id = new_id(now);
+    let effects = dispatch(
+        app,
+        Event::Start {
+            context,
+            force,
+            id: id.clone(),
+        },
+    );
+    if effects
+        .iter()
+        .any(|e| matches!(e, Effect::Save(s) if s.id == id))
+    {
+        crate::guard::after_start(app, &id);
+    }
+    effects
+}
+
+/// Starts a run of tasks (T-084); the first task's lane starts at once.
+pub fn start_run(
+    app: &AppHandle,
+    task_ids: &[String],
+    minutes: Option<i64>,
+    force: bool,
+) -> Result<Vec<Effect>, String> {
+    let context = {
+        let db = app.state::<Db>();
+        let conn = db.write.lock();
+        context_for_run(&conn, task_ids, minutes).map_err(|error| error.to_string())?
+    };
+    let context = context.ok_or_else(|| "Pick at least one task for the run.".to_string())?;
+    Ok(start_context(app, context, force))
+}
+
+/// "+ Add" on a running run: the task joins as a lane, not started.
+pub fn add_lane(app: &AppHandle, task_id: &str) -> Result<(), String> {
+    let lane = {
+        let db = app.state::<Db>();
+        let conn = db.write.lock();
+        lane_for(&conn, task_id, 0).map_err(|error| error.to_string())?
+    };
+    let lane = lane.ok_or_else(|| "That task is gone.".to_string())?;
+    dispatch(app, Event::LaneAdd { lane });
+    Ok(())
 }
 
 /// Restores the timer after a restart. Call `run` once the state is managed.
@@ -1073,6 +1808,7 @@ mod tests {
             title: "Coding".into(),
             focus_min: 25,
             break_min: 5,
+            lanes: Vec::new(),
         }
     }
 
@@ -1616,5 +2352,581 @@ mod tests {
             )
             .expect("count");
         assert_eq!(live, 0);
+    }
+
+    // --- Runs with lanes (T-084) ------------------------------------------------
+
+    fn run_db() -> Connection {
+        let conn = conn();
+        conn.execute_batch(
+            "INSERT INTO task_items (id, title, area_id, created_at, updated_at) VALUES
+               ('a', 'Login bug', 'joba', 0, 0),
+               ('b', 'Invoice export', 'jobb', 0, 0),
+               ('c', 'Kifiya application', 'jobhunt', 0, 0);",
+        )
+        .expect("tasks");
+        conn
+    }
+
+    /// Runs an event and saves its effects, like dispatch does.
+    fn step(conn: &Connection, m: &mut Machine, event: Event, at: i64) -> Vec<Effect> {
+        let effects = m.handle(event, at);
+        apply_db(conn, &effects).expect("save");
+        effects
+    }
+
+    fn start_run(conn: &Connection, m: &mut Machine, ids: &[&str], minutes: i64) {
+        let ids: Vec<String> = ids.iter().map(|id| (*id).to_string()).collect();
+        let context = context_for_run(conn, &ids, Some(minutes))
+            .expect("context")
+            .expect("lanes");
+        step(
+            conn,
+            m,
+            Event::Start {
+                context,
+                force: false,
+                id: "r1".into(),
+            },
+            T0,
+        );
+    }
+
+    fn lane(task_id: &str) -> Event {
+        Event::LaneStart {
+            task_id: task_id.into(),
+        }
+    }
+
+    fn run_rows(conn: &Connection) -> Vec<(String, Option<String>, f64, i64, i64)> {
+        conn.prepare(
+            "SELECT task_id, result, effort_min, wall_min, clean FROM focus_run_tasks
+             WHERE session_id = 'r1' ORDER BY position",
+        )
+        .expect("prepare")
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("rows")
+    }
+
+    #[test]
+    fn a_run_starts_with_its_first_lane_running_and_names_itself() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b", "a", "nope"], 30);
+        let status = status(&m, T0 + minutes(5));
+        assert_eq!(status.title, "Login bug +1");
+        assert_eq!(status.planned_min, 30);
+        let lanes: Vec<(&str, bool, i64)> = status
+            .lanes
+            .iter()
+            .map(|l| (l.id.as_str(), l.running, l.wall_min))
+            .collect();
+        assert_eq!(lanes, [("a", true, 5), ("b", false, 0)]);
+        assert_eq!(status.lanes[0].area.as_deref(), Some("Job A"));
+        // The row keeps the first task for old queries; one span is open.
+        let (task, area): (String, String) = conn
+            .query_row(
+                "SELECT task_id, area_id FROM focus_sessions WHERE id = 'r1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("row");
+        assert_eq!((task.as_str(), area.as_str()), ("a", "joba"));
+        let open: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM focus_lane_spans WHERE end_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .expect("spans");
+        assert_eq!(open, 1);
+        assert_eq!(
+            context_for_run(&conn, &["nope".into()], None).expect("none"),
+            None
+        );
+    }
+
+    #[test]
+    fn lanes_start_pause_finish_join_and_leave() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b"], 30);
+        step(&conn, &mut m, lane("b"), T0 + minutes(5));
+        // Starting a running lane again does nothing.
+        assert!(m.handle(lane("b"), T0 + minutes(6)).is_empty());
+        let done = step(
+            &conn,
+            &mut m,
+            Event::LaneDone {
+                task_id: "b".into(),
+            },
+            T0 + minutes(15),
+        );
+        assert!(done.contains(&Effect::SpanClose {
+            session_id: "r1".into(),
+            task_id: "b".into(),
+            at: T0 + minutes(15),
+            end: SpanEnd::Done
+        }));
+        // A done lane can't start again or leave the run.
+        assert!(m.handle(lane("b"), T0 + minutes(16)).is_empty());
+        assert!(
+            m.handle(
+                Event::LaneRemove {
+                    task_id: "b".into()
+                },
+                T0 + minutes(16)
+            )
+            .is_empty()
+        );
+        step(
+            &conn,
+            &mut m,
+            Event::LanePause {
+                task_id: "a".into(),
+            },
+            T0 + minutes(20),
+        );
+        let added = lane_for(&conn, "c", 0).expect("c").expect("lane");
+        step(
+            &conn,
+            &mut m,
+            Event::LaneAdd {
+                lane: added.clone(),
+            },
+            T0 + minutes(20),
+        );
+        assert!(
+            m.handle(Event::LaneAdd { lane: added }, T0 + minutes(20))
+                .is_empty(),
+            "a task joins once"
+        );
+        step(&conn, &mut m, lane("c"), T0 + minutes(21));
+        step(
+            &conn,
+            &mut m,
+            Event::LaneRemove {
+                task_id: "c".into(),
+            },
+            T0 + minutes(22),
+        );
+        let s = status(&m, T0 + minutes(22));
+        let lanes: Vec<(&str, bool, bool, i64)> = s
+            .lanes
+            .iter()
+            .map(|l| (l.id.as_str(), l.running, l.done, l.wall_min))
+            .collect();
+        assert_eq!(lanes, [("a", false, false, 20), ("b", false, true, 10)]);
+        // c left without a trace; b is done through the logged path.
+        let c_rows: i64 = conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM focus_run_tasks WHERE task_id = 'c')
+                      + (SELECT count(*) FROM focus_lane_spans WHERE task_id = 'c')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("c");
+        assert_eq!(c_rows, 0);
+        let (status_b, context): (String, String) = conn
+            .query_row(
+                "SELECT t.status, a.context FROM task_items t
+                 JOIN core_activity a ON a.entity_id = t.id AND a.entity_type = 'task_items'
+                 WHERE t.id = 'b'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("b");
+        assert_eq!((status_b.as_str(), context.as_str()), ("done", "lane:r1"));
+        crate::tx::undo_context(&conn, "user", "lane:r1", T0 + minutes(23)).expect("undo");
+        let undone: String = conn
+            .query_row("SELECT status FROM task_items WHERE id = 'b'", [], |r| {
+                r.get(0)
+            })
+            .expect("status");
+        assert_eq!(undone, "todo");
+    }
+
+    #[test]
+    fn the_runs_end_closes_every_open_span_and_works_out_effort_and_clean() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b", "c"], 30);
+        // a alone 0-15; a and b 15-20; a done at 20; b alone 20-30; c never runs.
+        step(&conn, &mut m, lane("b"), T0 + minutes(15));
+        step(
+            &conn,
+            &mut m,
+            Event::LaneDone {
+                task_id: "a".into(),
+            },
+            T0 + minutes(20),
+        );
+        let effects = step(&conn, &mut m, Event::Tick, T0 + minutes(30));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::BreakStarted { .. }))
+        );
+        let kinds: Vec<(String, Option<String>)> = conn
+            .prepare("SELECT task_id, end_kind FROM focus_lane_spans ORDER BY id")
+            .expect("prepare")
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        assert_eq!(
+            kinds,
+            [
+                ("a".into(), Some("done".into())),
+                ("b".into(), Some("run_end".into()))
+            ]
+        );
+        let rows = run_rows(&conn);
+        let effort: f64 = rows.iter().map(|r| r.2).sum();
+        assert!((effort - 30.0).abs() < 1e-6, "{rows:?}");
+        let a = &rows[0];
+        assert!((a.2 - 17.5).abs() < 1e-6);
+        assert_eq!((a.1.as_deref(), a.3, a.4), (Some("done"), 20, 1));
+        let b = &rows[1];
+        assert!((b.2 - 12.5).abs() < 1e-6);
+        assert_eq!(
+            (b.1.as_deref(), b.3, b.4),
+            (None, 15, 0),
+            "not done: not clean"
+        );
+        let c = &rows[2];
+        assert_eq!((c.2, c.3, c.4), (0.0, 0, 0));
+        // The break shows the run's lanes, none running.
+        let s = status(&m, T0 + minutes(31));
+        assert_eq!(s.kind, Some(Kind::Break));
+        assert!(s.lanes.iter().all(|l| !l.running));
+    }
+
+    #[test]
+    fn a_task_done_while_sharing_most_of_its_time_is_not_clean() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b"], 20);
+        step(&conn, &mut m, lane("b"), T0);
+        step(
+            &conn,
+            &mut m,
+            Event::LaneDone {
+                task_id: "b".into(),
+            },
+            T0 + minutes(10),
+        );
+        step(&conn, &mut m, Event::Stop, T0 + minutes(12));
+        // b: 0-10 shared with a = 5 min effort, 0 alone.
+        let rows = run_rows(&conn);
+        assert!((rows[1].2 - 5.0).abs() < 1e-6);
+        assert_eq!((rows[1].1.as_deref(), rows[1].4), (Some("done"), 0));
+        // Stop closed a's span at the stop.
+        let end: i64 = conn
+            .query_row(
+                "SELECT end_at FROM focus_lane_spans WHERE task_id = 'a'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("end");
+        assert_eq!(end, T0 + minutes(12));
+    }
+
+    #[test]
+    fn a_run_slept_through_closes_its_spans_at_its_end() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a"], 25);
+        step(&conn, &mut m, Event::Tick, T0 + minutes(25 + 31));
+        let (end, kind): (i64, String) = conn
+            .query_row(
+                "SELECT end_at, end_kind FROM focus_lane_spans WHERE task_id = 'a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("span");
+        assert_eq!((end, kind.as_str()), (T0 + minutes(25), "run_end"));
+        assert_eq!(run_rows(&conn)[0].3, 25);
+    }
+
+    #[test]
+    fn a_restart_keeps_the_lanes_their_time_and_what_is_done() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b", "c"], 30);
+        step(&conn, &mut m, lane("b"), T0 + minutes(2));
+        step(
+            &conn,
+            &mut m,
+            Event::LanePause {
+                task_id: "a".into(),
+            },
+            T0 + minutes(4),
+        );
+        step(
+            &conn,
+            &mut m,
+            Event::LaneDone {
+                task_id: "c".into(),
+            },
+            T0 + minutes(5),
+        );
+        let restored = restore(&conn, T0 + minutes(10)).expect("restore");
+        assert_eq!(
+            status(&restored, T0 + minutes(10)),
+            status(&m, T0 + minutes(10))
+        );
+        let session = restored.current.expect("session");
+        assert_eq!(session.title, "Login bug +2");
+        assert_eq!(session.lanes, m.current.expect("live").lanes);
+        // And the lanes keep working after the restart.
+        let mut restored = restore(&conn, T0 + minutes(10)).expect("again");
+        step(&conn, &mut restored, Event::Tick, T0 + minutes(30));
+        let effort: f64 = run_rows(&conn).iter().map(|r| r.2).sum();
+        assert!((effort - 30.0).abs() < 1e-6);
+        // A break restored after a restart shows the run's lanes, none running.
+        let on_break = restore(&conn, T0 + minutes(31)).expect("break");
+        let s = status(&on_break, T0 + minutes(31));
+        assert_eq!(s.kind, Some(Kind::Break));
+        assert_eq!(s.lanes.len(), 3);
+        assert!(s.lanes.iter().all(|l| !l.running));
+        assert!(s.lanes[2].done);
+        // The break looks the same before and after the restart, times too.
+        assert_eq!(s, status(&restored, T0 + minutes(31)));
+        assert_eq!(s.lanes[1].wall_min, 28);
+    }
+
+    fn session_row(conn: &Connection, id: &str) -> (Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT task_id, area_id FROM focus_sessions WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("session")
+    }
+
+    fn share_of(conn: &Connection, task_id: &str) -> f64 {
+        conn.query_row(
+            "SELECT COALESCE(SUM(minutes), 0) FROM v_focus_share WHERE task_id = ?1",
+            [task_id],
+            |r| r.get(0),
+        )
+        .expect("share")
+    }
+
+    #[test]
+    fn removing_the_last_lane_charges_no_task() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a"], 30);
+        let remove = |task_id: &str| Event::LaneRemove {
+            task_id: task_id.into(),
+        };
+        step(&conn, &mut m, remove("a"), T0 + minutes(5));
+        step(&conn, &mut m, Event::Tick, T0 + minutes(30));
+        assert_eq!(session_row(&conn, "r1"), (None, None));
+        assert!(share_of(&conn, "a").abs() < 1e-9);
+        // A block whose only lane leaves keeps its area, not its task.
+        conn.execute_batch(
+            "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, task_id, title, created_at, updated_at)
+             VALUES ('b1', '2026-11-11', 0, 1, 'area', 'joba', 'b', 'Invoice', 0, 0);",
+        )
+        .expect("block");
+        let mut m = Machine::default();
+        let context = context_for(&conn, Some("b1")).expect("block");
+        let start = Event::Start {
+            context,
+            force: false,
+            id: "r2".into(),
+        };
+        step(&conn, &mut m, start, T0 + minutes(60));
+        step(&conn, &mut m, remove("b"), T0 + minutes(61));
+        step(&conn, &mut m, Event::Stop, T0 + minutes(70));
+        assert_eq!(session_row(&conn, "r2"), (None, Some("joba".into())));
+        assert!(share_of(&conn, "b").abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_undone_lane_done_reopens_the_lane_and_is_not_clean() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b"], 30);
+        step(
+            &conn,
+            &mut m,
+            Event::LanePause {
+                task_id: "a".into(),
+            },
+            T0,
+        );
+        step(&conn, &mut m, lane("b"), T0);
+        let done = Event::LaneDone {
+            task_id: "b".into(),
+        };
+        step(&conn, &mut m, done, T0 + minutes(10));
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT result FROM focus_run_tasks WHERE task_id = 'b'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("result");
+        assert_eq!(result.as_deref(), Some("done"));
+        crate::tx::undo_context(&conn, "user", "lane:r1", T0 + minutes(11)).expect("undo");
+        refresh_done(&conn, &mut m).expect("refresh");
+        let s = status(&m, T0 + minutes(11));
+        assert!(!s.lanes[1].done, "b is open again");
+        assert!(!step(&conn, &mut m, lane("b"), T0 + minutes(12)).is_empty());
+        step(&conn, &mut m, Event::Tick, T0 + minutes(30));
+        let b = &run_rows(&conn)[1];
+        assert_eq!((b.1.as_deref(), b.4), (None, 0), "{b:?}");
+        // After a restart the lane is open too.
+        let restored = restore(&conn, T0 + minutes(31)).expect("restore");
+        assert!(!status(&restored, T0 + minutes(31)).lanes[1].done);
+    }
+
+    #[test]
+    fn a_task_joining_an_area_session_leaves_the_area_on_the_row() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        let context = context_for_target(&conn, None, Some("coding")).expect("area");
+        let start = Event::Start {
+            context,
+            force: false,
+            id: "r1".into(),
+        };
+        step(&conn, &mut m, start, T0);
+        let added = lane_for(&conn, "a", 0).expect("a").expect("lane");
+        step(
+            &conn,
+            &mut m,
+            Event::LaneAdd { lane: added },
+            T0 + minutes(20),
+        );
+        assert_eq!(session_row(&conn, "r1"), (None, Some("coding".into())));
+        assert_eq!(m.current.expect("live").title, "Coding skills");
+    }
+
+    #[test]
+    fn a_block_task_with_no_area_counts_for_the_blocks_area() {
+        let conn = run_db();
+        conn.execute_batch(
+            "INSERT INTO task_items (id, title, area_id, created_at, updated_at) VALUES ('d', 'Notes', NULL, 0, 0);
+             INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, task_id, title, created_at, updated_at)
+             VALUES ('b1', '2026-11-11', 0, 1, 'area', 'joba', 'd', 'Notes', 0, 0);",
+        )
+        .expect("block");
+        let context = context_for(&conn, Some("b1")).expect("block");
+        assert_eq!(context.lanes[0].area_id.as_deref(), Some("joba"));
+        assert_eq!(context.lanes[0].area.as_deref(), Some("Job A"));
+        let mut m = Machine::default();
+        let start = Event::Start {
+            context,
+            force: false,
+            id: "r1".into(),
+        };
+        step(&conn, &mut m, start, T0);
+        step(&conn, &mut m, Event::Stop, T0 + minutes(20));
+        let joba: f64 = conn
+            .query_row(
+                "SELECT SUM(minutes) FROM v_focus_share WHERE area_id = 'joba'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("share");
+        assert!((joba - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn lanes_wait_while_on_a_break_and_plus_five_carries_them() {
+        let conn = run_db();
+        let mut m = Machine::default();
+        start_run(&conn, &mut m, &["a", "b"], 25);
+        step(&conn, &mut m, Event::Tick, T0 + minutes(25));
+        assert!(m.handle(lane("b"), T0 + minutes(26)).is_empty());
+        step(
+            &conn,
+            &mut m,
+            Event::Extend { id: "x1".into() },
+            T0 + minutes(26),
+        );
+        let session = m.current.clone().expect("extension");
+        assert_eq!(session.run_of.as_deref(), Some("r1"));
+        assert_eq!(session.lanes.len(), 2);
+        step(&conn, &mut m, lane("b"), T0 + minutes(27));
+        step(&conn, &mut m, Event::Tick, T0 + minutes(31));
+        let effort: f64 = conn
+            .query_row(
+                "SELECT SUM(effort_min) FROM focus_run_tasks WHERE session_id = 'x1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("effort");
+        assert!((effort - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_block_session_is_a_run_of_its_task_and_an_area_session_has_none() {
+        let conn = run_db();
+        conn.execute_batch(
+            "INSERT INTO day_blocks (id, logical_date, start_at, end_at, kind, area_id, task_id, title, created_at, updated_at)
+             VALUES ('b1', '2026-11-11', 0, 1, 'area', 'joba', 'a', 'Login bug', 0, 0),
+                    ('b2', '2026-11-11', 0, 1, 'area', 'coding', NULL, 'Coding skills', 0, 0);",
+        )
+        .expect("blocks");
+        let block = context_for(&conn, Some("b1")).expect("block");
+        assert_eq!(
+            block
+                .lanes
+                .iter()
+                .map(|l| l.task_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a"]
+        );
+        assert!(
+            context_for(&conn, Some("b2"))
+                .expect("no task")
+                .lanes
+                .is_empty()
+        );
+        assert!(
+            context_for_target(&conn, None, Some("coding"))
+                .expect("area")
+                .lanes
+                .is_empty()
+        );
+        let mut m = Machine::default();
+        step(
+            &conn,
+            &mut m,
+            Event::Start {
+                context: block,
+                force: false,
+                id: "r1".into(),
+            },
+            T0,
+        );
+        step(&conn, &mut m, Event::Stop, T0 + minutes(20));
+        let rows = run_rows(&conn);
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].2 - 20.0).abs() < 1e-6);
+        assert_eq!(m.current, None);
+    }
+
+    #[test]
+    fn solo_time_counts_only_pieces_with_one_lane_running() {
+        let spans = vec![
+            ("a".to_string(), 0, 30),
+            ("b".to_string(), 10, 20),
+            ("c".to_string(), 25, 50),
+        ];
+        let solo = solo_ms(&spans, 0, 40);
+        assert_eq!(solo.get("a"), Some(&15));
+        assert_eq!(solo.get("b"), None);
+        assert_eq!(solo.get("c"), Some(&10));
     }
 }

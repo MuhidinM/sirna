@@ -28,10 +28,12 @@ import {
   setAway,
   settingString,
 } from "./commands";
-import { emptyMachine, restore, setupInfo, status, type SetupTarget } from "./focus";
+import { emptyMachine, refreshDone, restore, setupInfo, status, type SetupTarget } from "./focus";
 import {
   focusControl,
   focusStart,
+  laneCommand,
+  runStart,
   setupStart,
   tickThrough,
   toastAction,
@@ -71,6 +73,8 @@ const ALL_TABLES = [
   "core_raw_items",
   "core_activity",
   "focus_sessions",
+  "focus_run_tasks",
+  "focus_lane_spans",
 ];
 
 export async function install(): Promise<void> {
@@ -183,10 +187,21 @@ export async function install(): Promise<void> {
     // The focus timer.
     focus_status: async () => {
       await store.sync();
+      refreshDone(store.conn, machine());
       return status(machine(), now());
     },
     focus_start: (a) => store.write((state, emit) => focusStart(world(state, emit), a, now())),
     focus_control: (a) => store.write((state, emit) => focusControl(world(state, emit), a, now())),
+    run_start: (a) => store.write((state, emit) => runStart(world(state, emit), a, now())),
+    ...Object.fromEntries(
+      (["lane_start", "lane_pause", "lane_done", "lane_add", "lane_remove"] as const).map(
+        (name) => [
+          name,
+          (a: Args) =>
+            store.write((state, emit) => laneCommand(world(state, emit), name, a, now())),
+        ],
+      ),
+    ),
     setup_info: async (a) => {
       await store.sync();
       const state = store.state();

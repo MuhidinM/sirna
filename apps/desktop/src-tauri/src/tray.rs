@@ -512,6 +512,7 @@ mod tests {
             in_row: 0,
             block_id: None,
             distractions: 0,
+            lanes: Vec::new(),
         }
     }
 

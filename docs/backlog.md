@@ -202,9 +202,9 @@ Work happens in runs of tasks from any job; days hold only set times; capture re
 | T-081 | [#183](https://github.com/MuhidinM/sirna/issues/183) | Undo restores only the columns it changed                              | —         | S    | done   |
 | T-082 | [#184](https://github.com/MuhidinM/sirna/issues/184) | Time left never hits 0 on overrun; runs charge every task              | —         | S    | todo   |
 | T-083 | [#185](https://github.com/MuhidinM/sirna/issues/185) | Spike: important toasts through Do not disturb, and a pop-up fallback  | R-NOT-01  | M    | todo   |
-| T-084 | [#186](https://github.com/MuhidinM/sirna/issues/186) | Multi-task runs with lanes and a fair effort split                     | R-RUN-01  | L    | todo   |
+| T-084 | [#186](https://github.com/MuhidinM/sirna/issues/186) | Multi-task runs with lanes and a fair effort split                     | R-RUN-01  | L    | done   |
 | T-085 | [#187](https://github.com/MuhidinM/sirna/issues/187) | Lane controls in the widget, tray and sheet                            | R-RUN-02  | L    | todo   |
-| T-086 | [#188](https://github.com/MuhidinM/sirna/issues/188) | Up next: one shared order for the tray and Today                       | R-RUN-03  | M    | todo   |
+| T-086 | [#188](https://github.com/MuhidinM/sirna/issues/188) | Up next: one shared order for the tray and Today                       | R-RUN-03  | M    | done   |
 | T-087 | [#189](https://github.com/MuhidinM/sirna/issues/189) | Run sheet: filled by time, add, untick, 10-min starter                 | R-RUN-04  | M    | todo   |
 | T-088 | [#190](https://github.com/MuhidinM/sirna/issues/190) | Check-out: what got done, time left, next step                         | R-RUN-05  | L    | todo   |
 | T-089 | [#191](https://github.com/MuhidinM/sirna/issues/191) | Runs: sleep close, cap counts all runs, focus kit for single-area runs | R-RUN-06  | M    | todo   |

@@ -8,6 +8,9 @@ use crate::tx::{self, Op};
 /// Shared with the Today screen, so the tray and the screen agree.
 const TODAY_TOP_SQL: &str = include_str!("../../src/features/tasks/queries/today_top.sql");
 
+/// Up next (T-086), shared with Today (features/tasks/upNext.ts).
+const UP_NEXT_SQL: &str = include_str!("../../src/features/tasks/queries/up_next.sql");
+
 /// The newest capture not undone. A newer line that made nothing (`afford`,
 /// `? search`) hides the Undo rather than letting it reach an older capture
 /// (F38); the same rule as LAST_CAPTURE_SQL in src/capture/fix.ts.
@@ -63,6 +66,28 @@ pub fn today_top(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<TopTask
     rows.collect()
 }
 
+/// A task Up next offers.
+#[derive(Debug, PartialEq)]
+pub struct NextTask {
+    pub id: String,
+    pub title: String,
+}
+
+/// The first `limit` tasks in the Up next order, as Today shows them. The
+/// tray will offer them (T-085); until then only the test reads it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn up_next(conn: &Connection, now_ms: i64, limit: i64) -> rusqlite::Result<Vec<NextTask>> {
+    let (date, start) = logical_day(now_ms);
+    let mut statement = conn.prepare(UP_NEXT_SQL)?;
+    let rows = statement.query_map(rusqlite::params![date, start, now_ms, limit], |row| {
+        Ok(NextTask {
+            id: row.get(0)?,
+            title: row.get(1)?,
+        })
+    })?;
+    rows.collect()
+}
+
 fn sql_error(error: rusqlite::Error) -> tx::TxError {
     tx::TxError::Sql(error.to_string())
 }
@@ -82,7 +107,7 @@ fn live_status(conn: &Connection, id: &str) -> Result<Option<String>, tx::TxErro
 
 /// Writes the done state and its audit row in one transaction.
 fn write_done(
-    conn: &mut Connection,
+    conn: &Connection,
     id: &str,
     done: bool,
     context: &str,
@@ -106,7 +131,7 @@ fn write_done(
         id: id.into(),
         values,
     };
-    let txn = conn.transaction().map_err(sql_error)?;
+    let txn = conn.unchecked_transaction().map_err(sql_error)?;
     tx::apply_ops(&txn, "user", Some(context), &[op], now_ms)?;
     txn.commit().map_err(sql_error)
 }
@@ -124,9 +149,20 @@ pub fn toggle_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<bool,
 /// A reminder's Done button: always ends up done, never reopens a task that
 /// was finished elsewhere, and ignores deleted tasks.
 pub fn mark_done(conn: &mut Connection, id: &str, now_ms: i64) -> Result<(), tx::TxError> {
+    mark_done_in(conn, id, "reminder", now_ms)
+}
+
+/// Done, logged under `context` so it can be undone (a reminder's button, a
+/// run's lane). A task already done or deleted is left as it is.
+pub fn mark_done_in(
+    conn: &Connection,
+    id: &str,
+    context: &str,
+    now_ms: i64,
+) -> Result<(), tx::TxError> {
     match live_status(conn, id)?.as_deref() {
         None | Some("done") => Ok(()),
-        Some(_) => write_done(conn, id, true, "reminder", now_ms),
+        Some(_) => write_done(conn, id, true, context, now_ms),
     }
 }
 
@@ -187,6 +223,29 @@ mod tests {
     use crate::{db, migrate};
 
     const NOON_11_NOV: i64 = 1_794_387_600_000; // 2026-11-11 12:00 in Addis Ababa
+
+    /// Same fixture and order as src/features/tasks/upNext.test.ts.
+    #[test]
+    fn up_next_matches_todays_order() {
+        let conn = conn();
+        conn.execute_batch(include_str!(
+            "../../src/features/tasks/fixtures/up_next.sql"
+        ))
+        .expect("fixture");
+        let ids: Vec<String> = up_next(&conn, NOON_11_NOV, 50)
+            .expect("up next")
+            .into_iter()
+            .map(|task| task.id)
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "hand", "due-past", "due-tom", "pinned", "stale", "planned", "ja1", "jb1",
+                "due-far", "c1", "n1", "ja2", "jb2", "old-run", "step1"
+            ]
+        );
+        assert_eq!(up_next(&conn, NOON_11_NOV, 2).expect("two").len(), 2);
+    }
 
     fn conn() -> Connection {
         let mut conn = Connection::open_in_memory().expect("open");
