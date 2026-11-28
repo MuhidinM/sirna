@@ -392,6 +392,9 @@ pub(crate) fn undo_blocked(
             "day_blocks" => "You've changed this block since. Edit it on Today.",
             "savings_entries" => "You've changed this saving since. Edit it on Money.",
             "core_settings" => "Away has changed since. Set it on Today.",
+            "core_settings:prayer.city" => {
+                "The prayer city has changed since. Set it from the tray or in Settings."
+            }
             _ => "You've changed this since.",
         };
         return Ok(Some(text.to_string()));
@@ -552,6 +555,33 @@ mod tests {
         assert_eq!(read(&txn), "adama");
         super::undo_capture_in(&txn, first, 4).unwrap();
         assert_eq!(read(&txn), "");
+    }
+
+    #[test]
+    fn a_city_changed_since_blocks_undo_with_its_own_words() {
+        let mut conn = capture_db();
+        let txn = conn.transaction().unwrap();
+        let raw = super::store_capture(
+            &txn,
+            "in adama",
+            &[city("prayer.city", "\"adama\"")],
+            None,
+            1,
+        )
+        .unwrap();
+        // The tray's Location menu writes outside any capture.
+        crate::tx::apply_ops(
+            &txn,
+            "user",
+            Some("tray"),
+            &[city("prayer.city", "\"addis\"")],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            super::undo_blocked(&txn, raw, "undo").unwrap().as_deref(),
+            Some("The prayer city has changed since. Set it from the tray or in Settings.")
+        );
     }
 
     #[test]

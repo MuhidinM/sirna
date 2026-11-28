@@ -1,6 +1,7 @@
 -- What undoing or fixing a capture would throw away (F2, F65): one row per
 -- record the capture added (and the away setting or block it changed), with
 --   entity_type: the table, or 'note_items:cheat' for a cheat-sheet line,
+--                or 'core_settings:prayer.city' for `I'm in Adama`,
 --   inserted: 1 when the capture added the record,
 --   gone:     1 when that record has been deleted since,
 --   changed:  1 when anything else has changed it since (an edit, a tick, a delete;
@@ -17,7 +18,9 @@
 -- Shared by capture_undo, capture_replace and the tray (Rust, include_str!)
 -- and the capture bar (TypeScript, ?raw).
 SELECT CASE WHEN a.entity_type = 'note_items' AND json_extract(a.after_json, '$.kind') = 'cheat'
-            THEN 'note_items:cheat' ELSE a.entity_type END AS entity_type,
+            THEN 'note_items:cheat'
+            WHEN a.entity_type = 'core_settings' AND a.entity_id = 'prayer.city'
+            THEN 'core_settings:prayer.city' ELSE a.entity_type END AS entity_type,
        a.action = 'insert' AS inserted,
        CASE a.entity_type
          WHEN 'task_items' THEN NOT EXISTS (SELECT 1 FROM task_items x WHERE x.id = a.entity_id AND x.deleted_at IS NULL)
