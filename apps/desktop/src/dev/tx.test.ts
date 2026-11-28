@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { openTestDb } from "../test/sqlite";
 import { type Conn, nodeConn } from "./conn";
-import { applyOps, type Op, parseOps, rowJson, spec, TABLES, undoContext } from "./tx";
+import { applyOps, type Op, parseOps, rowJson, spec, TABLES, undoContext, type Values } from "./tx";
 
 const conn = (): Conn => nodeConn(openTestDb());
 
@@ -136,7 +136,7 @@ describe("tx port", () => {
   it("undo reverses a capture", () => {
     const c = conn();
     insertTask(c, "t1", "Call bank");
-    expect(undoContext(c, "user", "capture:1", 500)).toBe(1);
+    expect(undoContext(c, "user", "capture:1", 500)).toEqual({ changes: 1, kept: 0 });
     expect(task(c, "t1").deleted_at).toBe(500);
   });
 
@@ -153,6 +153,39 @@ describe("tx port", () => {
     undoContext(c, "user", "capture:2", 300);
     const row = task(c, "t1");
     expect([row.title, row.deleted_at]).toEqual(["Call bank", null]);
+  });
+
+  const update = (c: Conn, context: string, values: Values, at: number) =>
+    applyOps(c, "user", context, [{ op: "update", table: "task_items", id: "t1", values }], at);
+
+  it("undoing an old update keeps a newer edit to another column", () => {
+    const c = conn();
+    insertTask(c, "t1", "Call bank");
+    update(c, "edit:1", { title: "Call the bank" }, 200);
+    update(c, "edit:2", { status: "done" }, 300);
+    expect(undoContext(c, "user", "edit:1", 400)).toEqual({ changes: 1, kept: 0 });
+    const row = task(c, "t1");
+    expect([row.title, row.status]).toEqual(["Call bank", "done"]);
+  });
+
+  it("undo keeps a column edited again since", () => {
+    const c = conn();
+    insertTask(c, "t1", "Call bank");
+    update(c, "edit:1", { title: "Wrong", status: "done" }, 200);
+    update(c, "edit:2", { title: "Call bank today" }, 300);
+    expect(undoContext(c, "user", "edit:1", 400)).toEqual({ changes: 1, kept: 1 });
+    const row = task(c, "t1");
+    expect(row.title).toBe("Call bank today");
+    expect(row.status).not.toBe("done");
+  });
+
+  it("undo restores a delete", () => {
+    const c = conn();
+    insertTask(c, "t1", "Call bank");
+    applyOps(c, "user", "edit:1", [{ op: "delete", table: "task_items", id: "t1" }], 200);
+    expect(task(c, "t1").deleted_at).toBe(200);
+    undoContext(c, "user", "edit:1", 300);
+    expect(task(c, "t1").deleted_at).toBeNull();
   });
 
   it("settings upsert by key", () => {

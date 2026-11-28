@@ -15,6 +15,7 @@ import {
   FIND_SQL,
   type FoundRow,
   groupCards,
+  keptNote,
   LONG_CARD,
   NOTES_SQL,
   tokens,
@@ -167,8 +168,10 @@ export function Notes({
   const undo = async () => {
     if (!lastSave) return;
     try {
-      await invoke<number>("notes_undo", { context: lastSave.context });
-      setMessage(`Undid the change to ${lastSave.title}`);
+      const { kept } = await invoke<{ changes: number; kept: number }>("notes_undo", {
+        context: lastSave.context,
+      });
+      setMessage(`Undid the change to ${lastSave.title}${keptNote(kept)}`);
       setLastSave(undefined);
     } catch (error) {
       setMessage(`Couldn't undo: ${String(error)}`);
