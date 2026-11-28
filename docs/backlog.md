@@ -192,3 +192,35 @@ Setup handles any number of jobs, and a job day can be split around lunch, so ho
 | T-078 | [#178](https://github.com/MuhidinM/sirna/issues/178) | Add and remove jobs in setup                                 | R-PLAN-11          | M    | done   |
 | T-079 | [#179](https://github.com/MuhidinM/sirna/issues/179) | A job day in 2-3 parts (split shift), with an optional lunch | R-PLAN-12          | M    | done   |
 | T-080 | [#180](https://github.com/MuhidinM/sirna/issues/180) | Effort-vs-return insights                                    | R-PRG-06, R-MON-15 | L    | done   |
+
+## M15 — Runs and an open week
+
+Work happens in runs of tasks from any job; days hold only set times; capture reads your own words (plan approved 2026-11-28).
+
+| ID | Issue | Task | Reqs | Size | Status |
+| - | - | - | - | - | - |
+| T-081 | [#183](https://github.com/MuhidinM/sirna/issues/183) | Undo restores only the columns it changed | — | S | done |
+| T-082 | [#184](https://github.com/MuhidinM/sirna/issues/184) | Time left never hits 0 on overrun; runs charge every task | — | S | todo |
+| T-083 | [#185](https://github.com/MuhidinM/sirna/issues/185) | Spike: important toasts through Do not disturb, and a pop-up fallback | R-NOT-01 | M | todo |
+| T-084 | [#186](https://github.com/MuhidinM/sirna/issues/186) | Multi-task runs with lanes and a fair effort split | R-RUN-01 | L | todo |
+| T-085 | [#187](https://github.com/MuhidinM/sirna/issues/187) | Lane controls in the widget, tray and sheet | R-RUN-02 | L | todo |
+| T-086 | [#188](https://github.com/MuhidinM/sirna/issues/188) | Up next: one shared order for the tray and Today | R-RUN-03 | M | todo |
+| T-087 | [#189](https://github.com/MuhidinM/sirna/issues/189) | Run sheet: filled by time, add, untick, 10-min starter | R-RUN-04 | M | todo |
+| T-088 | [#190](https://github.com/MuhidinM/sirna/issues/190) | Check-out: what got done, time left, next step | R-RUN-05 | L | todo |
+| T-089 | [#191](https://github.com/MuhidinM/sirna/issues/191) | Runs: sleep close, cap counts all runs, focus kit for single-area runs | R-RUN-06 | M | todo |
+| T-090 | [#192](https://github.com/MuhidinM/sirna/issues/192) | Smart capture in your own words | R-CAP-01 | L | todo |
+| T-091 | [#193](https://github.com/MuhidinM/sirna/issues/193) | Capture learns your words; time guesses with their source | R-CAP-02 | M | todo |
+| T-092 | [#194](https://github.com/MuhidinM/sirna/issues/194) | Prayer times from where you are | R-PRAY-01 | L | todo |
+| T-093 | [#195](https://github.com/MuhidinM/sirna/issues/195) | Important notifications through Do not disturb | R-NOT-01 | M | todo |
+| T-094 | [#196](https://github.com/MuhidinM/sirna/issues/196) | Day marks: call off the day, resume, off/light/sick/blank | R-DAY-01 | L | todo |
+| T-095 | [#197](https://github.com/MuhidinM/sirna/issues/197) | A week of days: ink and pencil packer with a daily job mix | R-DAY-02 | L | todo |
+| T-096 | [#198](https://github.com/MuhidinM/sirna/issues/198) | Finish by: make room with a preview and undo | R-DAY-03 | M | todo |
+| T-097 | [#199](https://github.com/MuhidinM/sirna/issues/199) | Forward bars and shots | R-FWD-01 | L | todo |
+| T-098 | [#200](https://github.com/MuhidinM/sirna/issues/200) | Switch to open days; setup on one screen | R-DAY-04 | M | todo |
+| T-099 | [#201](https://github.com/MuhidinM/sirna/issues/201) | Today, widget and tray for open days; night review with job reports | R-DAY-05 | L | todo |
+| T-100 | [#202](https://github.com/MuhidinM/sirna/issues/202) | Can't now: waiting, later, not today, too big | R-DAY-06 | M | todo |
+| T-101 | [#203](https://github.com/MuhidinM/sirna/issues/203) | Strict push: when to stay silent | R-PUSH-01 | M | todo |
+| T-102 | [#204](https://github.com/MuhidinM/sirna/issues/204) | Strict push ladder | R-PUSH-02 | L | todo |
+| T-103 | [#205](https://github.com/MuhidinM/sirna/issues/205) | Sirna learns your pace | R-LRN-01 | L | todo |
+| T-104 | [#206](https://github.com/MuhidinM/sirna/issues/206) | Career engine: interview mode, drill cards, story bank, holidays | R-FWD-02 | L | todo |
+| T-105 | [#207](https://github.com/MuhidinM/sirna/issues/207) | Remove the block planner | — | M | todo |
